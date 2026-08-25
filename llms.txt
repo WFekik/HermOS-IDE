@@ -1,0 +1,26 @@
+# HermOS IDE — Local-First Autonomous AI Agent IDE
+
+> HermOS is an open-source, local-first desktop IDE where autonomous AI agents edit code, run terminal commands, and automate browsers directly on your machine with zero cloud telemetry.
+
+## Quick Facts
+- **License**: MIT (100% Free & Open Source)
+- **Architecture**: Tauri 2.0 (Rust) + Next.js 16 + React 19 + TypeScript + Tailwind CSS v4 + Prisma SQLite
+- **Privacy**: 100% Local-First, Zero Remote Telemetry, API keys encrypted with AES-256-GCM and stored locally on your machine
+- **Protocols**: Model Context Protocol (MCP) support for external tools, OpenAI API standard, Anthropic API, Ollama/vLLM local endpoints
+- **Platforms**: Windows (.msi), macOS (.dmg universal), Linux (.deb amd64 / .AppImage)
+
+## Core Capabilities
+- **Autonomous Multi-Worker Subagents**: Dispatches background subagents that fork isolated workspace trees to research codebases, write unit tests, and verify builds concurrently.
+- **Bring Your Own Keys (BYOK)**: Connects to flagship frontier and open-weight models through Anthropic Claude (Sonnet & Thinking series), Groq LPU (500+ T/s), NVIDIA NIM, and local offline engines (Ollama, vLLM, LM Studio).
+- **Embedded SQLite Telemetry Radar**: Tracks token consumption, cache hits, and execution times strictly on localhost with zero data sent to external servers.
+- **Visual Git Diff & Checkpoint Manager**: Native git staging, visual unified split diff review, commit graph, and instant rollback.
+- **Integrated Tooling**: Sandboxed terminal emulator, headless browser automation with DOM inspection, office document parsing, and dynamic MCP server discovery.
+
+## Documentation & Links
+- [GitHub Repository](https://github.com/WFekik/HermOS-IDE)
+- [Official Website](https://hermos.is-a.dev/)
+- [Full LLM Context](https://hermos.is-a.dev/llms-full.txt)
+- [Releases & Downloads](https://github.com/WFekik/HermOS-IDE/releases/latest)
+- [License (MIT)](https://github.com/WFekik/HermOS-IDE/blob/main/LICENSE)
+- [Architecture Details](https://hermos.is-a.dev/#features)
+- [Model Providers](https://hermos.is-a.dev/#providers)

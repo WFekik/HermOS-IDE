@@ -1,0 +1,35 @@
+User-agent: *
+Allow: /
+
+# Explicit AI Agent & LLM Search Crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+# Agent & LLM Discoverability
+Sitemap: https://hermos.is-a.dev/sitemap.xml
+LLMs: https://hermos.is-a.dev/llms.txt
+LLMs-Full: https://hermos.is-a.dev/llms-full.txt
