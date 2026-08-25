@@ -1,0 +1,44 @@
+# HermOS IDE — Full System Context for AI Agents & Search Engines
+
+## Overview
+HermOS IDE is a developer-grade desktop integrated development environment engineered specifically for local-first autonomous AI coding agents. Unlike cloud-hosted AI coding assistants, HermOS executes all file operations, AST indexing, git operations, terminal commands, and tool calls natively on the user's workstation.
+
+## Technical Architecture
+- **Desktop Runtime**: Tauri 2.0 with Rust backend security model
+- **Frontend Stack**: Next.js 16 (App Router), React 19, Tailwind CSS v4, Lucide Icons
+- **Database / Local Cache**: SQLite embedded database managed via Prisma ORM
+- **Security**: API keys are encrypted with AES-256-GCM and stored locally on your machine — never sent to our servers (there are none). The encryption key is generated per install and never leaves the device.
+- **Tool Protocol**: Model Context Protocol (MCP) support for external tools
+
+## Key Features & Differentiators
+1. **Local-First Privacy**:
+   - Zero telemetry sent to remote telemetry collectors or cloud intermediaries.
+   - Code never leaves the user's workstation unless dispatched directly to the user's chosen LLM API endpoint via direct HTTPS.
+   - Works 100% offline and air-gapped when configured with Ollama or vLLM.
+
+2. **Autonomous Subagent Tree Orchestration**:
+   - Spawns background worker subagents that operate concurrently across multiple task domains.
+   - Subagents can run test suites, browse local development servers, inspect DOM nodes, and perform deep codebase refactoring in isolated worktrees.
+
+3. **Visual Git Staging & Checkpoints**:
+   - Real-time unified and split diff viewers with syntax highlighting.
+   - Granular staging/unstaging and commit checkpoint rollback before agent code is applied.
+
+4. **Universal Bring-Your-Own-Key (BYOK) Engine Matrix**:
+   - Anthropic Claude (Sonnet & Thinking series).
+   - Groq LPU (500+ tokens/sec streaming).
+   - NVIDIA NIM microservices & self-hosted GPU containers.
+   - Local Ollama, vLLM, LM Studio endpoints (OpenAI-compatible /v1 format).
+
+5. **Built-in Developer Tools**:
+   - Web browser panel with live console & DOM inspection.
+   - Full terminal emulator with permission-gated execution.
+   - Document & spreadsheet viewer for office formats.
+   - MCP server discovery & plugin marketplace.
+
+## Installation & Distribution
+Download installers from the GitHub Releases page: https://github.com/WFekik/HermOS-IDE/releases/latest
+- **Windows**: look for the `.msi` installer under Assets
+- **macOS**: look for the universal `.dmg` under Assets (Intel & Apple Silicon)
+- **Linux**: look for the `.deb` under Assets
+- **Source**: `git clone https://github.com/WFekik/HermOS-IDE.git && cd HermOS-IDE && npm install && npm run tauri dev`

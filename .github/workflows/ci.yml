@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref so rapid pushes don't queue up
+# redundant (and slow) full quality gates.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    # Single ubuntu job keeps the gate fast and cheap; platform-specific
+    # compile/bundle coverage is owned by release-desktop.yml on v* tags.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Prisma client must be generated before typecheck/tests — tsc resolves
+      # the generated @prisma/client types.
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      # `npm run smoke:prod` requires a prior standalone build
+      # (.next-build/standalone/server.js — scripts/smoke-prod.mjs exits 1
+      # without it), so build first. Generous timeout: Next.js production
+      # builds are the slowest step of this gate.
+      - name: Build production bundle
+        run: npm run build
+        timeout-minutes: 30
+
+      # Catches the "static chunks 404, app never hydrates" regression class:
+      # smoke-prod asserts a real /_next/static asset serves 200.
+      - name: Production smoke test
+        run: npm run smoke:prod

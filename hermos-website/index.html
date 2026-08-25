@@ -1,0 +1,2426 @@
+<!DOCTYPE html>
+<html lang="en" prefix="og: https://ogp.me/ns#">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  
+  <!-- Primary SEO Metadata -->
+  <title>HermOS — Local-First AI Agent IDE | Free &amp; Open Source</title>
+  <meta name="description" content="Free, open-source, agent-powered local-first IDE. AI subagents edit code, run terminals, and browse the web on your machine. MCP-ready, works offline." />
+  <meta name="keywords" content="AI IDE, local AI agent, open source AI code editor, Cursor alternative, Windsurf alternative, Model Context Protocol, MCP IDE, Ollama IDE, local-first development, Tauri AI IDE, autonomous coding agent" />
+  <meta name="author" content="HermOS IDE Contributors" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#070908" />
+  <link rel="canonical" href="https://hermos.is-a.dev/" />
+
+  <!-- AI Agent & LLM Discovery Standards -->
+  <link rel="alternate" type="text/plain" href="https://hermos.is-a.dev/llms.txt" title="LLM Documentation" />
+  <link rel="alternate" type="text/plain" href="https://hermos.is-a.dev/llms-full.txt" title="Full LLM Context" />
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://hermos.is-a.dev/sitemap.xml" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="HermOS IDE" />
+  <meta property="og:title" content="HermOS — Local-First AI Agent IDE" />
+  <meta property="og:description" content="Autonomous AI agents editing files, executing terminal commands, and browsing the web directly on your machine. 100% local-first." />
+  <meta property="og:url" content="https://hermos.is-a.dev/" />
+  <meta property="og:image" content="https://hermos.is-a.dev/og.png" />
+  <meta property="og:image:secure_url" content="https://hermos.is-a.dev/og.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="HermOS IDE Interface Preview" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="HermOS — Local-First AI Agent IDE" />
+  <meta name="twitter:description" content="Autonomous AI agents on your machine. No accounts, no cloud telemetry, MIT licensed." />
+  <meta name="twitter:image" content="https://hermos.is-a.dev/og.png" />
+  <meta name="twitter:image:alt" content="HermOS IDE Interface Preview" />
+
+  <!-- Favicon: 32x32 PNG generated from the brand SVG mark (ICO container not
+       emitted; all modern browsers accept PNG icons). Inline SVG kept as the
+       scalable fallback for browsers that prefer vector icons. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070908'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='%2310b981' stroke-width='2.8' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='24.5' r='2' fill='%2334d399'/%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+
+  <!-- High-Performance Font Preconnect & Loading -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  </noscript>
+
+  <!-- JSON-LD Structured Data for Google Rich Snippets & AI Discovery -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://hermos.is-a.dev/#software",
+        "name": "HermOS IDE",
+        "url": "https://hermos.is-a.dev/",
+        "image": "https://hermos.is-a.dev/og.png",
+        "description": "Local-first autonomous AI agent IDE where subagents edit code, execute terminal commands, and automate browsers natively with zero cloud telemetry.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Windows 10+, macOS 12+, Linux (Ubuntu, Debian, Fedora)",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        },
+        "license": "https://opensource.org/licenses/MIT",
+        "softwareVersion": "1.0.0",
+        "featureList": [
+          "100% Local-first architecture with zero remote telemetry",
+          "Autonomous subagent tree orchestration",
+          "Model Context Protocol (MCP) client integration",
+          "Visual Git diff review and atomic checkpoint rollbacks",
+          "API keys encrypted with AES-256-GCM and stored locally on your machine",
+          "Universal BYOK model support including Claude, Groq, NVIDIA NIM, and local Ollama"
+        ],
+        "author": {
+          "@type": "Organization",
+          "name": "HermOS Project",
+          "url": "https://github.com/WFekik/HermOS-IDE"
+        }
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hermos.is-a.dev/#website",
+        "url": "https://hermos.is-a.dev/",
+        "name": "HermOS IDE",
+        "description": "The local-first AI agent IDE for autonomous software development.",
+        "publisher": {
+          "@type": "Organization",
+          "name": "HermOS Project"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://hermos.is-a.dev/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is HermOS completely free and open source?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. HermOS is MIT-licensed open source software with no subscriptions, paywalls, or gated tiers. All code is public on GitHub."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does HermOS send any telemetry or code to remote servers?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. HermOS operates with zero telemetry and has no login servers. AI requests route directly from your workstation to your configured model endpoint using your encrypted API key."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I use HermOS with local models offline?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. HermOS connects seamlessly to local inference runtimes including Ollama, vLLM, and LM Studio. When configured with local models, HermOS operates 100% offline with zero internet required."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How are API keys stored on my workstation?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "API keys are encrypted with AES-256-GCM and stored locally on your machine — never sent to our servers (there are none). The encryption key is generated per install and never leaves your device."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    /* ==========================================================================
+       DESIGN TOKENS & SYSTEM
+       ========================================================================== */
+    :root {
+      --bg-base: #060807;
+      --bg-surface: #0c0f0d;
+      --bg-surface-raised: #121714;
+      --bg-surface-elevated: #18201a;
+
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-default: rgba(255, 255, 255, 0.13);
+      --border-strong: rgba(255, 255, 255, 0.22);
+      --border-brand: rgba(16, 185, 129, 0.4);
+
+      --brand-primary: #10b981;
+      --brand-bright: #34d399;
+      --brand-dark: #059669;
+      --brand-glow: rgba(16, 185, 129, 0.35);
+
+      --text-primary: #f5f8f5;
+      --text-secondary: #a7b3a9;
+      --text-muted: #7d8a80;
+      --text-dim: #6d7c70;
+
+      --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --radius-full: 9999px;
+
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 10px 30px -6px rgba(0, 0, 0, 0.7);
+      --shadow-lg: 0 24px 64px -16px rgba(0, 0, 0, 0.85);
+      --shadow-glow: 0 0 60px -10px var(--brand-glow);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 5rem;
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      overflow-x: hidden;
+      line-height: 1.6;
+      position: relative;
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+    }
+
+    ::selection {
+      background: rgba(16, 185, 129, 0.35);
+      color: #ffffff;
+    }
+
+    a {
+      color: var(--text-primary);
+      text-decoration: none;
+      transition: color 0.18s ease;
+    }
+
+    /* ==========================================================================
+       HARDWARE-ACCELERATED DYNAMIC BACKGROUND (Optimized Canvas + CSS Aurora)
+       ========================================================================== */
+    .bg-canvas-wrap {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    #bg-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .ambient-aurora {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .aurora-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.25;
+      mix-blend-mode: screen;
+      transform: translate3d(0, 0, 0);
+    }
+
+    .aurora-orb-1 {
+      width: 55vw;
+      height: 55vw;
+      top: -15vw;
+      left: 15vw;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.24) 0%, rgba(5, 150, 105, 0.08) 50%, transparent 75%);
+    }
+
+    .aurora-orb-2 {
+      width: 48vw;
+      height: 48vw;
+      top: 30vh;
+      right: -10vw;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.18) 0%, rgba(16, 185, 129, 0.06) 50%, transparent 75%);
+    }
+
+    .grain-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    .container {
+      width: 100%;
+      max-width: 78rem;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 2;
+    }
+
+    @media (min-width: 1024px) {
+      .container { padding: 0 2.5rem; }
+    }
+
+    /* ==========================================================================
+       HEADER NAVIGATION
+       ========================================================================== */
+    header.site-header {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      background: rgba(6, 8, 7, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 4.25rem;
+      gap: 1.5rem;
+      position: relative;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 700;
+      font-size: 1.125rem;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+    }
+
+    .brand-icon {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #18201a 0%, #090c0a 100%);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
+    }
+
+    .nav-links {
+      display: none;
+      align-items: center;
+      gap: 2.25rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    @media (min-width: 768px) {
+      .nav-links { display: flex; }
+    }
+
+    .nav-toggle {
+      display: none;
+      align-items: center;
+      gap: 0.45rem;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 600;
+      padding: 0.5rem 0.9rem;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+    }
+
+    .nav-toggle:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    @media (max-width: 767px) {
+      .nav-toggle { display: inline-flex; }
+      .nav-links {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.25rem;
+        background: rgba(6, 8, 7, 0.97);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border-subtle);
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.5);
+        padding: 0.75rem 1.5rem 1.25rem;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links a { padding: 0.65rem 0; font-size: 0.9375rem; }
+    }
+
+    .nav-links a:hover {
+      color: #ffffff;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.55rem;
+      font-family: var(--font-sans);
+      font-weight: 600;
+      font-size: 0.875rem;
+      line-height: 1;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(180deg, #1bd395 0%, #0d9b6c 100%);
+      color: #03140a;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      font-weight: 700;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(180deg, #2fe0a4 0%, #10a876 100%);
+      transform: translateY(-1.5px);
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      color: #000000;
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface-raised);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-surface-elevated);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      transform: translateY(-1.5px);
+    }
+
+    .btn-sm {
+      height: 2.35rem;
+      padding: 0 1.1rem;
+      font-size: 0.8125rem;
+    }
+
+    .btn-lg {
+      height: 3.25rem;
+      padding: 0 2rem;
+      font-size: 0.9375rem;
+      border-radius: var(--radius-lg);
+    }
+
+    .icon {
+      width: 1.15rem;
+      height: 1.15rem;
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       HERO SECTION WITH MONUMENTAL FLOATING IDE SHOWCASE
+       ========================================================================== */
+    .hero {
+      padding-top: 5.5rem;
+      padding-bottom: 6rem;
+      text-align: center;
+      position: relative;
+    }
+
+    @media (min-width: 1024px) {
+      .hero {
+        padding-top: 7rem;
+        padding-bottom: 8rem;
+      }
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--brand-bright);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1.75rem;
+    }
+
+    .hero-eyebrow .eyebrow-line {
+      width: 2rem;
+      height: 1px;
+      background: var(--brand-bright);
+      opacity: 0.6;
+    }
+
+    .hero h1 {
+      font-size: 2.85rem;
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -0.04em;
+      max-width: 62rem;
+      margin: 0 auto 1.5rem;
+      color: var(--text-primary);
+    }
+
+    @media (min-width: 640px) {
+      .hero h1 { font-size: 4rem; }
+    }
+
+    @media (min-width: 1024px) {
+      .hero h1 { font-size: 4.75rem; }
+    }
+
+    .hero h1 .highlight-text {
+      background: linear-gradient(135deg, #ffffff 0%, #34d399 50%, #10b981 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: inline-block;
+    }
+
+    .hero-sub {
+      font-size: 1.15rem;
+      line-height: 1.65;
+      color: var(--text-secondary);
+      max-width: 46rem;
+      margin: 0 auto 2.5rem;
+    }
+
+    @media (min-width: 640px) {
+      .hero-sub { font-size: 1.25rem; }
+    }
+
+    .hero-cta-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.15rem;
+      margin-bottom: 4rem;
+    }
+
+    @media (min-width: 640px) {
+      .hero-cta-group {
+        flex-direction: row;
+        gap: 1.25rem;
+      }
+    }
+
+    /* Monumental Floating Viewport Stage */
+    .hero-viewport-stage {
+      position: relative;
+      margin: 0 auto;
+      max-width: 74rem;
+    }
+
+    .viewport-nav-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 0.75rem;
+      overflow-x: auto;
+    }
+
+    .view-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      padding: 0.4rem 0.6rem;
+      cursor: pointer;
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: color 0.18s ease;
+      white-space: nowrap;
+    }
+
+    .view-tab:hover {
+      color: var(--text-primary);
+    }
+
+    .view-tab.active {
+      color: var(--brand-bright);
+    }
+
+    .view-tab.active::after {
+      content: "";
+      position: absolute;
+      bottom: -0.75rem;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--brand-bright);
+      box-shadow: 0 0 12px var(--brand-bright);
+    }
+
+    .floating-viewport-frame {
+      position: relative;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(180deg, #18201a 0%, #0c100d 100%);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 32px 90px -20px rgba(0, 0, 0, 0.95), 0 0 80px -15px var(--brand-glow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .frame-titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1.35rem;
+      background: rgba(18, 24, 20, 0.95);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .frame-dots {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .frame-dot {
+      width: 0.75rem;
+      height: 0.75rem;
+      border-radius: 50%;
+    }
+
+    .dot-r { background: #ef4444; }
+    .dot-y { background: #f59e0b; }
+    .dot-g { background: #10b981; }
+
+    .frame-title-badge {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      background: rgba(0, 0, 0, 0.5);
+      padding: 0.25rem 1rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .frame-live-indicator {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--brand-bright);
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .pulse-beacon {
+      width: 6px;
+      height: 6px;
+      background: var(--brand-bright);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--brand-bright);
+      animation: pulseAnim 1.8s infinite ease-in-out;
+    }
+
+    @keyframes pulseAnim {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.8); }
+    }
+
+    .frame-image-wrap {
+      position: relative;
+      width: 100%;
+      background: #070908;
+      overflow: hidden;
+      aspect-ratio: 1918 / 991;
+    }
+
+    .hero-img-display {
+      display: block;
+      width: 100%;
+      height: auto;
+      object-fit: cover;
+      object-position: top;
+      transition: transform 0.35s ease, opacity 0.25s ease;
+    }
+
+    .floating-viewport-frame:hover .hero-img-display {
+      transform: scale(1.015);
+    }
+
+    .zoom-hint-overlay {
+      position: absolute;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      background: rgba(6, 8, 7, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border-default);
+      padding: 0.45rem 0.95rem;
+      border-radius: var(--radius-md);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      box-shadow: var(--shadow-sm);
+      pointer-events: none;
+    }
+
+    /* ==========================================================================
+       SECTION WRAPPERS & PERFORMANCE OPTIMIZATION
+       ========================================================================== */
+    section {
+      padding: 6rem 0;
+      position: relative;
+      z-index: 2;
+      clear: both;
+    }
+
+    @media (min-width: 1024px) {
+      section { padding: 8rem 0; }
+    }
+
+    .section-header {
+      width: 100%;
+      max-width: 50rem;
+      margin: 0 auto 3.5rem;
+      text-align: center;
+      position: relative;
+      display: block;
+    }
+
+    .section-lead-tag {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      font-weight: 700;
+      color: var(--brand-bright);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.85rem;
+      display: block;
+    }
+
+    .section-header h2 {
+      font-size: 2.25rem;
+      font-weight: 800;
+      letter-spacing: -0.035em;
+      line-height: 1.15;
+      color: var(--text-primary);
+      margin-bottom: 1.15rem;
+    }
+
+    @media (min-width: 640px) {
+      .section-header h2 { font-size: 3rem; }
+    }
+
+    .section-header p {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ==========================================================================
+       LARGE-FORMAT DEEP-DIVE FEATURE SECTIONS (Huge Moving Images)
+       ========================================================================== */
+    .feature-showcase-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+      margin-bottom: 6.5rem;
+    }
+
+    @media (min-width: 1024px) {
+      .feature-showcase-row {
+        grid-template-columns: 1fr 1.15fr;
+        gap: 4rem;
+      }
+      .feature-showcase-row.reversed {
+        grid-template-columns: 1.15fr 1fr;
+      }
+      .feature-showcase-row.reversed .feature-showcase-text {
+        order: 2;
+      }
+      .feature-showcase-row.reversed .feature-showcase-media {
+        order: 1;
+      }
+    }
+
+    .feature-showcase-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .feature-num {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--brand-bright);
+    }
+
+    .feature-showcase-text h3 {
+      font-size: 1.85rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      color: var(--text-primary);
+    }
+
+    @media (min-width: 640px) {
+      .feature-showcase-text h3 { font-size: 2.25rem; }
+    }
+
+    .feature-showcase-text p {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    .feature-metric-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .feature-metric-item strong {
+      display: block;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+
+    .feature-metric-item span {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .feature-showcase-media {
+      position: relative;
+    }
+
+    .feature-glass-frame {
+      position: relative;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(180deg, #141c16 0%, #0a0e0b 100%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.9), 0 0 50px -15px var(--brand-glow), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .feature-glass-frame img {
+      display: block;
+      width: 100%;
+      height: auto;
+      object-fit: cover;
+      transition: transform 0.35s ease;
+    }
+
+    .feature-glass-frame:hover img {
+      transform: scale(1.025);
+    }
+
+    /* ==========================================================================
+       REAL-TIME ARCHITECTURE & MODEL PROVIDER MATRIX
+       ========================================================================== */
+    .model-engine-console {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr;
+      margin-top: 1rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    @media (min-width: 1024px) {
+      .model-engine-console {
+        grid-template-columns: 340px 1fr;
+      }
+    }
+
+    .engine-list {
+      background: #090c0a;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    @media (min-width: 1024px) {
+      .engine-list {
+        border-bottom: none;
+        border-right: 1px solid var(--border-subtle);
+      }
+    }
+
+    .engine-item-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1rem;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.18s ease;
+    }
+
+    .engine-item-btn:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    .engine-item-btn.active {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #ffffff;
+      box-shadow: 0 4px 16px -4px rgba(16, 185, 129, 0.25);
+    }
+
+    .engine-name {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .engine-tag {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--brand-bright);
+    }
+
+    .engine-content-stage {
+      padding: 2.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+      background: #060807;
+    }
+
+    .engine-header-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 1.25rem;
+    }
+
+    .engine-header-meta h3 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .engine-spec-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+
+    .engine-spec-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-sm);
+      background: var(--bg-surface-raised);
+    }
+
+    .engine-spec-tag.tag-brand {
+      color: var(--brand-bright);
+      border-color: rgba(16, 185, 129, 0.3);
+      background: rgba(16, 185, 129, 0.08);
+    }
+
+    .arch-card-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.25rem;
+    }
+
+    @media (min-width: 768px) {
+      .arch-card-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .arch-spec-box {
+      background: var(--bg-surface-raised);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 1.35rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .arch-spec-box-title {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--brand-bright);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .arch-models-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .arch-model-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      background: #080b09;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--text-primary);
+    }
+
+    .arch-model-row span.meta {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+    }
+
+    /* ==========================================================================
+        DOWNLOAD & QUICK START SECTION
+        ========================================================================== */
+    .download-panel {
+      background: linear-gradient(180deg, var(--bg-surface) 0%, #060807 100%);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-xl);
+      padding: 3.5rem 1.5rem;
+      box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      text-align: center;
+    }
+
+    @media (min-width: 768px) {
+      .download-panel { padding: 4.5rem 3.5rem; }
+    }
+
+    .dl-cards-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-bottom: 3.5rem;
+      text-align: left;
+    }
+
+    @media (min-width: 768px) {
+      .dl-cards-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    .os-card {
+      background: var(--bg-surface-raised);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .os-card:hover {
+      border-color: rgba(16, 185, 129, 0.4);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-md), 0 0 25px rgba(16, 185, 129, 0.15);
+    }
+
+    .os-card-icon {
+      width: 3rem;
+      height: 3rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      color: var(--brand-bright);
+    }
+
+    .os-card-info h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .os-card-info p {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .terminal-box {
+      max-width: 48rem;
+      margin: 0 auto;
+      background: #040605;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+      text-align: left;
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.25rem;
+      background: var(--bg-surface-raised);
+      border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .terminal-content-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.15rem 1.35rem;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--text-primary);
+      gap: 1rem;
+    }
+
+    .terminal-cmd {
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .terminal-cmd .prompt-sym {
+      color: var(--brand-bright);
+      margin-right: 0.5rem;
+      user-select: none;
+    }
+
+    .copy-btn {
+      padding: 0.4rem 0.85rem;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    .copy-btn.copied {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: var(--brand-bright);
+      color: var(--brand-bright);
+    }
+
+    /* ==========================================================================
+       FAQ (Clean Accordion with Rich Semantic HTML)
+       ========================================================================== */
+    .faq-stack {
+      max-width: 50rem;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .faq-block {
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      background: var(--bg-surface);
+      overflow: hidden;
+      transition: border-color 0.2s ease;
+    }
+
+    .faq-block[open] {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .faq-block summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.35rem 1.65rem;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      user-select: none;
+    }
+
+    .faq-block summary::-webkit-details-marker { display: none; }
+
+    .faq-toggle-icon {
+      font-size: 1.25rem;
+      font-weight: 400;
+      color: var(--text-muted);
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+
+    .faq-block[open] .faq-toggle-icon {
+      transform: rotate(45deg);
+      color: var(--brand-bright);
+    }
+
+    .faq-drawer {
+      padding: 0 1.65rem 1.5rem;
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ==========================================================================
+        FULLSCREEN SCREENSHOT LIGHTBOX MODAL
+       ========================================================================== */
+    .lightbox-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.92);
+      backdrop-filter: blur(20px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      cursor: zoom-out;
+    }
+
+    .lightbox-modal.active {
+      display: flex;
+    }
+
+    .lightbox-modal[hidden] {
+      display: none !important;
+    }
+
+    .lightbox-img {
+      max-width: 94vw;
+      max-height: 90vh;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 30px 100px rgba(0, 0, 0, 0.95);
+      object-fit: contain;
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: 1.5rem;
+      right: 1.5rem;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1.25rem;
+    }
+
+    /* ==========================================================================
+       FOOTER
+       ========================================================================== */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      background: #040605;
+      padding: 4rem 0 3rem;
+      position: relative;
+      z-index: 2;
+    }
+
+    .footer-flex {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 2rem;
+      text-align: center;
+    }
+
+    @media (min-width: 768px) {
+      .footer-flex {
+        flex-direction: row;
+        text-align: left;
+      }
+    }
+
+    .footer-brand-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .footer-brand-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .footer-nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .footer-nav-links a { color: var(--text-secondary); }
+    .footer-nav-links a:hover { color: var(--brand-bright); }
+
+    .footer-sub-bar {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    @media (min-width: 768px) {
+      .footer-sub-bar { flex-direction: row; }
+    }
+
+    /* ==========================================================================
+        ACCESSIBILITY — RESPECT prefers-reduced-motion
+        Disables smooth scrolling, the pulse-beacon animation, and all
+        transitions for users who opt out of motion at the OS level.
+        The background particle canvas is gated in JS via matchMedia.
+        ========================================================================== */
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+      .pulse-beacon {
+        animation: none;
+      }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Tactile Film Grain Overlay -->
+  <div class="grain-layer" aria-hidden="true"></div>
+
+  <!-- High-Performance Background Canvas -->
+  <div class="bg-canvas-wrap" aria-hidden="true">
+    <canvas id="bg-canvas"></canvas>
+  </div>
+
+  <!-- Volumetric Aurora Lights -->
+  <div class="ambient-aurora" aria-hidden="true">
+    <div class="aurora-orb aurora-orb-1"></div>
+    <div class="aurora-orb aurora-orb-2"></div>
+  </div>
+
+  <!-- Fullscreen Screenshot Lightbox -->
+  <div class="lightbox-modal" id="lightbox-modal" role="dialog" aria-modal="true" aria-label="HermOS screenshot preview" aria-hidden="true" hidden>
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close Preview">&times;</button>
+    <img id="lightbox-image" class="lightbox-img" src="" alt="HermOS Fullscreen Preview" width="1600" height="1000" tabindex="0" />
+  </div>
+
+  <!-- ======================================================================
+       HEADER
+       ====================================================================== -->
+  <header class="site-header">
+    <div class="container">
+      <div class="nav">
+        <a class="nav-brand" href="#top" aria-label="HermOS Home">
+          <div class="brand-icon">
+            <svg width="18" height="18" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M10 8v16M22 8v16M10 16h12" stroke="#10b981" stroke-width="3" stroke-linecap="round" />
+              <circle cx="16" cy="24.5" r="2" fill="#34d399" />
+            </svg>
+          </div>
+          <span>HermOS</span>
+        </a>
+
+        <nav class="nav-links" id="primary-nav" aria-label="Primary Navigation">
+          <a href="#features">Architecture</a>
+          <a href="#providers">Providers</a>
+          <a href="#faq">FAQ</a>
+          <a href="https://github.com/WFekik/HermOS-IDE" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:0.4rem;">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" /><path d="M9 18c-4.51 2-5-2-7-2" /></svg>
+            GitHub
+          </a>
+        </nav>
+
+        <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="18" y2="18"/></svg>
+          Menu
+        </button>
+
+        <div class="nav-actions">
+          <a class="btn btn-sm btn-primary" href="#download">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+            Download Free
+          </a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ======================================================================
+         HERO SECTION (Monumental Floating IDE Showcase)
+         ====================================================================== -->
+    <section class="hero" id="hero-section">
+      <div class="container">
+        <div class="hero-eyebrow">
+          <span class="eyebrow-line"></span>
+          <span>100% Local-First · Zero Telemetry · MIT Open Source</span>
+          <span class="eyebrow-line"></span>
+        </div>
+
+        <h1>The Local-First <span class="highlight-text">AI Agent IDE</span></h1>
+
+        <p class="hero-sub">
+          Autonomous multi-step coding missions that execute directly on your local workstation. Edits files, runs sandboxed terminal processes, and controls browsers without transmitting your project code to cloud servers.
+        </p>
+
+        <div class="hero-cta-group">
+          <a class="btn btn-lg btn-primary" href="#download">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+            Download HermOS Free
+          </a>
+          <a class="btn btn-lg btn-secondary" href="https://github.com/WFekik/HermOS-IDE" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+            View Source Code
+          </a>
+        </div>
+
+        <!-- Monumental Floating Viewport Stage -->
+        <div class="hero-viewport-stage">
+          <!-- Viewport Tab Navigation -->
+          <div class="viewport-nav-bar" role="group" aria-label="IDE View Switcher">
+            <button class="view-tab active" data-img="hermos1.webp" data-title="hermos-ide — main workspace &amp; code editor" aria-pressed="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+              Main Workspace
+            </button>
+            <button class="view-tab" data-img="hermos3.webp" data-title="hermos-ide — autonomous agent reasoning &amp; subagents" aria-pressed="false">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/></svg>
+              Agent Run &amp; Subagents
+            </button>
+            <button class="view-tab" data-img="hermos5.webp" data-title="hermos-ide — local token radar &amp; usage metrics" aria-pressed="false">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              Usage Analytics
+            </button>
+            <button class="view-tab" data-img="hermos6.webp" data-title="hermos-ide — visual Git diff &amp; staging panel" aria-pressed="false">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              Git Checkpoints
+            </button>
+          </div>
+
+          <!-- Huge Floating Main IDE Frame -->
+          <div class="floating-viewport-frame" id="hero-frame" title="Click to view full resolution" tabindex="0" role="button" aria-haspopup="dialog" aria-label="Zoom screenshot: HermOS Main Workspace Interface">
+            <div class="frame-titlebar">
+              <div class="frame-dots">
+                <span class="frame-dot dot-r"></span>
+                <span class="frame-dot dot-y"></span>
+                <span class="frame-dot dot-g"></span>
+              </div>
+              <div class="frame-title-badge" id="hero-title-text">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg>
+                <span>hermos-ide — main workspace &amp; code editor</span>
+              </div>
+              <div class="frame-live-indicator" aria-hidden="true">
+                <span class="pulse-beacon"></span>
+                <span>SCREENSHOT PREVIEW</span>
+              </div>
+            </div>
+
+            <div class="frame-image-wrap">
+              <img id="hero-main-img" class="hero-img-display" src="hermos1.webp" alt="HermOS Main Workspace Interface" width="1918" height="991" loading="eager" fetchpriority="high" decoding="async" />
+              <div class="zoom-hint-overlay">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+                <span>View Full Resolution</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         LARGE-FORMAT DEEP DIVES (Showing High-Res Showcase Panels)
+         ====================================================================== -->
+    <section id="features">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-lead-tag">Engineered For Autonomy</span>
+          <h2>Autonomous capabilities that run on your machine</h2>
+          <p>Everything runs as native child processes on your workstation with zero telemetry and full sandboxing.</p>
+        </div>
+
+        <!-- Showcase 1: Agent & Subagents -->
+        <article class="feature-showcase-row">
+          <div class="feature-showcase-text">
+            <span class="feature-num">01 / AUTONOMOUS WORKERS</span>
+            <h3>Subagent tree orchestration for parallel missions</h3>
+            <p>
+              When tackling complex refactors or multi-file features, HermOS decomposes the problem and forks background subagents. One agent investigates schemas while another writes unit tests and verifies fixes.
+            </p>
+            <div class="feature-metric-strip">
+              <div class="feature-metric-item">
+                <strong>Subagent Trees</strong>
+                <span>Independent forks</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>MCP</strong>
+                <span>Tool integration</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>Headless Browser</strong>
+                <span>Live DOM testing</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="feature-showcase-media">
+            <div class="feature-glass-frame zoomable" data-img="hermos3.webp" title="Click to inspect Agent Run at full resolution" tabindex="0" role="button" aria-haspopup="dialog" aria-label="Zoom screenshot: HermOS Autonomous Agent and Subagent reasoning view">
+              <img src="hermos3.webp" srcset="hermos3-1280.webp 1280w, hermos3.webp 1919w" sizes="(min-width: 1024px) 640px, 92vw" alt="HermOS Autonomous Agent and Subagent reasoning view" width="1919" height="992" loading="lazy" decoding="async" />
+            </div>
+          </div>
+        </article>
+
+        <!-- Showcase 2: Usage Analytics & Telemetry -->
+        <article class="feature-showcase-row reversed">
+          <div class="feature-showcase-text">
+            <span class="feature-num">02 / LOCAL TELEMETRY</span>
+            <h3>Real-time token analytics stored in local SQLite</h3>
+            <p>
+              Monitor token consumption, prompt cache hit ratios, and model execution latency without a single byte of telemetry leaving your computer. All charts are rendered from your embedded SQLite store.
+            </p>
+            <div class="feature-metric-strip">
+              <div class="feature-metric-item">
+                <strong>0 Bytes Cloud</strong>
+                <span>Zero telemetry</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>SQLite Embedded</strong>
+                <span>Local analytics</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>Cache Radar</strong>
+                <span>Latency metrics</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="feature-showcase-media">
+            <div class="feature-glass-frame zoomable" data-img="hermos5.webp" title="Click to inspect Usage Dashboard at full resolution" tabindex="0" role="button" aria-haspopup="dialog" aria-label="Zoom screenshot: HermOS Local Token Usage Radar and analytics">
+              <img src="hermos5.webp" srcset="hermos5-1280.webp 1280w, hermos5.webp 1600w" sizes="(min-width: 1024px) 640px, 92vw" alt="HermOS Local Token Usage Radar and analytics" width="1600" height="1000" loading="lazy" decoding="async" />
+            </div>
+          </div>
+        </article>
+
+        <!-- Showcase 3: Visual Git Diff Review -->
+        <article class="feature-showcase-row">
+          <div class="feature-showcase-text">
+            <span class="feature-num">03 / ATOMIC CHECKPOINTS</span>
+            <h3>Line-by-line visual diffs with 1-click rollback</h3>
+            <p>
+              Inspect every change proposed by an agent before it commits. Review visual split diffs, staging states, branch trees, and roll back atomic checkpoints seamlessly.
+            </p>
+            <div class="feature-metric-strip">
+              <div class="feature-metric-item">
+                <strong>Visual Diffs</strong>
+                <span>Syntax highlighted</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>Checkpoints</strong>
+                <span>Instant undo</span>
+              </div>
+              <div class="feature-metric-item">
+                <strong>Native Git</strong>
+                <span>Direct repository sync</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="feature-showcase-media">
+            <div class="feature-glass-frame zoomable" data-img="hermos6.webp" title="Click to inspect Git Integration at full resolution" tabindex="0" role="button" aria-haspopup="dialog" aria-label="Zoom screenshot: HermOS Git Diff Panel and branch checkpoint manager">
+              <img src="hermos6.webp" srcset="hermos6-1280.webp 1280w, hermos6.webp 1600w" sizes="(min-width: 1024px) 640px, 92vw" alt="HermOS Git Diff Panel and branch checkpoint manager" width="1600" height="1000" loading="lazy" decoding="async" />
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         REAL-TIME ARCHITECTURE & MODEL PROVIDER MATRIX
+         ====================================================================== -->
+    <section id="providers">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-lead-tag">Universal BYOK &amp; Inference Matrix</span>
+          <h2>Connect Any Foundation Model or Local Offline Engine</h2>
+          <p>Zero vendor markup. Bring your own keys or run 100% offline and air-gapped on your local hardware.</p>
+        </div>
+
+        <div class="model-engine-console">
+          <!-- Provider Switcher -->
+          <div class="engine-list" role="group" aria-label="Model Engine Selector">
+            <button class="engine-item-btn active" data-provider="ollama" aria-pressed="true">
+              <div class="engine-name">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.5"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M7 7h10v10H7z"></path></svg>
+                <span>Local Ollama / vLLM</span>
+              </div>
+              <span class="engine-tag">100% Offline</span>
+            </button>
+
+            <button class="engine-item-btn" data-provider="anthropic" aria-pressed="false">
+              <div class="engine-name">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                <span>Anthropic Claude</span>
+              </div>
+              <span class="engine-tag">Direct HTTPS</span>
+            </button>
+
+            <button class="engine-item-btn" data-provider="groq" aria-pressed="false">
+              <div class="engine-name">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f55036" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                <span>Groq LPU</span>
+              </div>
+              <span class="engine-tag">500 T/s</span>
+            </button>
+
+            <button class="engine-item-btn" data-provider="nvidia" aria-pressed="false">
+              <div class="engine-name">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#76b900" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path></svg>
+                <span>NVIDIA NIM</span>
+              </div>
+              <span class="engine-tag">Enterprise</span>
+            </button>
+
+            <button class="engine-item-btn" data-provider="custom" aria-pressed="false">
+              <div class="engine-name">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                <span>OpenAI &amp; Custom API</span>
+              </div>
+              <span class="engine-tag">Compatible</span>
+            </button>
+          </div>
+
+          <!-- Dynamic Real Architecture Stage -->
+          <div class="engine-content-stage" id="engine-stage">
+            <div class="engine-header-meta">
+              <div>
+                <h3 id="arch-title">Local Offline Inference (Ollama / vLLM / SGLang)</h3>
+                <p id="arch-sub" style="font-size:0.875rem;color:var(--text-secondary);margin-top:0.25rem;">
+                  Air-gapped local inference. Zero API costs, zero internet required.
+                </p>
+              </div>
+              <div class="engine-spec-tags">
+                <span class="engine-spec-tag tag-brand" id="arch-badge-1">Endpoint: http://127.0.0.1:11434/v1</span>
+                <span class="engine-spec-tag" id="arch-badge-2">Zero Cloud Telemetry</span>
+              </div>
+            </div>
+
+            <!-- Architecture Grid -->
+            <div class="arch-card-grid">
+              <div class="arch-spec-box">
+                <div class="arch-spec-box-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                  <span>Supported Model Architecture</span>
+                </div>
+                <div class="arch-models-list" id="arch-models-container">
+                  <div class="arch-model-row">
+                    <span>qwen2.5-coder</span>
+                    <span class="meta">Code AST &amp; Refactoring Specialist</span>
+                  </div>
+                  <div class="arch-model-row">
+                    <span>deepseek-r1</span>
+                    <span class="meta">Chain-of-Thought Reasoning</span>
+                  </div>
+                  <div class="arch-model-row">
+                    <span>llama-3.3</span>
+                    <span class="meta">Autonomous Task Planning</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="arch-spec-box">
+                <div class="arch-spec-box-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  <span>Key Security &amp; Privacy</span>
+                </div>
+                <p id="arch-sec-desc" style="font-size:0.8125rem;color:var(--text-secondary);line-height:1.6;">
+                  No API key required. HermOS connects directly to localhost port 11434 with zero external telemetry or cloud mediation.
+                </p>
+                <div style="margin-top:auto;padding-top:0.75rem;border-top:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:0.75rem;color:var(--brand-bright);">
+                  ✓ AES-256-GCM Encrypted Local Key Storage
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         DOWNLOAD & QUICK START
+         ====================================================================== -->
+    <section id="download">
+      <div class="container">
+        <div class="download-panel">
+          <div class="section-header" style="margin-bottom:3rem;">
+            <span class="section-lead-tag">Native Desktop Installers</span>
+            <h2>Download HermOS Free</h2>
+            <p>Runs natively on Windows, macOS, and Linux with no account required.</p>
+          </div>
+
+          <div class="dl-cards-grid">
+            <!-- Windows -->
+            <div class="os-card">
+              <div class="os-card-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+              </div>
+              <div class="os-card-info">
+                <h3>Windows</h3>
+                <p>Windows 10 / 11 · 64-bit .msi installer</p>
+              </div>
+              <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS%20IDE_1.0.0_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
+                Download for Windows
+              </a>
+            </div>
+
+            <!-- macOS -->
+            <div class="os-card">
+              <div class="os-card-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
+              </div>
+              <div class="os-card-info">
+                <h3>macOS</h3>
+                <p>Apple Silicon &amp; Intel · universal .dmg</p>
+              </div>
+              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS%20IDE_1.0.0_universal.dmg" target="_blank" rel="noopener noreferrer">
+                Download for macOS
+              </a>
+            </div>
+
+            <!-- Linux -->
+            <div class="os-card">
+              <div class="os-card-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg>
+              </div>
+              <div class="os-card-info">
+                <h3>Linux</h3>
+                <p>Ubuntu / Debian 64-bit · .deb package</p>
+              </div>
+              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS%20IDE_1.0.0_amd64.deb" target="_blank" rel="noopener noreferrer">
+                Download for Linux
+              </a>
+            </div>
+          </div>
+
+          <div style="text-align:center;margin-top:1.5rem;margin-bottom:2rem;">
+            <a href="https://github.com/WFekik/HermOS-IDE/releases/latest" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);font-size:0.85rem;text-decoration:underline;">
+              View all release packages (.exe setup, .AppImage, checksums) &rarr;
+            </a>
+          </div>
+
+          <!-- Quick Terminal Install Command -->
+          <div class="terminal-box">
+            <div class="terminal-header">
+              <span>RUN FROM SOURCE (NODE / GIT)</span>
+              <span>DEV SETUP</span>
+            </div>
+            <div class="terminal-content-row">
+              <div class="terminal-cmd">
+                <span class="prompt-sym">$</span>git clone https://github.com/WFekik/HermOS-IDE.git &amp;&amp; cd HermOS-IDE &amp;&amp; npm install &amp;&amp; npm run tauri dev
+              </div>
+              <button class="copy-btn" id="terminal-copy-btn" aria-label="Copy clone command">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                <span id="copy-text-label">Copy</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         FREQUENTLY ASKED QUESTIONS
+         ====================================================================== -->
+    <section id="faq">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-lead-tag">Questions &amp; Answers</span>
+          <h2>Frequently Asked Questions</h2>
+          <p>Everything you need to know about security, API keys, and local execution.</p>
+        </div>
+
+        <div class="faq-stack">
+          <details class="faq-block" open>
+            <summary>
+              <span>Is HermOS completely free and open source?</span>
+              <span class="faq-toggle-icon">+</span>
+            </summary>
+            <div class="faq-drawer">
+              Yes. HermOS is MIT licensed open source software. There are no subscriptions, paywalls, or gated "Pro" tiers. You can read, build, and modify the source code on GitHub.
+            </div>
+          </details>
+
+          <details class="faq-block">
+            <summary>
+              <span>Does HermOS send any telemetry or project code to a remote server?</span>
+              <span class="faq-toggle-icon">+</span>
+            </summary>
+            <div class="faq-drawer">
+              No. HermOS operates with zero telemetry and has no login servers. When you converse with an AI model, queries route directly from your workstation to the configured provider API using your encrypted API key.
+            </div>
+          </details>
+
+          <details class="faq-block">
+            <summary>
+              <span>Can I use HermOS with local models offline?</span>
+              <span class="faq-toggle-icon">+</span>
+            </summary>
+            <div class="faq-drawer">
+              Yes. HermOS connects seamlessly to local inference runtimes including Ollama, vLLM, and LM Studio. When paired with local models, HermOS functions 100% offline with zero internet connectivity.
+            </div>
+          </details>
+
+          <details class="faq-block">
+            <summary>
+              <span>How are API keys stored on my computer?</span>
+              <span class="faq-toggle-icon">+</span>
+            </summary>
+            <div class="faq-drawer">
+              API keys are encrypted with AES-256-GCM and stored locally on your machine — never sent to our servers (there are none). The encryption key is generated per install and never leaves your device.
+            </div>
+          </details>
+
+          <details class="faq-block">
+            <summary>
+              <span>Where can I get help or report a problem?</span>
+              <span class="faq-toggle-icon">+</span>
+            </summary>
+            <div class="faq-drawer">
+              HermOS is developed in the open on GitHub. Bug reports and feature requests go to
+              <a href="https://github.com/WFekik/HermOS-IDE/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>, and questions, ideas, or show-and-tell belong in
+              <a href="https://github.com/WFekik/HermOS-IDE/discussions" target="_blank" rel="noopener noreferrer">GitHub Discussions</a>.
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ======================================================================
+       FOOTER
+       ====================================================================== -->
+  <footer>
+    <div class="container">
+      <div class="footer-flex">
+        <div class="footer-brand-meta">
+          <div class="footer-brand-title">
+            <div class="brand-icon" style="width:1.75rem;height:1.75rem;">
+              <svg width="14" height="14" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M10 8v16M22 8v16M10 16h12" stroke="#10b981" stroke-width="3" stroke-linecap="round" />
+                <circle cx="16" cy="24.5" r="2" fill="#34d399" />
+              </svg>
+            </div>
+            <span>HermOS IDE</span>
+          </div>
+          <p style="font-size:0.8125rem;color:var(--text-muted);">Local-first autonomous AI agent IDE · MIT Licensed.</p>
+        </div>
+
+        <nav class="footer-nav-links" aria-label="Footer Navigation">
+          <a href="#features">Architecture</a>
+          <a href="#providers">Providers</a>
+          <a href="#download">Downloads</a>
+          <a href="https://github.com/WFekik/HermOS-IDE" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://github.com/WFekik/HermOS-IDE/releases/latest" target="_blank" rel="noopener noreferrer">Releases</a>
+          <a href="https://github.com/WFekik/HermOS-IDE/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+          <a href="https://github.com/WFekik/HermOS-IDE/discussions" target="_blank" rel="noopener noreferrer">Discussions</a>
+          <a href="https://github.com/WFekik/HermOS-IDE/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a>
+          <a href="https://hermos.is-a.dev/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+        </nav>
+      </div>
+
+      <div class="footer-sub-bar">
+        <span>&copy; <span id="year-val">2026</span> HermOS Contributors · MIT License</span>
+        <span>Built with Tauri 2.0 &amp; Model Context Protocol</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ======================================================================
+       HIGH-PERFORMANCE INTERACTIVE SCRIPTS (0% IDLE CPU OVERHEAD)
+       ====================================================================== -->
+  <script>
+    (function () {
+      "use strict";
+
+      // ----------------------------------------------------------------------
+      // SITE CONFIG — single source of truth for all URLs (no runtime API calls)
+      // Direct release asset URLs trigger an instant browser download.
+      // ----------------------------------------------------------------------
+      var CONFIG = {
+        base: "https://hermos.is-a.dev",
+        repo: "https://github.com/WFekik/HermOS-IDE",
+        version: "1.0.0",
+        releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
+      };
+
+      var DOWNLOAD_URLS = {
+        win: CONFIG.repo + "/releases/latest/download/HermOS%20IDE_" + CONFIG.version + "_x64_en-US.msi",
+        mac: CONFIG.repo + "/releases/latest/download/HermOS%20IDE_" + CONFIG.version + "_universal.dmg",
+        linux: CONFIG.repo + "/releases/latest/download/HermOS%20IDE_" + CONFIG.version + "_amd64.deb"
+      };
+
+      // Apply CONFIG to download buttons — instant download links per platform.
+      function updateDownloadLinks() {
+        var els = document.querySelectorAll('a[data-dl]');
+        for (var i = 0; i < els.length; i++) {
+          var platform = els[i].getAttribute('data-dl');
+          els[i].href = DOWNLOAD_URLS[platform] || CONFIG.releases;
+        }
+      }
+
+      // Keep canonical / OpenGraph / Twitter URLs derived from CONFIG.base.
+      // Strip trailing slashes before joining so we never emit "//" URLs.
+      function normalizeBaseUrl(url) {
+        return String(url || "").trim().replace(/\/{2,}$/g, "/").replace(/\/$/, "");
+      }
+
+      function syncDocumentUrls() {
+        var siteRoot = normalizeBaseUrl(CONFIG.base);
+        if (!siteRoot) return;
+        var siteUrl = siteRoot + "/";
+        var ogImageUrl = siteRoot + "/og.png";
+        var canonical = document.querySelector('link[rel="canonical"]');
+        var ogUrl = document.querySelector('meta[property="og:url"]');
+        var ogImage = document.querySelector('meta[property="og:image"]');
+        var ogImageSecure = document.querySelector('meta[property="og:image:secure_url"]');
+        var twImage = document.querySelector('meta[name="twitter:image"]');
+        if (canonical) canonical.href = siteUrl;
+        if (ogUrl) ogUrl.content = siteUrl;
+        if (ogImage) ogImage.content = ogImageUrl;
+        if (ogImageSecure) ogImageSecure.content = ogImageUrl;
+        if (twImage) twImage.content = ogImageUrl;
+      }
+
+      updateDownloadLinks();
+      syncDocumentUrls();
+
+      // ----------------------------------------------------------------------
+      // 1. HARDWARE-ACCELERATED DYNAMIC BACKGROUND CANVAS (With Auto-Sleep)
+      // Skipped entirely for users who prefer reduced motion.
+      // ----------------------------------------------------------------------
+      var prefersReducedMotion = window.matchMedia
+        && typeof window.matchMedia("(prefers-reduced-motion: reduce)").matches === "boolean"
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      var canvas = document.getElementById("bg-canvas");
+      var heroSection = document.getElementById("hero-section");
+      
+      if (canvas && canvas.getContext) {
+        var ctx = canvas.getContext("2d");
+        var width = 0, height = 0;
+        var particles = [];
+        var mouse = { x: -1000, y: -1000 };
+        var isVisible = true;
+        var isHeroInView = true;
+        var animFrameId = null;
+
+        function resize() {
+          width = canvas.width = window.innerWidth;
+          height = canvas.height = window.innerHeight;
+          createParticles();
+        }
+
+        function createParticles() {
+          particles = [];
+          var count = Math.min(Math.floor((width * height) / 25000), 40);
+          for (var i = 0; i < count; i++) {
+            particles.push({
+              x: Math.random() * width,
+              y: Math.random() * height,
+              vx: (Math.random() - 0.5) * 0.3,
+              vy: (Math.random() - 0.5) * 0.3,
+              radius: Math.random() * 1.5 + 1,
+              alpha: Math.random() * 0.3 + 0.15,
+              hue: Math.random() > 0.4 ? "160, 84%, 39%" : "187, 92%, 45%"
+            });
+          }
+        }
+
+        window.addEventListener("resize", resize, { passive: true });
+        resize();
+
+        window.addEventListener("mousemove", function (e) {
+          mouse.x = e.clientX;
+          mouse.y = e.clientY;
+        }, { passive: true });
+
+        // Auto-pause when tab is hidden
+        document.addEventListener("visibilitychange", function () {
+          isVisible = !document.hidden;
+          toggleAnimationLoop();
+        });
+
+        // IntersectionObserver: Sleep canvas when scrolled below hero section
+        if ("IntersectionObserver" in window && heroSection) {
+          var observer = new IntersectionObserver(function (entries) {
+            isHeroInView = entries[0].isIntersecting;
+            toggleAnimationLoop();
+          }, { threshold: 0.05 });
+          observer.observe(heroSection);
+        }
+
+        function toggleAnimationLoop() {
+          if (!prefersReducedMotion && isVisible && isHeroInView) {
+            if (!animFrameId) {
+              animFrameId = requestAnimationFrame(animateBg);
+            }
+          } else {
+            if (animFrameId) {
+              cancelAnimationFrame(animFrameId);
+              animFrameId = null;
+            }
+          }
+        }
+
+        function animateBg(timestamp) {
+          ctx.clearRect(0, 0, width, height);
+
+          // Interactive Cursor Light Spotlight
+          if (mouse.x > 0 && mouse.y > 0) {
+            var spotGrad = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 300);
+            spotGrad.addColorStop(0, "rgba(16, 185, 129, 0.08)");
+            spotGrad.addColorStop(0.6, "rgba(6, 182, 212, 0.02)");
+            spotGrad.addColorStop(1, "transparent");
+            ctx.fillStyle = spotGrad;
+            ctx.fillRect(0, 0, width, height);
+          }
+
+          // Batched Particle Drawing
+          var pLen = particles.length;
+          for (var i = 0; i < pLen; i++) {
+            var p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+
+            if (p.x < 0) p.x = width;
+            if (p.x > width) p.x = 0;
+            if (p.y < 0) p.y = height;
+            if (p.y > height) p.y = 0;
+
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = "hsla(" + p.hue + ", " + p.alpha + ")";
+            ctx.fill();
+
+            // Connect nearby nodes
+            for (var j = i + 1; j < pLen; j++) {
+              var p2 = particles[j];
+              var dist = Math.hypot(p.x - p2.x, p.y - p2.y);
+              if (dist < 100) {
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.strokeStyle = "rgba(16, 185, 129, " + (0.14 * (1 - dist / 100)) + ")";
+                ctx.stroke();
+              }
+            }
+          }
+
+          animFrameId = requestAnimationFrame(animateBg);
+        }
+
+        // React live if the user changes the reduced-motion preference.
+        if (window.matchMedia) {
+          var motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+          var onMotionPrefChange = function (e) {
+            prefersReducedMotion = e.matches;
+            toggleAnimationLoop();
+          };
+          if (typeof motionQuery.addEventListener === "function") {
+            motionQuery.addEventListener("change", onMotionPrefChange);
+          } else if (typeof motionQuery.addListener === "function") {
+            motionQuery.addListener(onMotionPrefChange);
+          }
+        }
+
+        toggleAnimationLoop();
+      }
+
+      // ----------------------------------------------------------------------
+      // 2. HERO VIEWPORT TAB SWITCHER
+      // ----------------------------------------------------------------------
+      var heroTabs = document.querySelectorAll(".viewport-nav-bar .view-tab");
+      var heroImg = document.getElementById("hero-main-img");
+      var heroTitle = document.getElementById("hero-title-text");
+
+      heroTabs.forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          heroTabs.forEach(function (t) {
+            t.classList.remove("active");
+            t.setAttribute("aria-pressed", "false");
+          });
+          tab.classList.add("active");
+          tab.setAttribute("aria-pressed", "true");
+
+          var targetImg = tab.getAttribute("data-img");
+          var targetTitle = tab.getAttribute("data-title");
+
+          if (heroImg && targetImg) {
+            heroImg.style.opacity = "0.3";
+            setTimeout(function () {
+              heroImg.src = targetImg;
+              heroImg.style.opacity = "1";
+            }, 100);
+          }
+
+          if (heroTitle && targetTitle) {
+            heroTitle.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg><span>' + targetTitle + '</span>';
+          }
+        });
+      });
+
+      // ----------------------------------------------------------------------
+       // 3. REAL-TIME ARCHITECTURE & MODEL PROVIDER DATA MATRIX
+      // ----------------------------------------------------------------------
+      var providerData = {
+        ollama: {
+          title: "Local Offline Inference (Ollama / vLLM / SGLang)",
+          sub: "Air-gapped local inference. Zero API costs, zero internet required.",
+          badge1: "Endpoint: http://127.0.0.1:11434/v1",
+          badge2: "Zero Cloud Telemetry",
+          models: [
+            { name: "qwen2.5-coder", meta: "Code AST & Refactoring Specialist" },
+            { name: "deepseek-r1", meta: "Chain-of-Thought Reasoning" },
+            { name: "llama-3.3", meta: "Autonomous Task Planning" }
+          ],
+          secDesc: "No API key required. HermOS connects directly to localhost port 11434 with zero external telemetry or cloud mediation."
+        },
+        anthropic: {
+          title: "Anthropic Claude (Sonnet & Thinking Series)",
+          sub: "Direct client-side HTTPS connection with native extended thinking and subagent tools.",
+          badge1: "200,000 Token Context",
+          badge2: "Direct API HTTPS",
+          models: [
+            { name: "claude-sonnet-latest", meta: "Extended Thinking & Code Architecture" },
+            { name: "claude-haiku-latest", meta: "Ultra-Fast Subagent Dispatch" },
+            { name: "claude-opus-latest", meta: "Full Architectural Reasoning" }
+          ],
+          secDesc: "API keys are encrypted with AES-256-GCM and stored locally on your machine — never sent to our servers (there are none). Queries connect directly to api.anthropic.com with no intermediate servers."
+        },
+        groq: {
+          title: "Groq LPU (Ultra-Fast Hardware Inference)",
+          sub: "Hardware-accelerated deterministic streaming with 500+ tokens per second.",
+          badge1: "500+ T/s Streaming",
+          badge2: "Ultra-Low Latency",
+          models: [
+            { name: "llama-3.3-versatile", meta: "128k Context · LPU Accelerated" },
+            { name: "deepseek-r1-distill", meta: "Sub-Second Chain of Thought" },
+            { name: "mixtral-8x7b", meta: "Fast Tool Calling" }
+          ],
+          secDesc: "Direct secure HTTPS to Groq inference cloud. API keys are encrypted with AES-256-GCM and stored locally on your machine — never sent to our servers (there are none)."
+        },
+        nvidia: {
+          title: "NVIDIA NIM & Enterprise Microservices",
+          sub: "Self-hosted GPU clusters or enterprise containerized endpoints.",
+          badge1: "Self-Hosted / Cloud NIM",
+          badge2: "Enterprise Ready",
+          models: [
+            { name: "meta/llama-3.3-instruct", meta: "128k Context · NVIDIA NIM Container" },
+            { name: "mistralai/mixtral-8x22b", meta: "64k Context · MoE Enterprise" },
+            { name: "nvidia/llama-nemotron", meta: "Custom Fine-Tuning" }
+          ],
+          secDesc: "Supports private corporate clusters and NGC cloud endpoints with custom bearer tokens and internal VPC routes. API keys stay encrypted on your machine."
+        },
+        custom: {
+          title: "OpenAI & Universal /v1 Gateways",
+          sub: "Connect any custom gateway, LiteLLM, vLLM server, or OpenAI endpoint.",
+          badge1: "OpenAI /v1 Standard",
+          badge2: "Universal Gateway",
+          models: [
+            { name: "gpt-4o / o3-series", meta: "128k Context · Multimodal AST Reasoning" },
+            { name: "deepseek-v3 / r1", meta: "High-Throughput Open API" },
+            { name: "custom:local-gateway", meta: "Any Custom Host / Port" }
+          ],
+          secDesc: "Full support for custom base URLs, custom headers, and self-hosted LiteLLM gateways. API keys are encrypted with AES-256-GCM and stored locally on your machine."
+        }
+      };
+
+      var engineBtns = document.querySelectorAll(".engine-item-btn");
+      var archTitle = document.getElementById("arch-title");
+      var archSub = document.getElementById("arch-sub");
+      var archBadge1 = document.getElementById("arch-badge-1");
+      var archBadge2 = document.getElementById("arch-badge-2");
+      var archModelsContainer = document.getElementById("arch-models-container");
+      var archSecDesc = document.getElementById("arch-sec-desc");
+
+      engineBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          engineBtns.forEach(function (b) {
+            b.classList.remove("active");
+            b.setAttribute("aria-pressed", "false");
+          });
+          btn.classList.add("active");
+          btn.setAttribute("aria-pressed", "true");
+
+          var pKey = btn.getAttribute("data-provider");
+          var data = providerData[pKey];
+          if (!data) return;
+
+          if (archTitle) archTitle.textContent = data.title;
+          if (archSub) archSub.textContent = data.sub;
+          if (archBadge1) archBadge1.textContent = data.badge1;
+          if (archBadge2) archBadge2.textContent = data.badge2;
+          if (archSecDesc) archSecDesc.textContent = data.secDesc;
+
+          if (archModelsContainer && data.models) {
+            archModelsContainer.innerHTML = data.models.map(function (m) {
+              return '<div class="arch-model-row"><span>' + m.name + '</span><span class="meta">' + m.meta + '</span></div>';
+            }).join("");
+          }
+        });
+      });
+
+      // ----------------------------------------------------------------------
+      // 4. FULLSCREEN SCREENSHOT LIGHTBOX
+      // ----------------------------------------------------------------------
+      var lightbox = document.getElementById("lightbox-modal");
+      var lightboxImg = document.getElementById("lightbox-image");
+      var lightboxClose = document.getElementById("lightbox-close");
+      var lastLightboxTrigger = null;
+
+      function openLightbox(src, trigger) {
+        if (!lightbox || !lightboxImg) return;
+        lastLightboxTrigger = trigger || null;
+        lightboxImg.src = src;
+        lightbox.classList.add("active");
+        lightbox.removeAttribute("hidden");
+        lightbox.setAttribute("aria-hidden", "false");
+        if (lightboxClose) lightboxClose.focus();
+      }
+
+      function closeLightbox() {
+        if (!lightbox) return;
+        lightbox.classList.remove("active");
+        lightbox.setAttribute("hidden", "");
+        lightbox.setAttribute("aria-hidden", "true");
+        if (lastLightboxTrigger && typeof lastLightboxTrigger.focus === "function") {
+          lastLightboxTrigger.focus();
+        }
+      }
+
+      function triggerKeydown(e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          this.click();
+        }
+      }
+
+      var heroFrame = document.getElementById("hero-frame");
+      if (heroFrame) {
+        heroFrame.addEventListener("click", function () {
+          if (heroImg) openLightbox(heroImg.src, heroFrame);
+        });
+        heroFrame.addEventListener("keydown", triggerKeydown);
+      }
+
+      document.querySelectorAll(".zoomable").forEach(function (el) {
+        el.addEventListener("click", function () {
+          var img = el.querySelector("img");
+          if (img) openLightbox(img.src, el);
+        });
+        el.addEventListener("keydown", triggerKeydown);
+      });
+
+      if (lightboxClose) lightboxClose.addEventListener("click", closeLightbox);
+      if (lightbox) {
+        lightbox.addEventListener("click", function (e) {
+          if (e.target === lightbox || e.target === lightboxClose) closeLightbox();
+        });
+        // Focus trap: Tab cycles between the close button and the image.
+        lightbox.addEventListener("keydown", function (e) {
+          if (e.key !== "Tab") return;
+          var focusables = [];
+          if (lightboxClose) focusables.push(lightboxClose);
+          if (lightboxImg) focusables.push(lightboxImg);
+          if (focusables.length < 2) return;
+          var first = focusables[0];
+          var last = focusables[focusables.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        });
+      }
+      window.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeLightbox();
+      });
+
+      // ----------------------------------------------------------------------
+      // 5. TERMINAL ONE-CLICK CLIPBOARD
+      // ----------------------------------------------------------------------
+      var copyBtn = document.getElementById("terminal-copy-btn");
+      var copyLabel = document.getElementById("copy-text-label");
+      var copyCmd = "git clone " + CONFIG.repo + ".git && cd HermOS-IDE && npm install && npm run tauri dev";
+
+      if (copyBtn) {
+        copyBtn.addEventListener("click", function () {
+          navigator.clipboard.writeText(copyCmd).then(function () {
+            copyBtn.classList.add("copied");
+            if (copyLabel) copyLabel.textContent = "Copied!";
+            setTimeout(function () {
+              copyBtn.classList.remove("copied");
+              if (copyLabel) copyLabel.textContent = "Copy";
+            }, 2000);
+          }).catch(function () {});
+        });
+      }
+
+      // Dynamic Year
+      var yEl = document.getElementById("year-val");
+      if (yEl) yEl.textContent = new Date().getFullYear();
+
+      // ----------------------------------------------------------------------
+      // 6. MOBILE NAVIGATION TOGGLE
+      // ----------------------------------------------------------------------
+      var navToggle = document.getElementById("nav-toggle");
+      var primaryNav = document.getElementById("primary-nav");
+      if (navToggle && primaryNav) {
+        navToggle.addEventListener("click", function () {
+          var open = primaryNav.classList.toggle("open");
+          navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        primaryNav.querySelectorAll("a").forEach(function (a) {
+          a.addEventListener("click", function () {
+            primaryNav.classList.remove("open");
+            navToggle.setAttribute("aria-expanded", "false");
+          });
+        });
+      }
+
+    })();
+  </script>
+
+</body>
+</html>

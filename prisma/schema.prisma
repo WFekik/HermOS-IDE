@@ -1,0 +1,235 @@
+// SQLite datasource. Lists/JSON stored as String (JSON-serialized).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  avatar        String?
+  provider      String   @default("local") // local
+  oauthSub      String?
+  role          String   @default("user") // user | admin
+  workspaceName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conversations Conversation[]
+  providerKeys  ProviderKey[]
+  mcpServers    McpServer[]
+  plugins       Plugin[]
+  agentPresets  AgentPreset[]
+  auditLogs     AuditLog[]
+  workspaces    Workspace[]
+  attachments   Attachment[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  rootDir   String // absolute path to the user's folder on disk
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model Conversation {
+  id           String   @id @default(cuid())
+  userId       String
+  title        String   @default("New conversation")
+  provider     String   @default("free")
+  model        String   @default("auto")
+  systemPrompt String?
+  mode         String   @default("agent") // agent | chat | architect
+  pinned       Boolean  @default(false)
+  workspaceId  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  messages    Message[]
+  tools       ToolExecution[]
+  attachments Attachment[]
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([updatedAt])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String // user | assistant | tool | system
+  content        String
+  thinking       String? // AI reasoning/thinking content (persisted for assistant messages)
+  toolCalls      String? // JSON: [{ id, name, args }]
+  toolCallId     String?
+  model          String?
+  provider       String?
+  tokensIn       Int      @default(0)
+  tokensOut      Int      @default(0)
+  promptTokens   Int      @default(0) // provider-measured input tokens of the last request (0 = not reported)
+  cacheWrites    Int      @default(0) // provider-measured cache-creation input tokens
+  cacheReads     Int      @default(0) // provider-measured cache-read input tokens
+  latencyMs      Int      @default(0)
+  segments       String? // JSON serialized array of MessageSegment
+  attachments    String? // JSON: [{ id, name, type, size, path }]
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])
+}
+
+model Attachment {
+  id             String   @id @default(cuid())
+  conversationId String
+  messageId      String? // null until the user message is persisted
+  userId         String
+  name           String
+  type           String // MIME type
+  size           Int // bytes
+  path           String // server-side absolute path under <workspaces>/.uploads
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model ProviderKey {
+  id           String   @id @default(cuid())
+  userId       String
+  provider     String // openrouter | openai | anthropic | groq | mistral | together | custom | nvidia | zen
+  encryptedKey String // AES-GCM base64
+  keyHint      String // last 4 chars masked
+  baseUrl      String?
+  models       String? // JSON string[]
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model McpServer {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  transport String   @default("stdio") // stdio | sse | streamable-http
+  command   String? // for stdio
+  args      String? // JSON string[]
+  env       String? // JSON record
+  url       String? // for sse/http
+  headers   String? // JSON record
+  status    String   @default("disconnected") // connected | disconnected | error
+  lastError String?
+  tools     String? // JSON McpTool[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Plugin {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  type        String   @default("plugin") // plugin | skill
+  version     String   @default("1.0.0")
+  source      String   @default("local") // local | marketplace | url
+  manifest    String? // JSON
+  enabled     Boolean  @default(true)
+  config      String? // JSON
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model AgentPreset {
+  id           String   @id @default(cuid())
+  userId       String?
+  name         String
+  description  String?
+  icon         String?
+  systemPrompt String
+  provider     String   @default("free")
+  model        String   @default("auto")
+  tools        String? // JSON string[]
+  temperature  Float    @default(0.7)
+  isBuiltin    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Built-ins are global (one per name) — key on (isBuiltin, name).
+  // User presets are scoped per user — key on (userId, name). SQLite
+  // treats NULLs as distinct in UNIQUE indexes, so these two constraints
+  // don't interfere with each other: built-ins carry userId=null and are
+  // uniqued by name only; user presets carry userId=set and are uniqued
+  // per (userId, name).
+  @@unique([isBuiltin, name])
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model ToolExecution {
+  id             String   @id @default(cuid())
+  conversationId String
+  toolName       String
+  input          String? // JSON
+  output         String? // JSON
+  status         String   @default("success") // success | error | running
+  durationMs     Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  details   String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

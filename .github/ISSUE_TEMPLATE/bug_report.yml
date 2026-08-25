@@ -1,0 +1,69 @@
+name: "🐛 Bug Report"
+description: File a bug report to help improve HermOS IDE
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please ensure you do not share any private API keys or proprietary source code in your issue description.
+  - type: input
+    id: version
+    attributes:
+      label: HermOS Version
+      description: What version of HermOS IDE are you running? (e.g. v1.0.0 or built from source)
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you using?
+      options:
+        - Windows 11 / 10
+        - macOS (Apple Silicon - M1/M2/M3/M4)
+        - macOS (Intel)
+        - Linux (Ubuntu / Debian)
+        - Linux (Fedora / Arch)
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Active AI Provider
+      description: Which model provider was active when the bug occurred?
+      options:
+        - Local Ollama / vLLM
+        - Anthropic (Claude)
+        - Groq LPU
+        - NVIDIA NIM
+        - OpenAI / Custom API Gateway
+        - Puter / OpenCode
+        - None / Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what happened vs what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Open folder '...'
+        2. Prompt agent with '...'
+        3. Observe error '...'
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs / Error Snippets
+      description: Paste any error outputs or console messages (sanitize private data first).
+      render: shell

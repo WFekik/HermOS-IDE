@@ -1,0 +1,28 @@
+name: "✨ Feature Request"
+description: Suggest an idea or capability for HermOS IDE
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggest a new feature or improvement for HermOS IDE!
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+      description: A clear description of the feature or enhancement you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement / Use Case
+      description: What problem does this solve or what workflow does this enable?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or features?
