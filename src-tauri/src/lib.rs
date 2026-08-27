@@ -15,31 +15,60 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const PORT_RANGE_START: u16 = 3001;
 const PORT_RANGE_END: u16 = 3999;
 
-/// How long to wait for the Node server before creating the window.
-const STARTUP_WAIT_SECS: u64 = 5;
-/// Overall readiness budget; if the server never comes up within this many
-/// seconds the webview keeps showing the connection error.
-const TOTAL_WAIT_SECS: u64 = 30;
-
 const ENC_KEY_FILE: &str = ".enc_key";
 const SECRET_KEY_FILE: &str = ".secret_key";
 
-/// Locate the bundled Node.js sidecar inside the Tauri resource directory.
-/// The bundler renames external binaries to include the target triple
-/// (e.g. node-x86_64-pc-windows-msvc.exe), so the exact filename depends
-/// on the build target. Scanning for the node-* pattern is robust
-/// across targets and Tauri versions.
-fn find_bundled_node(resource_dir: &Path) -> Option<PathBuf> {
-  let entries = std::fs::read_dir(resource_dir).ok()?;
-  entries
+/// Locate the bundled Node.js sidecar. Tauri `externalBin` sidecars may be
+/// placed next to the executable (Windows NSIS), in a binaries folder, or inside
+/// the resource dir depending on bundler version/target.
+fn find_bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
+  let mut search_dirs = Vec::new();
+  if let Ok(d) = app.path().resource_dir() {
+    search_dirs.push(d.clone());
+    search_dirs.push(d.join("binaries"));
+    search_dirs.push(d.join("resources"));
+    search_dirs.push(d.join("resources").join("binaries"));
+  }
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(parent) = exe.parent() {
+      search_dirs.push(parent.to_path_buf());
+      search_dirs.push(parent.join("binaries"));
+      search_dirs.push(parent.join("resources"));
+      search_dirs.push(parent.join("resources").join("binaries"));
+      if let Some(grandparent) = parent.parent() {
+        search_dirs.push(grandparent.to_path_buf());
+        search_dirs.push(grandparent.join("resources"));
+      }
+    }
+  }
+  for dir in search_dirs {
+    if dir.exists() {
+      if let Some(p) = find_node_in_dir(&dir) {
+        return Some(p);
+      }
+    }
+  }
+  None
+}
+
+fn find_node_in_dir(dir: &Path) -> Option<PathBuf> {
+  let entries = std::fs::read_dir(dir).ok()?;
+  let mut candidates: Vec<PathBuf> = entries
     .filter_map(|e| e.ok())
     .map(|e| e.path())
     .filter(|p| {
-      p.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("node-") && (n.ends_with(".exe") || !n.contains('.')))
+      let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+      n == "node" || n == "node.exe" || (n.starts_with("node-") && (n.ends_with(".exe") || !n.contains('.')))
     })
-    .max() // Pick deterministic match
+    .collect();
+  candidates.sort_by(|a, b| {
+    let an = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let bn = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let a_score = if an == "node.exe" || an == "node" { 2 } else { 1 };
+    let b_score = if bn == "node.exe" || bn == "node" { 2 } else { 1 };
+    b_score.cmp(&a_score).then_with(|| b.file_name().cmp(&a.file_name()))
+  });
+  candidates.into_iter().next()
 }
 
 /// Tauri command: Open a native folder picker and return the selected path.
@@ -59,10 +88,7 @@ fn pick_folder(app: tauri::AppHandle) -> Result<String, String> {
   }
 }
 
-
 /// Find an available TCP port on the loopback interface within the allowed range.
-/// Returns `None` when every port is occupied so the caller can fail loudly
-/// instead of falling back to an occupied port and showing a white screen.
 fn find_available_port(base_port: u16) -> Option<u16> {
   for port in base_port..=PORT_RANGE_END {
     if TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok() {
@@ -72,18 +98,7 @@ fn find_available_port(base_port: u16) -> Option<u16> {
   None
 }
 
-/// Percent-encode a filesystem path for use in a `file:` URL.
-/// Encodes characters that would break URL parsing (`%`, spaces, `#`, `?`).
-fn encode_file_url_path(path: &str) -> String {
-  path
-    .replace('%', "%25")
-    .replace(' ', "%20")
-    .replace('#', "%23")
-    .replace('?', "%3F")
-}
-
 /// Generate a 64-char lowercase hex secret from a real CSPRNG.
-/// The Node side (`src/lib/encryption.ts`) validates exactly 64 hex chars.
 fn generate_secure_secret() -> String {
   let mut bytes = [0u8; 32];
   getrandom::getrandom(&mut bytes)
@@ -92,11 +107,6 @@ fn generate_secure_secret() -> String {
 }
 
 /// Generate a 32-char hex token for instance identity verification.
-/// Passed to the Node sidecar via HERMOS_INSTANCE_TOKEN env var; the health
-/// endpoint (`/api/health`) echoes it back as `X-HermOS-Instance-Token` header.
-/// The readiness check requires this header to match before the webview
-/// navigates — this prevents a port-squatting local process from serving its
-/// content inside the app window with IPC capability.
 fn generate_instance_token() -> String {
   let mut bytes = [0u8; 16];
   getrandom::getrandom(&mut bytes)
@@ -159,9 +169,6 @@ fn fail_startup(handle: &tauri::AppHandle, msg: &str) -> ! {
 }
 
 /// Resolve (or create, then persist) the per-installation encryption key.
-/// Fails closed: an existing but unreadable/invalid key aborts startup instead
-/// of silently falling back to a hardcoded value. The key is mirrored to
-/// `.secret_key` so the Node-side encryption module agrees.
 fn resolve_encryption_key(app_data_dir: &Path) -> Result<String, String> {
   let enc_key_file = app_data_dir.join(ENC_KEY_FILE);
   let secret_key_file = app_data_dir.join(SECRET_KEY_FILE);
@@ -194,8 +201,6 @@ fn resolve_encryption_key(app_data_dir: &Path) -> Result<String, String> {
     new_key
   };
 
-  // Keep Node's `src/lib/encryption.ts` (which reads `.secret_key` when the
-  // ENCRYPTION_KEY env var is absent) in sync with the authoritative key.
   if let Err(e) = write_secret_file(&secret_key_file, &enc_key) {
     log::warn!(
       "Failed to mirror encryption key to {:?}: {}",
@@ -224,29 +229,29 @@ fn kill_node_child(child: &mut Child) {
   let _ = child.wait();
 }
 
-/// Sweep stale `node server.js` processes left behind by crashed/forced exits.
-/// Conservative: only kills node.exe processes whose command line references
-/// this app's specific data dir, or (as a fallback) one that looks like this
-/// app's standalone server (`server.js` inside a `.next-build` path) — both
-/// markers together, so unrelated node projects are never matched.
+/// Sweep stale `node server.js` processes and any processes holding the port.
 #[cfg(target_os = "windows")]
-fn sweep_stale_servers(app_data_dir: &Path) {
-  let marker = app_data_dir.to_string_lossy().replace('\'', "''");
+fn sweep_stale_servers(_app_data_dir: &Path, port: u16) {
   let script = format!(
-    "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | Where-Object {{ $_.CommandLine -like '*{marker}*' -or ($_.CommandLine -like '*server.js*' -and $_.CommandLine -like '*.next-build*') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+    "$ErrorActionPreference='SilentlyContinue'; \
+     Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | \
+     Where-Object {{ $_.CommandLine -like '*server.js*' }} | \
+     ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}; \
+     Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | \
+     ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}",
+    port
   );
   let mut cmd = Command::new("powershell");
   cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
   cmd.creation_flags(CREATE_NO_WINDOW);
-  match cmd.status() {
-    Ok(s) => log::info!("Stale server sweep finished: {}", s),
-    Err(e) => log::warn!("Stale server sweep failed: {}", e),
-  }
+  let _ = cmd.status();
 }
 
 #[cfg(not(target_os = "windows"))]
-fn sweep_stale_servers(_app_data_dir: &Path) {
-  log::info!("Stale server sweep skipped on this platform");
+fn sweep_stale_servers(_app_data_dir: &Path, port: u16) {
+  let _ = Command::new("fuser")
+    .args(["-k", "-n", "tcp", &port.to_string()])
+    .status();
 }
 
 fn warmup_server(server_url: &str) {
@@ -266,20 +271,18 @@ fn warmup_server(server_url: &str) {
 }
 
 /// Verify that the listener on `addr` is our own Node sidecar by checking
-/// the `X-HermOS-Instance-Token` header on `/api/health`. Uses a raw TCP
-/// HTTP/1.1 request so it does not depend on the same port being claimed
-/// by a foreign process that happens to answer TCP.
+/// the `X-HermOS-Instance-Token` header on `/api/health`.
 fn server_reachable_with_token(addr: &str, expected_token: &str) -> bool {
   let socket_addr: SocketAddr = match addr.parse() {
     Ok(a) => a,
     Err(_) => return false,
   };
-  let mut stream = match TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2)) {
+  let mut stream = match TcpStream::connect_timeout(&socket_addr, Duration::from_millis(500)) {
     Ok(s) => s,
     Err(_) => return false,
   };
-  let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-  let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+  let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+  let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
   let req = format!(
     "GET /api/health HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
     addr
@@ -306,7 +309,6 @@ fn server_reachable_with_token(addr: &str, expected_token: &str) -> bool {
     }
   }
   let headers = String::from_utf8_lossy(&buf).to_ascii_lowercase();
-  // Health must be HTTP 200 and token header must match exactly
   let status_ok = headers
     .lines()
     .next()
@@ -319,26 +321,10 @@ fn server_reachable_with_token(addr: &str, expected_token: &str) -> bool {
   headers.contains(&format!("x-hermos-instance-token: {}", token_lower))
 }
 
-fn wait_for_our_server(addr: &str, expected_token: &str, timeout_secs: u64) -> bool {
-  for i in 0..timeout_secs {
-    std::thread::sleep(Duration::from_secs(1));
-    if server_reachable_with_token(addr, expected_token) {
-      log::info!("Server verified (token match) after {}s", i + 1);
-      return true;
-    }
-    log::info!("Waiting for verified server... ({}/{})", i + 1, timeout_secs);
-  }
-  false
-}
-
 struct NodeProcess(Mutex<Option<Child>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  // Signature for update artifacts. The pubkey compiled into tauri.conf.json
-  // is authoritative. HERMOS_TAURI_UPDATER_PUBKEY overrides it ONLY in debug
-  // builds when the variable is present AND non-empty — in release builds the
-  // compiled-in key is always used so a runtime env cannot subvert pinning.
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_dialog::init())
@@ -371,33 +357,7 @@ pub fn run() {
       log::info!("HermOS IDE starting...");
       let app_handle = app.handle().clone();
 
-      // Instance token for port-identity verification (prevents a local
-      // process squatting the port from serving content into our webview).
       let instance_token = generate_instance_token();
-
-      let desktop_port = std::env::var("HERMOS_DESKTOP_PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-        .filter(|p| (PORT_RANGE_START..=PORT_RANGE_END).contains(p))
-        .unwrap_or_else(|| {
-          match find_available_port(PORT_RANGE_START) {
-            Some(p) => p,
-            None => fail_startup(
-              &app_handle,
-              &format!(
-                "No free loopback port in range {}..={} — all ports are occupied. Close other local servers and restart.",
-                PORT_RANGE_START, PORT_RANGE_END
-              ),
-            ),
-          }
-        });
-
-      let port_str = desktop_port.to_string();
-      let host_str = "127.0.0.1";
-      let server_url = format!("http://127.0.0.1:{}", desktop_port);
-      let check_addr = format!("127.0.0.1:{}", desktop_port);
-
-      log::info!("Desktop Server configured for loopback: {}", server_url);
 
       let app_data_dir = app_handle.path().app_data_dir().unwrap_or_else(|_| {
         let fallback = std::env::var("APPDATA")
@@ -409,10 +369,6 @@ pub fn run() {
         log::warn!("Failed to create app data dir {:?}: {}", app_data_dir, e);
       }
 
-      // Kill stale servers from previous, hard-killed sessions before spawning.
-      sweep_stale_servers(&app_data_dir);
-
-      // Encryption key: fail closed on unreadable/invalid persisted keys.
       let enc_key = match resolve_encryption_key(&app_data_dir) {
         Ok(k) => k,
         Err(msg) => fail_startup(&app_handle, &msg),
@@ -423,107 +379,201 @@ pub fn run() {
         .resource_dir()
         .ok()
         .and_then(|d| {
-          // Try _up_ layout first (installed), then flat layout
           for rel in [
             "_up_/.next-build/standalone/server.js",
             ".next-build/standalone/server.js",
             "_up_/.next/standalone/server.js",
             ".next/standalone/server.js",
+            "standalone/server.js",
+            "server.js",
           ] {
             let candidate = d.join(rel);
             if candidate.exists() {
               return Some(candidate);
             }
           }
+          if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+              for rel in [
+                "resources/_up_/.next-build/standalone/server.js",
+                "resources/.next-build/standalone/server.js",
+                "_up_/.next-build/standalone/server.js",
+                ".next-build/standalone/server.js",
+                "standalone/server.js",
+                "server.js",
+              ] {
+                let candidate = parent.join(rel);
+                if candidate.exists() {
+                  return Some(candidate);
+                }
+              }
+            }
+          }
           None
         });
 
-      if let Some(ref path) = server_js {
-        log::info!("Looking for server at: {:?}", path);
-        if path.exists() {
-          log::info!("Starting Next.js server on port {}...", desktop_port);
-          let server_dir = path.parent().unwrap_or(path);
-          // Prefer the Node binary bundled as a Tauri sidecar so the app has
-          // no system dependency on Node; fall back to `node` on PATH.
-          let bundled_node = app_handle
-            .path()
-            .resource_dir()
-            .ok()
-            .and_then(|d| find_bundled_node(&d));
-          let mut cmd = if let Some(ref p) = bundled_node {
-            log::info!("Using bundled Node at {:?}", p);
-            Command::new(p)
-          } else {
-            log::warn!("Bundled Node sidecar not found in resource dir; falling back to system `node` on PATH");
-            Command::new("node")
-          };
-          #[cfg(target_os = "windows")]
-          cmd.creation_flags(CREATE_NO_WINDOW);
-          cmd.current_dir(server_dir);
-          cmd.arg("server.js");
-          cmd.env("PORT", &port_str);
-          cmd.env("HOSTNAME", host_str);
-          cmd.env("NODE_ENV", "production");
-          cmd.env("HERMOS_DESKTOP", "true");
-          let db_path = app_data_dir.join("hermos.db");
-          let database_url = format!("file:{}", encode_file_url_path(&db_path.display().to_string()));
-          cmd.env("DATABASE_URL", &database_url);
-          cmd.env(
-            "HERMOS_APP_DATA_DIR",
-            app_data_dir.to_str().unwrap_or("."),
-          );
-          cmd.env("ENCRYPTION_KEY", &enc_key);
-          cmd.env("HERMOS_INSTANCE_TOKEN", &instance_token);
+      let server_path = match server_js {
+        Some(p) if p.exists() => p,
+        _ => fail_startup(
+          &app_handle,
+          "Server bundle (server.js) not found in resource directory. Installation may be corrupted.",
+        ),
+      };
 
-          // Redirect node stdout/stderr to a log file for debugging
-          let node_log = app_data_dir.join("node-debug.log");
-          if let Ok(f) = std::fs::File::create(&node_log) {
-            if let Ok(clone) = f.try_clone() {
-              cmd.stdout(std::process::Stdio::from(clone));
-              cmd.stderr(std::process::Stdio::from(f));
-            }
-          }
+      let server_dir = server_path.parent().unwrap_or(&server_path);
+      let bundled_node = find_bundled_node(&app_handle);
 
-          match cmd.spawn() {
-            Ok(child) => {
-              if let Some(state) = app_handle.try_state::<NodeProcess>() {
-                *state.0.lock().unwrap() = Some(child);
-              }
-              log::info!("Node server spawned on port {}", desktop_port);
-            }
-            Err(err) => {
-              fail_startup(&app_handle, &format!("Failed to spawn Node sidecar: {}. Is the installation corrupted?", err));
-            }
-          }
+      let initial_port = std::env::var("HERMOS_DESKTOP_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .filter(|p| (PORT_RANGE_START..=PORT_RANGE_END).contains(p))
+        .or_else(|| find_available_port(PORT_RANGE_START))
+        .unwrap_or(PORT_RANGE_START);
+
+      let host_str = "127.0.0.1";
+      let mut active_port = initial_port;
+      let mut server_ready = false;
+      let mut final_server_url = String::new();
+
+      for retry_attempt in 0..5 {
+        let current_port = active_port;
+        let port_str = current_port.to_string();
+        let server_url = format!("http://127.0.0.1:{}", current_port);
+        let check_addr = format!("127.0.0.1:{}", current_port);
+
+        sweep_stale_servers(&app_data_dir, current_port);
+        std::thread::sleep(Duration::from_millis(150));
+
+        log::info!(
+          "Attempt {}/5: Spawning Next.js server on port {}...",
+          retry_attempt + 1,
+          current_port
+        );
+
+        let mut cmd = if let Some(ref p) = bundled_node {
+          log::info!("Using bundled Node sidecar at {:?}", p);
+          Command::new(p)
         } else {
-          fail_startup(&app_handle, &format!("server.js not found at {:?} — installation may be corrupted, try reinstalling.", path));
+          log::warn!("Bundled Node sidecar not found; falling back to system `node` on PATH");
+          Command::new("node")
+        };
+
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.current_dir(server_dir);
+        cmd.arg("server.js");
+        cmd.env("PORT", &port_str);
+        cmd.env("HOSTNAME", host_str);
+        cmd.env("NODE_ENV", "production");
+        cmd.env("HERMOS_DESKTOP", "true");
+        let db_dir = app_data_dir.join("db");
+        if let Err(e) = std::fs::create_dir_all(&db_dir) {
+          log::warn!("Failed to create db directory {:?}: {}", db_dir, e);
         }
-      } else {
-        fail_startup(&app_handle, "Server bundle not found in resource directory — installation may be corrupted, try reinstalling.");
+        let db_path = db_dir.join("hermos.db");
+        let database_url = format!("file:{}", db_path.to_string_lossy().replace('\\', "/"));
+        cmd.env("DATABASE_URL", &database_url);
+        cmd.env(
+          "HERMOS_APP_DATA_DIR",
+          app_data_dir.to_str().unwrap_or("."),
+        );
+        cmd.env("ENCRYPTION_KEY", &enc_key);
+        cmd.env("HERMOS_INSTANCE_TOKEN", &instance_token);
+
+        let node_log = app_data_dir.join("node-debug.log");
+        if let Ok(f) = std::fs::File::create(&node_log) {
+          if let Ok(clone) = f.try_clone() {
+            cmd.stdout(std::process::Stdio::from(clone));
+            cmd.stderr(std::process::Stdio::from(f));
+          }
+        }
+
+        let spawned = match cmd.spawn() {
+          Ok(child) => {
+            if let Some(state) = app_handle.try_state::<NodeProcess>() {
+              *state.0.lock().unwrap() = Some(child);
+            }
+            log::info!("Node process spawned successfully for port {}", current_port);
+            true
+          }
+          Err(err) => {
+            log::error!("Failed to spawn Node process on port {}: {}", current_port, err);
+            false
+          }
+        };
+
+        if !spawned {
+          active_port += 1;
+          continue;
+        }
+
+        // Poll until the server answers HTTP 200 with instance token
+        for wait_tick in 0..120 {
+          std::thread::sleep(Duration::from_millis(100));
+          if server_reachable_with_token(&check_addr, &instance_token) {
+            server_ready = true;
+            final_server_url = server_url.clone();
+            log::info!(
+              "Server verified ready and authenticated on {} after {}ms",
+              server_url,
+              (wait_tick + 1) * 100
+            );
+            break;
+          }
+
+          // Check if Node process crashed prematurely
+          if let Some(state) = app_handle.try_state::<NodeProcess>() {
+            if let Some(ref mut child) = *state.0.lock().unwrap() {
+              if let Ok(Some(status)) = child.try_wait() {
+                log::warn!(
+                  "Node process exited with status {} on port {} (EADDRINUSE or crash); retrying next port...",
+                  status,
+                  current_port
+                );
+                break;
+              }
+            }
+          }
+        }
+
+        if server_ready {
+          break;
+        } else {
+          if let Some(state) = app_handle.try_state::<NodeProcess>() {
+            if let Some(mut child) = state.0.lock().unwrap().take() {
+              kill_node_child(&mut child);
+            }
+          }
+          active_port += 1;
+        }
       }
 
-      // Short readiness wait: verify the listener is OUR sidecar by checking
-      // the instance token echoed on /api/health, not just a bare TCP connect.
-      let ready = wait_for_our_server(&check_addr, &instance_token, STARTUP_WAIT_SECS);
-      if ready {
-        warmup_server(&server_url);
-      } else {
-        log::warn!(
-          "Verified server not reachable after {}s; opening window anyway and retrying in background",
-          STARTUP_WAIT_SECS
+      if !server_ready {
+        let log_path = app_data_dir.join("node-debug.log");
+        let tail = std::fs::read_to_string(&log_path)
+          .map(|s| {
+            let lines: Vec<&str> = s.lines().collect();
+            let start = lines.len().saturating_sub(40);
+            lines[start..].join("\n")
+          })
+          .unwrap_or_else(|_| "(no node-debug.log)".to_string());
+        fail_startup(
+          &app_handle,
+          &format!(
+            "HermOS backend server failed to start.\n\nNode log ({}):\n{}",
+            log_path.display(),
+            tail
+          ),
         );
       }
 
-      // Load the webview directly from the Next.js server on loopback — never
-      // from a hardcoded or dev URL. Decorations are off so the app's own
-      // TopBar doubles as the native title bar (opencode-style merged header:
-      // saves ~32px and looks professional). `shadow` keeps the native window
-      // shadow on frameless Windows; titleBarStyle Overlay keeps macOS traffic
-      // lights visible.
-      let window = match WebviewWindowBuilder::new(
+      warmup_server(&final_server_url);
+
+      // Create and display the window ONLY when the backend is 100% verified ready.
+      let _window = match WebviewWindowBuilder::new(
         &app_handle,
         "main",
-        WebviewUrl::External(server_url.parse().expect("invalid loopback URL")),
+        WebviewUrl::External(final_server_url.parse().expect("invalid loopback URL")),
       )
       .title("HermOS IDE")
       .inner_size(1280.0, 800.0)
@@ -534,40 +584,11 @@ pub fn run() {
       .center()
       .build() {
         Ok(w) => w,
-        Err(e) => fail_startup(&app_handle, &format!("Failed to create application window: {} — WebView2 may be missing or corrupted.", e)),
+        Err(e) => fail_startup(
+          &app_handle,
+          &format!("Failed to create application window: {} — WebView2 may be missing or corrupted.", e),
+        ),
       };
-
-      if !ready {
-        let background_window = window.clone();
-        let addr = check_addr.clone();
-        let background_url = server_url.clone();
-        let bg_token = instance_token.clone();
-        std::thread::spawn(move || {
-          let remaining = TOTAL_WAIT_SECS.saturating_sub(STARTUP_WAIT_SECS);
-          for i in 0..remaining {
-            std::thread::sleep(Duration::from_secs(1));
-            if server_reachable_with_token(&addr, &bg_token) {
-              log::info!(
-                "Server became ready after background wait ({}s); reloading webview",
-                STARTUP_WAIT_SECS + i + 1
-              );
-              warmup_server(&background_url);
-              let target = background_url.clone();
-              let nav_window = background_window.clone();
-              let _ = background_window.run_on_main_thread(move || {
-                if let Ok(url) = target.parse() {
-                  let _ = nav_window.navigate(url);
-                }
-              });
-              return;
-            }
-          }
-          log::error!(
-            "Server never became reachable within {}s; webview keeps showing the connection error",
-            TOTAL_WAIT_SECS
-          );
-        });
-      }
 
       Ok(())
     })

@@ -40,7 +40,7 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "both",
+        "installMode": "currentUser",
         "installerIcon": "icons/icon.ico"
       },
       "wix": null

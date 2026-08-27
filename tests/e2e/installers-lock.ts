@@ -11,6 +11,7 @@ const LOCK_PATH = path.join(process.cwd(), "public", "installers", ".test-lock")
 const LOCK_TIMEOUT_MS = 30_000;
 
 export async function acquireInstallersLock(): Promise<void> {
+  await fs.mkdir(path.dirname(LOCK_PATH), { recursive: true });
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   for (;;) {
     try {

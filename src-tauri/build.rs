@@ -1,4 +1,16 @@
 fn main() {
+    // Ensure the standalone directory exists with at least a placeholder file
+    // so tauri-build's bundle.resources glob does not fail when running
+    // `cargo check` or `cargo build` in a clean checkout before Next.js is built.
+    let standalone_dir = std::path::Path::new("../.next-build/standalone");
+    if !standalone_dir.exists() {
+        let _ = std::fs::create_dir_all(standalone_dir);
+    }
+    let placeholder = standalone_dir.join(".gitkeep");
+    if !placeholder.exists() {
+        let _ = std::fs::write(&placeholder, "");
+    }
+
     // Retry tauri_build::build() on transient file-lock errors (Windows Defender).
     let max_attempts = 5;
     for attempt in 1..=max_attempts {

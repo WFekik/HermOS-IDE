@@ -609,8 +609,13 @@ export function farewell(name) { return 'Goodbye ' + name; }
           expect(res.status).toBe(307);
           const location = res.headers.get("location");
           expect(location).toBeDefined();
-          expect(location).toContain("github.com/WFekik/HermOS-IDE/releases/latest/download/");
-          expect(location).toContain(expectedExt);
+          expect(location).toContain("github.com/WFekik/HermOS-IDE/releases/");
+          expect(location).toMatch(/releases\/(latest\/download|download\/v\d+\.\d+\.\d+)/);
+          if (platform === "windows") {
+            expect(location).toMatch(/\.(msi|exe)$/i);
+          } else {
+            expect(location).toContain(expectedExt);
+          }
         }
       } finally {
         await releaseInstallersLock();

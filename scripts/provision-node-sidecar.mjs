@@ -146,56 +146,63 @@ function writeVersionMarker(sidecarName, targetPath) {
 }
 
 function provisionUniversalMacSidecar() {
-  const targetName = "node-universal-apple-darwin";
-  const targetPath = join(binariesDir, targetName);
+  const version = NODE_SIDECAR_VERSION;
+  const distDir = `${NODE_DIST_BASE}/v${version}`;
+  const ext = "";
 
-  if (shouldSkipProvisioning(targetName, targetPath)) return;
+  const targets = [
+    { triple: "aarch64-apple-darwin", plat: "darwin", arch: "arm64" },
+    { triple: "x86_64-apple-darwin", plat: "darwin", arch: "x64" },
+  ];
 
   mkdirSync(binariesDir, { recursive: true });
 
   const workDir = mkdtempSync(join(tmpdir(), "hermos-node-sidecar-"));
 
   try {
-    const version = NODE_SIDECAR_VERSION;
-    const distDir = `${NODE_DIST_BASE}/v${version}`;
+    for (const t of targets) {
+      const sidecarName = `node-${t.triple}${ext}`;
+      const targetPath = join(binariesDir, sidecarName);
 
-    const arm64Dir = join(workDir, "arm64");
-    const x64Dir = join(workDir, "x64");
-    mkdirSync(arm64Dir, { recursive: true });
-    mkdirSync(x64Dir, { recursive: true });
+      if (shouldSkipProvisioning(sidecarName, targetPath)) continue;
 
-    console.log(`[sidecar] Provisioning Node v${version} for universal macOS sidecar`);
-    downloadAndExtractNode(
-      `${distDir}/node-v${version}-darwin-arm64.tar.gz`,
-      `node-v${version}-darwin-arm64.tar.gz`,
-      arm64Dir,
-    );
-    downloadAndExtractNode(
-      `${distDir}/node-v${version}-darwin-x64.tar.gz`,
-      `node-v${version}-darwin-x64.tar.gz`,
-      x64Dir,
-    );
+      const archDir = join(workDir, t.arch);
+      mkdirSync(archDir, { recursive: true });
 
-    const arm64Bin = join(arm64Dir, `node-v${version}-darwin-arm64`, "bin", "node");
-    const x64Bin = join(x64Dir, `node-v${version}-darwin-x64`, "bin", "node");
-    const outDir = join(arm64Dir, "out");
-    mkdirSync(outDir, { recursive: true });
-    const outBin = join(outDir, "node");
+      const fileName = `node-v${version}-${t.plat}-${t.arch}.tar.gz`;
+      console.log(`[sidecar] Provisioning ${sidecarName}`);
+      downloadAndExtractNode(`${distDir}/${fileName}`, fileName, archDir);
 
-    console.log(
-      `[sidecar] Merging arm64 + x64 slices into universal binary (lipo)...`,
-    );
-    execFileSync("lipo", ["-create", "-output", outBin, arm64Bin, x64Bin], {
-      stdio: "inherit",
-    });
-    execFileSync("chmod", ["+x", outBin]);
-    execFileSync("lipo", ["-info", outBin], { stdio: "inherit" });
+      const extracted = join(archDir, `node-v${version}-${t.plat}-${t.arch}`, "bin", "node");
+      if (!existsSync(extracted)) throw new Error(`Extracted node not found at ${extracted}`);
+      copyFileSync(extracted, targetPath);
+      try { execFileSync("chmod", ["+x", targetPath]); } catch {}
 
-    copyFileSync(outBin, targetPath);
-
-    validateBinary(targetPath);
-    writeVersionMarker(targetName, targetPath);
-    console.log(`[sidecar] Successfully provisioned universal Node.js sidecar: ${targetPath}`);
+      const isNativeArch = (t.arch === "arm64" && process.arch === "arm64") || (t.arch === "x64" && process.arch === "x64");
+      if (isNativeArch) {
+        validateBinary(targetPath);
+      } else {
+        console.log(`[sidecar] Skipping validation for non-native arch ${t.arch} (runner: ${process.arch})`);
+      }
+      writeVersionMarker(sidecarName, targetPath);
+      console.log(`[sidecar] Successfully provisioned ${sidecarName}`);
+    }
+    // Also create universal binary for bundling stage (tauri expects node-universal-apple-darwin)
+    const aarch64Bin = join(binariesDir, "node-aarch64-apple-darwin");
+    const x64Bin = join(binariesDir, "node-x86_64-apple-darwin");
+    const universalPath = join(binariesDir, "node-universal-apple-darwin");
+    if (existsSync(aarch64Bin) && existsSync(x64Bin)) {
+      try {
+        console.log(`[sidecar] Creating universal binary via lipo...`);
+        execFileSync("lipo", ["-create", "-output", universalPath, aarch64Bin, x64Bin], { stdio: "inherit" });
+        execFileSync("chmod", ["+x", universalPath]);
+        execFileSync("lipo", ["-info", universalPath], { stdio: "inherit" });
+        writeVersionMarker("node-universal-apple-darwin", universalPath);
+        console.log(`[sidecar] Successfully provisioned universal binary`);
+      } catch (e) {
+        console.warn(`[sidecar] Failed to create universal binary: ${e.message}`);
+      }
+    }
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
@@ -320,9 +327,21 @@ function validateBinary(binaryPath) {
   console.log(`[sidecar] Validated binary execution: ${(result.stdout ?? "").trim()}`);
 }
 
+function ensureStandalonePlaceholder() {
+  const standaloneDir = join(rootDir, ".next-build", "standalone");
+  if (!existsSync(standaloneDir)) {
+    mkdirSync(standaloneDir, { recursive: true });
+  }
+  const placeholder = join(standaloneDir, ".gitkeep");
+  if (!existsSync(placeholder)) {
+    writeFileSync(placeholder, "");
+  }
+}
+
 function main() {
+  ensureStandalonePlaceholder();
   if (isMacOsCi()) {
-    console.log("[sidecar] macOS CI detected — provisioning universal (arm64+x64) Node sidecar");
+    console.log("[sidecar] macOS CI detected — provisioning arm64 + x64 Node sidecars for universal build");
     provisionUniversalMacSidecar();
     return;
   }
@@ -330,11 +349,12 @@ function main() {
 }
 
 function isMacOsCi() {
-  return (
-    process.env.CI === "true" &&
-    process.env.RUNNER_OS === "macOS" &&
-    process.platform === "darwin"
-  );
+  if (process.env.HERMOS_MACOS_UNIVERSAL === "1") return true;
+  const isCI = process.env.CI === "true" || process.env.CI === "True" || process.env.TF_BUILD === "True";
+  const isMacOS =
+    process.env.RUNNER_OS === "macOS" || // GitHub Actions
+    process.env.AGENT_OS === "Darwin";  // Azure DevOps
+  return isCI && isMacOS && process.platform === "darwin";
 }
 
 main();

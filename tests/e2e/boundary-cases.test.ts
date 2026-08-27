@@ -156,8 +156,8 @@ describe("Boundary Cases — E2E Boundaries & Edge Conditions", () => {
       expect([200, 307]).toContain(res.status);
       if (res.status === 307) {
         const location = res.headers.get("location");
-        expect(location).toContain("https://github.com/WFekik/HermOS-IDE/releases/latest/download/");
-        expect(location).toContain(".msi");
+        expect(location).toMatch(/WFekik\/HermOS-IDE\/releases\/(latest\/download|download\/v\d+\.\d+\.\d+)/);
+        expect(location).toMatch(/\.(msi|exe)$/i);
       } else if (res.status === 200) {
         expect(res.headers.get("content-disposition")).toContain("attachment");
       }

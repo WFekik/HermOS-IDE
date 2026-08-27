@@ -19,6 +19,13 @@ export function resolveDatabaseUrl(envUrl: string | undefined): string {
   const derivedUrl = `file:${path.join(APP_DATA_DIR, 'db', 'hermos.db').replace(/\\/g, '/')}`
   if (!envUrl) return derivedUrl
   if (/^file:(?!([A-Za-z]:|[\\/]))/.test(envUrl)) return derivedUrl
+  if (envUrl.includes('%')) {
+    try {
+      return decodeURIComponent(envUrl)
+    } catch {
+      /* keep raw */
+    }
+  }
   return envUrl
 }
 

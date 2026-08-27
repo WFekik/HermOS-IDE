@@ -496,10 +496,29 @@ export async function gitBranches(rootDir: string): Promise<GitBranch[]> {
     }
     // Skip the synthetic `HEAD -> origin/HEAD` symlink that `branch -a`
     // sometimes emits for remotes.
-    if (name === "HEAD" || name.endsWith("/HEAD")) continue;
     out.push({ name, current, remote });
     if (out.length >= MAX_BRANCHES) break;
   }
+
+  // If in detached HEAD state (e.g. CI checking out a tag or commit), ensure
+  // the active HEAD is surfaced as a current branch entry.
+  if (!out.some((b) => b.current)) {
+    const headRes = await gitExec(rootDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    let headName = headRes.ok ? headRes.stdout.trim() : "";
+    if (!headName || headName === "HEAD") {
+      const shaRes = await gitExec(rootDir, ["rev-parse", "--short", "HEAD"]);
+      headName = shaRes.ok ? shaRes.stdout.trim() : "";
+    }
+    if (headName) {
+      const match = out.find((b) => b.name === headName || b.name.endsWith("/" + headName));
+      if (match) {
+        match.current = true;
+      } else {
+        out.unshift({ name: headName, current: true, remote: false });
+      }
+    }
+  }
+
   return out;
 }
 

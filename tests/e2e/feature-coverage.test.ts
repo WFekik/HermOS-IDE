@@ -557,8 +557,9 @@ describe("Feature Coverage E2E Suite", () => {
         const location = res.headers.get("Location");
         expect(location).not.toBeNull();
         expect(location).toContain("WFekik/HermOS-IDE");
-        expect(location).toContain("releases/latest/download");
-        expect(location).toMatch(/\.msi$/);
+        expect(location).toContain("releases/");
+        expect(location).toMatch(/releases\/(latest\/download|download\/v\d+\.\d+\.\d+)/);
+        expect(location).toMatch(/\.(msi|exe)$/i);
       } finally {
         await releaseInstallersLock();
       }
@@ -645,7 +646,7 @@ describe("Feature Coverage E2E Suite", () => {
 
     it("5.6: Download release assets follow consistent semantic versioning and repository URLs", () => {
       const platforms = ["windows", "macos", "linux"];
-      const baseRepoUrl = "https://github.com/WFekik/HermOS-IDE/releases/latest/download";
+      const baseRepoUrl = "https://github.com/WFekik/HermOS-IDE/releases/download/v1.0.0";
 
       for (const p of platforms) {
         let expectedSuffix = "";

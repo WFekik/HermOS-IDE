@@ -1,0 +1,201 @@
+# Free Azure Pipelines build for HermOS IDE desktop installers.
+# No credit card required (free for open source, includes Windows + macOS + Linux agents).
+# Docs: https://learn.microsoft.com/azure/devops/pipelines/
+#
+# Required pipeline variables (set as secrets in the pipeline editor):
+#   TAURI_SIGNING_PRIVATE_KEY  - your Tauri private key (passwordless)
+#   GITHUB_TOKEN               - a GitHub PAT with `repo` scope (to publish the release)
+#
+# Triggers on pushed tags like v1.0.0. You can also run it manually from the UI.
+
+trigger:
+  tags:
+    include:
+      - v*
+  branches:
+    exclude:
+      - "*"
+
+pr: none
+
+variables:
+  NODE_VERSION: "24"
+
+jobs:
+  - job: test
+    pool:
+      vmImage: "ubuntu-22.04"
+    steps:
+      - script: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "##vso[task.prependpath]$HOME/.cargo/bin"
+        displayName: "Install Linux deps + Rust"
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: node_modules
+        displayName: Cache npm
+      - task: Cache@2
+        inputs:
+          key: 'cargo | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo | "$(Agent.OS)"
+          path: $(HOME)/.cargo/registry
+        displayName: Cache Cargo registry
+      - task: UseNode@1
+        inputs:
+          version: "$(NODE_VERSION)"
+      - script: "npm ci --no-audit --no-fund"
+        displayName: "npm ci"
+      - script: npm run typecheck
+        displayName: "TypeCheck"
+      - script: npm test
+        displayName: "Run tests"
+      - script: node scripts/provision-node-sidecar.mjs
+        displayName: "Provision Node sidecar (for cargo check)"
+      - script: cargo check --manifest-path src-tauri/Cargo.toml
+        displayName: "Cargo check (Tauri)"
+
+  - job: windows
+    dependsOn: test
+    pool:
+      vmImage: "windows-latest"
+    steps:
+      - script: choco install nsis -y
+        displayName: "Install NSIS"
+      - script: |
+          curl -sSf https://win.rustup.rs/x86_64 -o rustup-init.exe
+          .\rustup-init.exe -y --default-toolchain stable --profile minimal
+          echo ##vso[task.prependpath]%USERPROFILE%\.cargo\bin
+        displayName: "Install Rust"
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: node_modules
+        displayName: Cache npm
+      - task: Cache@2
+        inputs:
+          key: 'cargo | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo | "$(Agent.OS)"
+          path: $(USERPROFILE)/.cargo/registry
+        displayName: Cache Cargo registry
+      - task: UseNode@1
+        inputs:
+          version: "$(NODE_VERSION)"
+      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
+        displayName: "npm ci"
+      - script: node scripts/provision-node-sidecar.mjs
+        displayName: "Provision Node sidecar"
+      - script: npx tauri build --bundles nsis,msi
+        displayName: "Build Tauri (Windows)"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      - script: node scripts/release-to-github.mjs
+        displayName: "Upload release assets"
+        condition: succeededOrFailed()
+        continueOnError: true
+        env:
+          GITHUB_TOKEN: $(GITHUB_TOKEN)
+          RELEASE_TAG: $(Build.SourceBranchName)
+
+  - job: macos
+    dependsOn: test
+    pool:
+      vmImage: "macOS-latest"
+    steps:
+      - script: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "##vso[task.prependpath]$HOME/.cargo/bin"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        displayName: "Install Rust + universal targets"
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: node_modules
+        displayName: Cache npm
+      - task: Cache@2
+        inputs:
+          key: 'cargo | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo | "$(Agent.OS)"
+          path: $(HOME)/.cargo/registry
+        displayName: Cache Cargo registry
+      - task: UseNode@1
+        inputs:
+          version: "$(NODE_VERSION)"
+      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
+        displayName: "npm ci"
+      - script: node scripts/provision-node-sidecar.mjs
+        displayName: "Provision Node sidecar (universal)"
+        env:
+          HERMOS_MACOS_UNIVERSAL: "1"
+      - script: node scripts/ensure-extra-prisma-engines.mjs darwin
+        displayName: "Fetch Prisma engines (macOS)"
+      - script: npx tauri build --target universal-apple-darwin --bundles app,dmg
+        displayName: "Build Tauri (macOS universal)"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      - script: node scripts/release-to-github.mjs
+        displayName: "Upload release assets"
+        condition: succeededOrFailed()
+        continueOnError: true
+        env:
+          GITHUB_TOKEN: $(GITHUB_TOKEN)
+          RELEASE_TAG: $(Build.SourceBranchName)
+
+  - job: linux
+    dependsOn: test
+    pool:
+      vmImage: "ubuntu-22.04"
+    steps:
+      - script: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libfuse2
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "##vso[task.prependpath]$HOME/.cargo/bin"
+        displayName: "Install Linux deps + Rust"
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: node_modules
+        displayName: Cache npm
+      - task: Cache@2
+        inputs:
+          key: 'cargo | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo | "$(Agent.OS)"
+          path: $(HOME)/.cargo/registry
+        displayName: Cache Cargo registry
+      - task: UseNode@1
+        inputs:
+          version: "$(NODE_VERSION)"
+      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
+        displayName: "npm ci"
+      - script: node scripts/provision-node-sidecar.mjs
+        displayName: "Provision Node sidecar"
+      - script: npx tauri build --bundles deb
+        displayName: "Build Tauri (Linux)"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+      - script: node scripts/release-to-github.mjs
+        displayName: "Upload release assets"
+        condition: succeededOrFailed()
+        continueOnError: true
+        env:
+          GITHUB_TOKEN: $(GITHUB_TOKEN)
+          RELEASE_TAG: $(Build.SourceBranchName)

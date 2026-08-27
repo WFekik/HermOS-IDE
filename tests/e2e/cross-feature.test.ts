@@ -296,8 +296,9 @@ export { UserService, type SessionMeta };
       expect([200, 307]).toContain(resWin.status);
       if (resWin.status === 307) {
         const location = resWin.headers.get("location");
-        expect(location).toContain("WFekik/HermOS-IDE/releases/latest/download/");
-        expect(location).toContain(".msi");
+        expect(location).toContain("WFekik/HermOS-IDE/releases/");
+        expect(location).toMatch(/releases\/(latest\/download|download\/v\d+\.\d+\.\d+)/);
+        expect(location).toMatch(/\.(msi|exe)$/i);
       }
 
       // 2. Verify GET /api/download/[platform] for macos

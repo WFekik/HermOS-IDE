@@ -130,6 +130,50 @@ export function isSubpathOrEqual(target: string, base: string): boolean {
 export function safePathFromRoot(rootDir: string, rel: string): string | null {
   if (!rootDir) return null;
   const base = path.resolve(rootDir);
+  // Absolute inputs from resolveAgentPath (e.g. /home/.../truncation/... on Linux)
+  // must be checked directly against base. Stripping the leading / and re-resolving
+  // as relative would break POSIX (/home/... → home/... → /base/home/...).
+  // If the absolute path is inside base, return it; otherwise treat leading slashes
+  // as relative (so "/foo.ts" → "foo.ts" inside the workspace, as expected by tests).
+  if (path.isAbsolute(rel)) {
+    const abs = path.resolve(rel);
+    if (isSubpathOrEqual(abs, base)) {
+      try {
+        const realBase = realpathSync(base);
+        if (existsSync(/* turbopackIgnore: true */ abs)) {
+          const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
+          if (!isSubpathOrEqual(realAbs, realBase)) return null;
+        } else {
+          let checkDir = path.dirname(abs);
+          while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
+            checkDir = path.dirname(checkDir);
+          }
+          if (existsSync(checkDir)) {
+            const realCheck = realpathSync(checkDir);
+            if (!isSubpathOrEqual(realCheck, realBase)) return null;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return abs;
+    }
+    // Windows drive-letter paths (C:\...) or UNC paths (\\server\...) outside base must be rejected.
+    if (process.platform === "win32") {
+      if (/^[a-zA-Z]:[\\/]/.test(rel) || /^\\\\[^\\]/.test(rel)) {
+        return null;
+      }
+    } else {
+      // On POSIX, reject real system root paths outside workspace base.
+      const posixNorm = (rel || "").replace(/\\/g, "/");
+      const systemRoots = /^\/(?:etc|var|usr|bin|sbin|home|root|opt|dev|proc|sys|tmp|private|Library|System|Users|Applications|Volumes|mnt|media|srv)(?:\/|$)/;
+      if (systemRoots.test(posixNorm)) {
+        return null;
+      }
+    }
+    // Not a drive letter or system root — e.g. "/foo.ts" should be treated as "foo.ts" inside the workspace
+    rel = rel.replace(/^\/+/, "").replace(/^\\+/, "");
+  }
   const normalizedRel = (rel || "").replace(/\\/g, "/");
   // Strip leading ./ and / only — NOT leading .. (which must still be caught
   // by the includes("..") check below). The old regex /^[\.\/]+/ stripped
