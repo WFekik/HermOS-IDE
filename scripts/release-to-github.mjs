@@ -120,4 +120,73 @@ for (const file of files) {
   console.log(`Uploaded ${name} (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
 }
 
+/**
+ * Construct and upload/update latest.json with all signed release platforms.
+ */
+async function updateLatestJson(releaseId) {
+  const cleanVersion = TAG.replace(/^v/i, "");
+  const latest = {
+    version: cleanVersion,
+    notes: `HermOS IDE ${TAG} release`,
+    pub_date: new Date().toISOString(),
+    platforms: {},
+  };
+
+  const refreshed = await ghJson("GET", `/repos/${OWNER}/${REPO}/releases/${releaseId}`);
+  const assets = refreshed.assets || [];
+
+  for (const asset of assets) {
+    if (!asset.name.endsWith(".sig")) continue;
+
+    const baseName = asset.name.slice(0, -4);
+    const binaryAsset = assets.find((a) => a.name === baseName);
+    if (!binaryAsset) continue;
+
+    try {
+      const sigRes = await fetch(asset.browser_download_url);
+      if (!sigRes.ok) continue;
+      const signature = (await sigRes.text()).trim();
+      const downloadUrl = binaryAsset.browser_download_url;
+      const lower = baseName.toLowerCase();
+
+      if (lower.endsWith(".exe") || lower.endsWith(".msi") || lower.includes("x64_en-us") || lower.includes("x64-setup")) {
+        latest.platforms["windows-x86_64"] = { signature, url: downloadUrl };
+      }
+      if (lower.includes("darwin") || lower.includes(".app.tar.gz") || lower.includes("universal.dmg")) {
+        latest.platforms["darwin-x86_64"] = { signature, url: downloadUrl };
+        latest.platforms["darwin-aarch64"] = { signature, url: downloadUrl };
+      }
+      if (lower.endsWith(".deb") || lower.endsWith(".appimage")) {
+        latest.platforms["linux-x86_64"] = { signature, url: downloadUrl };
+      }
+    } catch (e) {
+      console.warn(`Could not read signature for ${asset.name}:`, e.message);
+    }
+  }
+
+  if (Object.keys(latest.platforms).length > 0) {
+    const existingLatest = assets.find((a) => a.name === "latest.json");
+    if (existingLatest) {
+      await ghJson("DELETE", `/repos/${OWNER}/${REPO}/releases/assets/${existingLatest.id}`);
+      console.log("Replacing existing latest.json in release...");
+    }
+
+    const latestJsonContent = JSON.stringify(latest, null, 2);
+    const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=latest.json`;
+    const res = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: Buffer.from(latestJsonContent, "utf-8"),
+    });
+
+    if (res.ok) {
+      console.log("✓ Published auto-updater manifest latest.json to release!");
+    } else {
+      console.error("Failed to upload latest.json:", res.status, await res.text());
+    }
+  }
+}
+
+await updateLatestJson(release.id);
+
 console.log(`\nRelease ready: https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}`);

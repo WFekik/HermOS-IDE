@@ -75,10 +75,29 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
         lower.includes("404") ||
         lower.includes("not_found") ||
         lower.includes("latest.json") ||
+        lower.includes("could not fetch a valid release json") ||
+        lower.includes("release json") ||
         lower.includes("no update");
 
       if (isNotFound) {
-        console.info("[updater] No update available or release not found:", message);
+        console.info("[updater] No update manifest available or release not found:", message);
+        // Fall back to querying /api/version?checkRemote=true to check if there is a GitHub release
+        try {
+          const res = await fetch("/api/version?checkRemote=true");
+          if (res.ok) {
+            const data = (await res.json()) as { update?: { hasUpdate: boolean; latestVersion: string; releaseUrl?: string } };
+            if (data?.update?.hasUpdate) {
+              return {
+                status: 'available',
+                currentVersion,
+                latestVersion: data.update.latestVersion,
+                releaseUrl: data.update.releaseUrl,
+              };
+            }
+          }
+        } catch {
+          /* ignore fallback error */
+        }
         return { status: 'up-to-date', currentVersion };
       }
       console.error("Tauri Auto-Updater failed:", error);
