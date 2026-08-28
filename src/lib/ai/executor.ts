@@ -3066,6 +3066,7 @@ export function buildCompletionIntegrityNudge(
 async function persistQueuedSubagentReports(
   userId: string,
   conversationId: string,
+  emit?: (event: ChatStreamEvent) => void,
 ): Promise<Awaited<ReturnType<typeof db.message.create>>[]> {
   const created: Awaited<ReturnType<typeof db.message.create>>[] = [];
   const queued = drainSubagentReports(userId, conversationId);
@@ -3093,6 +3094,21 @@ async function persistQueuedSubagentReports(
         },
       });
       created.push(row);
+      if (emit) {
+        try {
+          emit({
+            type: "subagent_report",
+            messageId: row.id,
+            subagentId: q.subagentId,
+            name: sess?.name,
+            content: q.content,
+            status: sess?.status as "completed" | "failed",
+            createdAt: row.createdAt.toISOString(),
+          });
+        } catch {
+          /* emit may be closed */
+        }
+      }
     } catch {
       unmarkSubagentReportDelivered(userId, conversationId, q.subagentId);
       enqueueSubagentReport(userId, conversationId, q.subagentId);
@@ -4932,7 +4948,7 @@ const thinkInstruction = thinkPlan.kind === "params"
           // the wake event; the client's sentinel autoWake run then synthesizes
           // the final answer. This prevents the "subagent is still running,
           // let me check once more" stall loop in the main conversation.
-          const breakDrained = await persistQueuedSubagentReports(user.id, conversation.id);
+          const breakDrained = await persistQueuedSubagentReports(user.id, conversation.id, emit);
           // Backdated report rows (createdAt anchored to session completion)
           // can sort below the delta cursor, so the next loadHistoryOnce would
           // silently skip them and a queued-turn continuation would reason
@@ -5562,7 +5578,7 @@ const thinkInstruction = thinkPlan.kind === "params"
           /* best-effort persist */
         }
         // Loop continues — the model will see the tool results next iteration.
-        const midLoopDrained = await persistQueuedSubagentReports(user.id, conversation.id);
+        const midLoopDrained = await persistQueuedSubagentReports(user.id, conversation.id, emit);
         for (const row of midLoopDrained) {
           if (cachedRows.some((c) => c.id === row.id)) continue;
           const rr = toCachedRow(row);
@@ -5573,6 +5589,75 @@ const thinkInstruction = thinkPlan.kind === "params"
           if (idx === -1) cachedRows.push(rr);
           else cachedRows.splice(idx, 0, rr);
           tokenMemo.delete(row.id);
+        }
+
+        if (midLoopDrained.length > 0) {
+          if (fullContent.trim() || fullThinking.trim() || segments.length > 0 || allToolCalls.length > 0) {
+            try {
+              await db.message.update({
+                where: { id: assistantMsg.id },
+                data: {
+                  content: fullContent,
+                  thinking: fullThinking || null,
+                  toolCalls: allToolCalls.length ? JSON.stringify(allToolCalls) : null,
+                  segments: segments.length ? JSON.stringify(segments) : null,
+                  tokensIn: 0,
+                  tokensOut: 0,
+                  latencyMs: 0,
+                  promptTokens: 0,
+                  cacheWrites: 0,
+                  cacheReads: 0,
+                },
+              });
+            } catch {
+              /* best-effort persist */
+            }
+            try { emit({ type: "done", messageId: assistantMsg.id }); } catch {}
+            const rotated = await db.message.create({
+              data: {
+                conversationId: conversation.id,
+                role: "assistant",
+                content: "",
+                provider: req.provider,
+                model: req.model,
+              },
+            });
+            try { emit({ type: "start", messageId: rotated.id }); } catch {}
+            if (!cachedRows.some((c) => c.id === rotated.id)) {
+              const rr = toCachedRow(rotated);
+              const idx = cachedRows.findIndex(
+                (c) => c.createdAt > rotated.createdAt
+                  || (c.createdAt.getTime() === rotated.createdAt.getTime() && c.id > rotated.id),
+              );
+              if (idx === -1) cachedRows.push(rr);
+              else cachedRows.splice(idx, 0, rr);
+              tokenMemo.delete(rotated.id);
+            }
+            assistantMsg = rotated;
+            fullContent = "";
+            fullThinking = "";
+            segments.length = 0;
+            allToolCalls = [];
+          } else {
+            try {
+              await db.message.update({
+                where: { id: assistantMsg.id },
+                data: { createdAt: new Date() },
+              });
+            } catch {}
+            const bumpIdx = cachedRows.findIndex((c) => c.id === assistantMsg.id);
+            if (bumpIdx >= 0) {
+              const [moved] = cachedRows.splice(bumpIdx, 1);
+              moved.createdAt = new Date();
+              const insIdx = cachedRows.findIndex(
+                (c) => c.createdAt > moved.createdAt
+                  || (c.createdAt.getTime() === moved.createdAt.getTime() && c.id > moved.id),
+              );
+              if (insIdx === -1) cachedRows.push(moved);
+              else cachedRows.splice(insIdx, 0, moved);
+              tokenMemo.delete(moved.id);
+            }
+          }
         }
       }
 
@@ -5688,7 +5773,7 @@ const thinkInstruction = thinkPlan.kind === "params"
       // after it) so abort/error exits are covered too, not just the success
       // break.
       try {
-        drainedAfterAnswer += (await persistQueuedSubagentReports(user.id, conversation.id)).length;
+        drainedAfterAnswer += (await persistQueuedSubagentReports(user.id, conversation.id, emit)).length;
       } catch {
         /* drain failures are handled per-entry inside the helper */
       }
@@ -5702,7 +5787,7 @@ const thinkInstruction = thinkPlan.kind === "params"
       // enqueued DURING the first drain's awaits (the queue was emptied
       // before they landed) and posts anything the watcher handed over.
       try {
-        drainedAfterAnswer += (await persistQueuedSubagentReports(user.id, conversation.id)).length;
+        drainedAfterAnswer += (await persistQueuedSubagentReports(user.id, conversation.id, emit)).length;
       } catch {
         /* drain failures are handled per-entry inside the helper */
       }

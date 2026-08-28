@@ -304,6 +304,32 @@ describe("useChatStream — M3 Adversarial Tests", () => {
       // Verify cancelAnimationFrame mock is active
       expect(cancelAnimSpy).toBeDefined();
     });
+
+    it("inserts subagent_report message into conversation in real-time during streaming", async () => {
+      const hook = getHookInstance();
+
+      const chunks = [
+        'data: {"type":"start","messageId":"msg-8"}\n\n',
+        'data: {"type":"subagent_report","messageId":"sa-msg-1","subagentId":"sa-1","name":"SA-1","content":"<subagent_report name=\\"SA-1\\">## Summary\\nDone\\n</subagent_report>","createdAt":"2026-08-28T21:00:00.000Z"}\n\n',
+        'data: {"type":"delta","content":"Synthesizing findings..."}\n\n',
+        'data: {"type":"done","messageId":"msg-8","final":true}\n\n',
+      ];
+
+      const mockRes = createMockStreamResponse(chunks);
+      vi.mocked(apiClient.apiStream).mockResolvedValueOnce(mockRes);
+
+      await hook.stream({ conversationId: convId } as any, "user prompt");
+
+      const state = useAppStore.getState();
+      const messages = state.messagesByConversation[convId] || [];
+      const subagentMsg = messages.find((m) => m.id === "sa-msg-1");
+      expect(subagentMsg).toBeDefined();
+      expect(subagentMsg?.role).toBe("user");
+      expect(subagentMsg?.content).toContain('<subagent_report name="SA-1">');
+
+      const assistantMsg = messages.find((m) => m.id === "msg-8");
+      expect(assistantMsg?.content).toBe("Synthesizing findings...");
+    });
   });
 });
 

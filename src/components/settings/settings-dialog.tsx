@@ -580,27 +580,107 @@ function SecurityTab() {
 
 /* ----------------------------- About ----------------------------- */
 function AboutTab() {
+  const [checkingUpdate, setCheckingUpdate] = React.useState(false);
+  const [appInfo, setAppInfo] = React.useState<{
+    version: string;
+    channel: string;
+    buildHash: string;
+    repoUrl: string;
+  } | null>(null);
+
+  React.useEffect(() => {
+    fetch("/api/version")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.version) {
+          setAppInfo({
+            version: data.version,
+            channel: data.channel || "stable",
+            buildHash: data.buildHash || "local",
+            repoUrl: data.repoUrl || "https://github.com/WFekik/HermOS-IDE",
+          });
+        }
+      })
+      .catch(() => {
+        /* fallback to bundled pkg */
+      });
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const { checkForUpdates } = await import("@/lib/updater");
+      const res = await checkForUpdates(false);
+      if (res.status === "up-to-date") {
+        toast.success(`HermOS IDE is up to date (v${res.currentVersion}).`);
+      } else if (res.status === "available") {
+        toast.info(`New version v${res.latestVersion} is available!`, {
+          action: res.releaseUrl
+            ? {
+                label: "View Release",
+                onClick: () => window.open(res.releaseUrl, "_blank"),
+              }
+            : undefined,
+        });
+      } else if (res.status === "error") {
+        toast.error(`Update check failed: ${res.message}`);
+      }
+    } catch (e) {
+      toast.error("Failed to check for updates");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const displayVersion = appInfo?.version ?? (pkg as any).version ?? "1.0.0";
+  const displayChannel = appInfo?.channel ?? "stable";
+  const displayHash = appInfo?.buildHash ?? "local";
+  const repoUrl = appInfo?.repoUrl ?? "https://github.com/WFekik/HermOS-IDE";
+
   return (
     <div className="space-y-5 max-w-md">
       <div>
         <h3 className="text-base font-semibold">About HermOS</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Open-source agentic IDE. MIT licensed.
+          Enterprise-grade local-first agentic IDE. MIT licensed.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-md border p-2">
-          <div className="text-muted-foreground">Version</div>
-          <div className="font-mono">{(pkg as any).version ?? "1.0.0"}</div>
+        <div className="rounded-md border p-2.5 space-y-1">
+          <div className="text-muted-foreground flex items-center justify-between">
+            <span>Version</span>
+            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1 py-0 h-4">
+              {displayChannel}
+            </Badge>
+          </div>
+          <div className="font-mono font-medium text-sm">v{displayVersion}</div>
+          {displayHash !== "local" && (
+            <div className="text-[10px] text-muted-foreground font-mono">commit: {displayHash}</div>
+          )}
         </div>
-        <div className="rounded-md border p-2">
+        <div className="rounded-md border p-2.5 space-y-1">
           <div className="text-muted-foreground">License</div>
-          <div className="font-mono">MIT</div>
+          <div className="font-mono font-medium text-sm">MIT</div>
+          <div className="text-[10px] text-muted-foreground">Open-Source</div>
         </div>
       </div>
-      <div className="flex flex-col gap-1.5">
+
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs"
+          onClick={handleCheckUpdate}
+          disabled={checkingUpdate}
+        >
+          <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
+          {checkingUpdate ? "Checking updates..." : "Check for updates"}
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-1.5 pt-1">
         <a
-          href="https://github.com/hermos-ide/hermos"
+          href={repoUrl}
           target="_blank"
           rel="noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5"
@@ -608,12 +688,12 @@ function AboutTab() {
           <ExternalLink className="size-3.5" /> Source on GitHub
         </a>
         <a
-          href="https://hermos-ide.dev/docs"
+          href={`${repoUrl}/releases`}
           target="_blank"
           rel="noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5"
         >
-          <ExternalLink className="size-3.5" /> Documentation
+          <ExternalLink className="size-3.5" /> Release Notes & Changelogs
         </a>
       </div>
       <Separator />

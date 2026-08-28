@@ -98,4 +98,15 @@ describe("Browser Session Registry", () => {
     await browserClose("user_A");
     expect(getBrowserSession("user_A")).toBeNull();
   });
+
+  it("spawns the browser CLI using process.execPath for portability", async () => {
+    mockCliSuccess();
+    const opened = await browserOpen("https://example.com", "user_portable");
+    expect(opened.ok).toBe(true);
+
+    expect(execFileMock).toHaveBeenCalled();
+    const firstCallArgs = execFileMock.mock.calls[0];
+    expect(firstCallArgs[0]).toBe(process.execPath);
+    await browserClose("user_portable");
+  });
 });

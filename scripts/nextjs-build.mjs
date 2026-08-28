@@ -263,6 +263,31 @@ function bundlePrismaClientIntoStandalone() {
   );
 }
 
+// [fix: bundle agent-browser native binaries into standalone]
+// `agent-browser` relies on native binaries (agent-browser-win32-x64.exe,
+// agent-browser-darwin-arm64, agent-browser-linux-x64, etc.) located in
+// `node_modules/agent-browser/bin`. Next.js standalone file tracing ignores
+// .exe and native binary files from node_modules, causing "No binary found for win32-x64"
+// errors when the packaged desktop app runs browser commands.
+// Copy the entire agent-browser package (including native binaries) into standalone node_modules.
+function bundleAgentBrowserIntoStandalone() {
+  const repoNodeModules = fileURLToPath(
+    new URL("../node_modules", import.meta.url),
+  );
+  const standaloneNodeModules = join(
+    fileURLToPath(new URL("../.next-build/standalone", import.meta.url)),
+    "node_modules",
+  );
+  const sourceAgentBrowser = join(repoNodeModules, "agent-browser");
+  const destAgentBrowser = join(standaloneNodeModules, "agent-browser");
+  if (!existsSync(sourceAgentBrowser)) return;
+  rmSync(destAgentBrowser, { recursive: true, force: true });
+  cpSync(sourceAgentBrowser, destAgentBrowser, { recursive: true });
+  console.log(
+    "[nextjs-build] bundled agent-browser (including native binaries) into standalone",
+  );
+}
+
 if (result.error) {
   console.error("[nextjs-build] Failed to spawn next build:", result.error);
   process.exit(1);
@@ -276,6 +301,8 @@ portableStandaloneConfig();
 pruneAndBundlePrisma();
 // [fix: bundle the Prisma client into the standalone]
 bundlePrismaClientIntoStandalone();
+// [fix: bundle agent-browser native binaries into standalone]
+bundleAgentBrowserIntoStandalone();
 // [fix: copy public assets into standalone]
 copyPublicIntoStandalone();
 // [fix: copy client static assets into standalone]

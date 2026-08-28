@@ -750,7 +750,7 @@ interface AppState {
   ) => void;
   finalizeStreamingMessage: (messageId: string, conversationId?: string) => void;
   appendAssistantPlaceholder: (messageId: string, conversationId?: string) => void;
-  appendUserMessage: (msg: MessageDTO) => void;
+  appendUserMessage: (msg: MessageDTO, conversationId?: string) => void;
   appendAssistantError: (messageId: string, message: string, conversationId?: string) => void;
   /** Record queued-turn ids the just-finished run answered (done event). */
   markQueuedAnswered: (conversationId: string, ids: string[]) => void;
@@ -2049,9 +2049,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  appendUserMessage: (msg) => {
+  appendUserMessage: (msg, conversationId?) => {
     set((s) => {
-      const convId = s.activeConversationId ?? "";
+      const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? s.messages;
       // Dedup user messages by ID
       if (msgs.some((m) => m.id === msg.id)) return s;
@@ -2059,10 +2059,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       const updated = [...msgs, { ...msg, streaming: false }];
       updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
-      return {
-        messages: updated,
+      const patch: Partial<AppState> = {
         messagesByConversation: { ...s.messagesByConversation, [convId]: updated },
       };
+      if (convId === s.activeConversationId) patch.messages = updated;
+      return patch;
     });
   },
 

@@ -464,6 +464,20 @@ export function useChatStream(): UseChatStreamReturn {
         }
         break;
       }
+      case "subagent_report": {
+        flushPending();
+        store.appendUserMessage(
+          {
+            id: evt.messageId,
+            role: "user",
+            content: evt.content,
+            createdAt: evt.createdAt || new Date().toISOString(),
+          },
+          convId,
+        );
+        void store.refreshSubagents(convId);
+        break;
+      }
       case "stream_heartbeat": {
         break;
       }

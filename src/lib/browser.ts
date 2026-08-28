@@ -1,5 +1,6 @@
 import { ChildProcess, execFile } from "child_process";
 import { promisify } from "util";
+import { existsSync } from "fs";
 import { mkdir, readFile, unlink, readdir, stat } from "fs/promises";
 import path from "path";
 import os from "os";
@@ -103,13 +104,22 @@ export const browserSupervisor = new BrowserProcessSupervisor();
  * strict input validation, timeouts, sanitized subprocess environment, and safe error returns.
  */
 
-const CLI_PATH = path.resolve(
-  process.cwd(),
-  "node_modules",
-  "agent-browser",
-  "bin",
-  "agent-browser.js"
-);
+export function findAgentBrowserCli(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.resolve(process.cwd(), ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.resolve(process.cwd(), "_up_", ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.resolve(__dirname, "../../node_modules/agent-browser/bin/agent-browser.js"),
+    path.resolve(__dirname, "../node_modules/agent-browser/bin/agent-browser.js"),
+    path.resolve(__dirname, "node_modules/agent-browser/bin/agent-browser.js"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+const CLI_PATH = findAgentBrowserCli();
 const TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10_000_000;
 const MAX_URL_LEN = 2000;
@@ -215,7 +225,7 @@ async function runCli(args: string[], sessionKey = "default"): Promise<RunResult
   const cliArgs = ["--session", safeKey, ...args];
   return new Promise((resolve) => {
     const child = execFile(
-      "node",
+      process.execPath,
       [CLI_PATH, ...cliArgs],
       {
         maxBuffer: MAX_BUFFER,

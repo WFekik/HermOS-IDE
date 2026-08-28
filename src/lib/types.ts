@@ -241,6 +241,15 @@ export type ChatStreamEvent =
   | { type: "stream_heartbeat"; ts: number }
   | { type: "done"; messageId: string; final?: boolean; preTurnCheckpointId?: string; queuedAnsweredIds?: string[] }
   | { type: "error"; message: string; code?: string }
+  | {
+      type: "subagent_report";
+      messageId: string;
+      subagentId: string;
+      name?: string;
+      content: string;
+      status?: "completed" | "failed";
+      createdAt?: string;
+    }
   | { type: "rate_limit_retry"; retryAfterMs: number; attempt: number; maxAttempts: number; conversationId: string }
   /** Instructs the client to perform a UI action (e.g. switch a panel tab).
    *  The server cannot call useAppStore directly (different process/context),

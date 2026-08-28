@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { getAppVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,7 @@ export function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     service: "hermos",
-    version: "1.0.0",
+    version: getAppVersion(),
     time: new Date().toISOString(),
   });
 }

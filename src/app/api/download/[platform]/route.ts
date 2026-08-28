@@ -1,35 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { existsSync, statSync, readdirSync, readFileSync } from "fs";
+import { existsSync, statSync, readdirSync } from "fs";
 import { readFile } from "fs/promises";
 import path from "path";
 import { enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { getAppVersion, getAppRepo } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
-
-const REPO = "WFekik/HermOS-IDE";
-
-/**
- * Read the version from the bundled package.json (present at the repo root in
- * dev and in the standalone output). Falls back to a placeholder only if the
- * file is unreadable — the GitHub asset URL is a release URL and version
- * placeholders would 404, which is preferable to silently shipping a stale
- * hardcoded version.
- */
-function resolveVersion(): string {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(path.join(process.cwd(), "package.json"), "utf-8"),
-    ) as { version?: unknown };
-    if (typeof pkg?.version === "string" && /^\d+\.\d+\.\d+/.test(pkg.version)) {
-      return pkg.version;
-    }
-  } catch {
-    /* fall through */
-  }
-  return "0.0.0";
-}
-
-const VERSION = resolveVersion();
 
 const PLATFORM_EXTS: Record<string, string[]> = {
   windows: [".msi", ".exe"],
@@ -55,13 +31,19 @@ function contentTypeFor(fileName: string): string {
   return "application/octet-stream";
 }
 
-const GITHUB_ASSETS: Record<string, string> = {
-  windows: `https://github.com/${REPO}/releases/latest/download/HermOS%20IDE_${VERSION}_x64_en-US.msi`,
-  macos: `https://github.com/${REPO}/releases/latest/download/HermOS%20IDE_${VERSION}_universal.dmg`,
-  linux: `https://github.com/${REPO}/releases/latest/download/HermOS%20IDE_${VERSION}_amd64.deb`,
-};
+function getGithubAssets(): Record<string, string> {
+  const repo = getAppRepo();
+  const version = getAppVersion();
+  return {
+    windows: `https://github.com/${repo}/releases/latest/download/HermOS%20IDE_${version}_x64_en-US.msi`,
+    macos: `https://github.com/${repo}/releases/latest/download/HermOS%20IDE_${version}_universal.dmg`,
+    linux: `https://github.com/${repo}/releases/latest/download/HermOS%20IDE_${version}_amd64.deb`,
+  };
+}
 
-const GITHUB_RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
+function getGithubReleasesPage(): string {
+  return `https://github.com/${getAppRepo()}/releases/latest`;
+}
 
 // Tauri names release assets after `productName` ("HermOS IDE_1.0.0_x64_en-US.msi"),
 // which the hardcoded URLs above can't know reliably — resolve the real asset
@@ -73,8 +55,9 @@ async function githubAssetUrl(platform: string): Promise<string | null> {
   const now = Date.now();
   if (!cachedAssets || now - cachedAssets.at > ASSET_CACHE_TTL_MS) {
     const byPlatform: Record<string, string> = {};
+    const repo = getAppRepo();
     try {
-      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
         headers: { Accept: "application/vnd.github+json", "User-Agent": "hermos-ide" },
         signal: AbortSignal.timeout(10_000),
       });
@@ -90,7 +73,7 @@ async function githubAssetUrl(platform: string): Promise<string | null> {
         }
       }
     } catch {
-      // API unreachable — fall back to the hardcoded URLs below.
+      // API unreachable — fall back to the dynamic fallback URLs below.
     }
     cachedAssets = { byPlatform, at: now };
   }
@@ -123,7 +106,8 @@ function findLocalInstaller(platform: string): { fileName: string; contentType: 
   }
   // Tauri v2 names bundles after productName: "HermOS IDE_1.0.0_x64_en-US.msi"
   // (spaces preserved). Match both canonical and lowercase forms.
-  const prefixes = [`hermos-ide_${VERSION}_`.toLowerCase(), `hermos ide_${VERSION}_`.toLowerCase()];
+  const ver = getAppVersion();
+  const prefixes = [`hermos-ide_${ver}_`.toLowerCase(), `hermos ide_${ver}_`.toLowerCase()];
   for (const ext of exts) {
     const exact = byExt(ext).find((e) => {
       const lower = e.toLowerCase();
@@ -183,8 +167,8 @@ export async function GET(
   }
 
   // Fallback: try the GitHub API for real asset names; on failure use
-  // dot-normalized hardcoded URLs, finally degrade to the Releases page.
+  // dot-normalized fallback URLs, finally degrade to the Releases page.
   const assetUrl = await githubAssetUrl(platform);
-  const target = assetUrl || GITHUB_ASSETS[platform] || GITHUB_RELEASES_PAGE;
+  const target = assetUrl || getGithubAssets()[platform] || getGithubReleasesPage();
   return NextResponse.redirect(target, 307);
 }

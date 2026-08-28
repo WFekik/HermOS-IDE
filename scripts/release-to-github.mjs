@@ -9,9 +9,9 @@ import path from "node:path";
 
 const TOKEN = process.env.GITHUB_TOKEN;
 const TAG = process.env.RELEASE_TAG;
-const OWNER = "WFekik";
-const REPO = "HermOS-IDE";
-const API = "https://api.github.com";
+const fullRepo = process.env.HERMOS_REPO || process.env.GITHUB_REPOSITORY || "WFekik/HermOS-IDE";
+const [OWNER, REPO] = fullRepo.split("/");
+const API = process.env.GITHUB_API_URL || "https://api.github.com";
 
 if (!TOKEN) {
   console.error("GITHUB_TOKEN is required");
