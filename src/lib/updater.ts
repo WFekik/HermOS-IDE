@@ -47,19 +47,32 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
         };
       }
 
-      toast.info(`Found new version ${update.version}. Downloading update...`, {
-        duration: 8000,
-      });
+      let downloadedBytes = 0;
+      let totalBytes = 0;
 
-      await update.downloadAndInstall((event) => {
+      await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
         switch (event.event) {
           case 'Started':
+            totalBytes = event.data?.contentLength || 0;
+            toast.loading(`Downloading HermOS IDE v${update.version}...`, {
+              id: 'app-update-progress',
+            });
             break;
           case 'Progress':
+            downloadedBytes += event.data?.chunkLength || 0;
+            if (totalBytes > 0) {
+              const percent = Math.round((downloadedBytes / totalBytes) * 100);
+              const mb = (downloadedBytes / (1024 * 1024)).toFixed(1);
+              const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+              toast.loading(`Downloading update v${update.version}: ${percent}% (${mb}/${totalMb} MB)...`, {
+                id: 'app-update-progress',
+              });
+            }
             break;
           case 'Finished':
-            toast.success("Download finished! Relaunching application...", {
-              duration: 3000,
+            toast.success("Update downloaded! Relaunching HermOS IDE...", {
+              id: 'app-update-progress',
+              duration: 4000,
             });
             break;
         }

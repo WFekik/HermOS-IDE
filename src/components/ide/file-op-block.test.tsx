@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import * as React from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FileOpBlock } from "@/components/ide/message-renderer";
 import type { LiveToolCall } from "@/stores/app-store";
@@ -10,6 +10,10 @@ vi.mock("@/components/ide/code-block", () => ({
     <pre data-testid="code-mock">{String(value).slice(0, 40)}</pre>
   ),
 }));
+
+beforeEach(() => {
+  window.scrollTo = vi.fn();
+});
 
 afterEach(cleanup);
 

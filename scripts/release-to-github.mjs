@@ -149,8 +149,14 @@ async function updateLatestJson(releaseId) {
       const downloadUrl = binaryAsset.browser_download_url;
       const lower = baseName.toLowerCase();
 
-      if (lower.endsWith(".exe") || lower.endsWith(".msi") || lower.includes("x64_en-us") || lower.includes("x64-setup")) {
+      if (lower.endsWith(".exe") || lower.includes("x64-setup")) {
         latest.platforms["windows-x86_64"] = { signature, url: downloadUrl };
+        latest.platforms["windows-x86_64-nsis"] = { signature, url: downloadUrl };
+      } else if (lower.endsWith(".msi") || lower.includes("x64_en-us")) {
+        latest.platforms["windows-x86_64-msi"] = { signature, url: downloadUrl };
+        if (!latest.platforms["windows-x86_64"]) {
+          latest.platforms["windows-x86_64"] = { signature, url: downloadUrl };
+        }
       }
       if (lower.includes("darwin") || lower.includes(".app.tar.gz") || lower.includes("universal.dmg")) {
         latest.platforms["darwin-x86_64"] = { signature, url: downloadUrl };

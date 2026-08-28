@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
 import { ProjectSelector } from "./project-selector";
 import { useAppStore } from "@/stores/app-store";
 
@@ -24,6 +24,7 @@ describe("ProjectSelector", () => {
         { id: "ws-3", name: "pfe + mfe", rootDir: "d:\\pfe + mfe", isActive: false },
       ],
       activeWorkspace: { id: "ws-1", name: "HermOS IDE", rootDir: "c:\\HermOS IDE", isActive: true },
+      refreshWorkspaces: vi.fn().mockResolvedValue(undefined),
     });
   });
 
@@ -35,7 +36,9 @@ describe("ProjectSelector", () => {
   it("opens popover and lists workspaces with actions", async () => {
     render(<ProjectSelector />);
     const trigger = screen.getByRole("button", { name: /Current project/i });
-    fireEvent.click(trigger);
+    await act(async () => {
+      fireEvent.click(trigger);
+    });
 
     expect(screen.getByText("d:\\moumen")).toBeDefined();
     expect(screen.getByText("d:\\pfe + mfe")).toBeDefined();
@@ -55,10 +58,14 @@ describe("ProjectSelector", () => {
     });
 
     render(<ProjectSelector />);
-    fireEvent.click(screen.getByRole("button", { name: /Current project/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Current project/i }));
+    });
 
     const moumenBtn = screen.getByText("d:\\moumen");
-    fireEvent.click(moumenBtn);
+    await act(async () => {
+      fireEvent.click(moumenBtn);
+    });
 
     await waitFor(() => {
       expect(switchWorkspaceMock).toHaveBeenCalledWith("ws-2", "moumen", { skipAutoSelectConversation: true });

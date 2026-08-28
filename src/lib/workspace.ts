@@ -126,6 +126,46 @@ export function isSubpathOrEqual(target: string, base: string): boolean {
   return target.startsWith(bSep);
 }
 
+const realBaseCache = new Map<string, { realBase: string | null; expires: number }>();
+const REAL_BASE_TTL_MS = 10_000;
+
+function getCachedRealBase(base: string): string | null {
+  const now = Date.now();
+  const entry = realBaseCache.get(base);
+  if (entry && entry.expires > now) {
+    return entry.realBase;
+  }
+  let real: string | null = null;
+  try {
+    if (existsSync(base)) {
+      real = realpathSync(base);
+    }
+  } catch {
+    real = null;
+  }
+  realBaseCache.set(base, { realBase: real, expires: now + REAL_BASE_TTL_MS });
+  return real;
+}
+
+const WIN32_ABSOLUTE_OR_UNC_RE = /^[a-zA-Z]:[\\/]|^\\\\[^\\]/;
+const POSIX_SYSTEM_ROOTS_RE = /^\/(?:etc|var|usr|bin|sbin|home|root|opt|dev|proc|sys|tmp|private|Library|System|Users|Applications|Volumes|mnt|media|srv)(?:\/|$)/;
+const LEADING_DOT_SLASH_RE = /^(\.\/)+/;
+const LEADING_SLASH_RE = /^\/+/;
+const TRAILING_SLASH_RE = /\/+$/;
+const ALL_BACKSLASH_RE = /\\/g;
+const WIN32_DOT_SPACE_RE = /^[. ]+$/;
+const ALL_SPACE_RE = / /g;
+const POSIX_DOT_ONLY_RE = /^\.+$/;
+
+function isTraversalSegment(s: string): boolean {
+  if (!s) return false;
+  if (process.platform === "win32") {
+    if (!WIN32_DOT_SPACE_RE.test(s)) return false;
+    return s.replace(ALL_SPACE_RE, "").length >= 2;
+  }
+  return POSIX_DOT_ONLY_RE.test(s) && s.length >= 2;
+}
+
 /** Resolve a relative path against a known rootDir (for native folders / desktop mode). */
 export function safePathFromRoot(rootDir: string, rel: string): string | null {
   if (!rootDir) return null;
@@ -138,84 +178,79 @@ export function safePathFromRoot(rootDir: string, rel: string): string | null {
   if (path.isAbsolute(rel)) {
     const abs = path.resolve(rel);
     if (isSubpathOrEqual(abs, base)) {
-      try {
-        const realBase = realpathSync(base);
-        if (existsSync(/* turbopackIgnore: true */ abs)) {
-          const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
-          if (!isSubpathOrEqual(realAbs, realBase)) return null;
-        } else {
-          let checkDir = path.dirname(abs);
-          while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
-            checkDir = path.dirname(checkDir);
+      const realBase = getCachedRealBase(base);
+      if (realBase) {
+        try {
+          if (existsSync(/* turbopackIgnore: true */ abs)) {
+            const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
+            if (!isSubpathOrEqual(realAbs, realBase)) return null;
+          } else {
+            let checkDir = path.dirname(abs);
+            while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
+              checkDir = path.dirname(checkDir);
+            }
+            if (existsSync(checkDir)) {
+              const realCheck = realpathSync(checkDir);
+              if (!isSubpathOrEqual(realCheck, realBase)) return null;
+            }
           }
-          if (existsSync(checkDir)) {
-            const realCheck = realpathSync(checkDir);
-            if (!isSubpathOrEqual(realCheck, realBase)) return null;
-          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
       }
       return abs;
     }
     // Windows drive-letter paths (C:\...) or UNC paths (\\server\...) outside base must be rejected.
     if (process.platform === "win32") {
-      if (/^[a-zA-Z]:[\\/]/.test(rel) || /^\\\\[^\\]/.test(rel)) {
+      if (WIN32_ABSOLUTE_OR_UNC_RE.test(rel)) {
         return null;
       }
     } else {
       // On POSIX, reject real system root paths outside workspace base.
-      const posixNorm = (rel || "").replace(/\\/g, "/");
-      const systemRoots = /^\/(?:etc|var|usr|bin|sbin|home|root|opt|dev|proc|sys|tmp|private|Library|System|Users|Applications|Volumes|mnt|media|srv)(?:\/|$)/;
-      if (systemRoots.test(posixNorm)) {
+      const posixNorm = (rel || "").replace(ALL_BACKSLASH_RE, "/");
+      if (POSIX_SYSTEM_ROOTS_RE.test(posixNorm)) {
         return null;
       }
     }
     // Not a drive letter or system root — e.g. "/foo.ts" should be treated as "foo.ts" inside the workspace
     rel = rel.replace(/^\/+/, "").replace(/^\\+/, "");
   }
-  const normalizedRel = (rel || "").replace(/\\/g, "/");
+  const normalizedRel = (rel || "").replace(ALL_BACKSLASH_RE, "/");
   // Strip leading ./ and / only — NOT leading .. (which must still be caught
   // by the includes("..") check below). The old regex /^[\.\/]+/ stripped
   // leading .. which defeated the traversal guard on Windows.
-  const clean = normalizedRel.replace(/^(\.\/)+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  const clean = normalizedRel.replace(LEADING_DOT_SLASH_RE, "").replace(LEADING_SLASH_RE, "").replace(TRAILING_SLASH_RE, "");
   // Reject dot-only or dot-space traversal segments (>= 2 dots) while preserving
   // legitimate filenames like `foo..bar.ts` across Windows and POSIX.
   const segments = clean.split("/");
-  const isTraversalSegment = (s: string): boolean => {
-    if (!s) return false;
-    if (process.platform === "win32") {
-      if (!/^[. ]+$/.test(s)) return false;
-      return s.replace(/ /g, "").length >= 2;
-    }
-    return /^\.+$/.test(s) && s.length >= 2;
-  };
   if (segments.some(isTraversalSegment)) return null;
   const abs = path.resolve(base, clean || ".");
   if (!isSubpathOrEqual(abs, base)) return null;
 
   // Symlink defense-in-depth: ensure realpath does not escape workspace base
-  try {
-    const realBase = realpathSync(base);
-    if (existsSync(/* turbopackIgnore: true */ abs)) {
-      const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
-      if (!isSubpathOrEqual(realAbs, realBase)) {
-        return null;
-      }
-    } else {
-      let checkDir = path.dirname(abs);
-      while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
-        checkDir = path.dirname(checkDir);
-      }
-      if (existsSync(checkDir)) {
-        const realCheck = realpathSync(checkDir);
-        if (!isSubpathOrEqual(realCheck, realBase)) {
+  const realBase = getCachedRealBase(base);
+  if (realBase) {
+    try {
+      if (existsSync(/* turbopackIgnore: true */ abs)) {
+        const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
+        if (!isSubpathOrEqual(realAbs, realBase)) {
           return null;
         }
+      } else {
+        let checkDir = path.dirname(abs);
+        while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
+          checkDir = path.dirname(checkDir);
+        }
+        if (existsSync(checkDir)) {
+          const realCheck = realpathSync(checkDir);
+          if (!isSubpathOrEqual(realCheck, realBase)) {
+            return null;
+          }
+        }
       }
+    } catch {
+      /* ignore stat/permission failures */
     }
-  } catch {
-    /* ignore stat/permission failures */
   }
   return abs;
 }
