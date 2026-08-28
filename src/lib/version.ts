@@ -1,11 +1,10 @@
-import path from "path";
-import { readFileSync, existsSync } from "fs";
+import pkg from "../../package.json";
 
 /**
  * Enterprise Version Control & Build Metadata Engine for HermOS IDE.
  * 
  * Provides a single source of truth for:
- * - Application version & semver resolution
+ * - Application version & semver resolution (isomorphic for Client & Server)
  * - Release channels (stable, beta, nightly, enterprise)
  * - Git commit hash, build dates, and runtime platform
  * - Dynamic repository and updater endpoints (zero hardcoding)
@@ -47,7 +46,7 @@ export interface UpdateCheckInfo {
 }
 
 const DEFAULT_REPO = "WFekik/HermOS-IDE";
-const DEFAULT_VERSION = "1.0.0";
+const FALLBACK_VERSION = "1.0.1";
 
 let cachedVersion: string | null = null;
 let cachedBuildHash: string | null = null;
@@ -56,63 +55,27 @@ let cachedBuildHash: string | null = null;
  * Resolve the application version dynamically with prioritized fallback:
  * 1. HERMOS_VERSION env variable
  * 2. NEXT_PUBLIC_APP_VERSION env variable
- * 3. package.json in process.cwd() or root
- * 4. tauri.conf.json in src-tauri/
- * 5. DEFAULT_VERSION ("1.0.0")
+ * 3. package.json statically bundled version
+ * 4. FALLBACK_VERSION ("1.0.1")
  */
 export function getAppVersion(): string {
   if (cachedVersion) return cachedVersion;
 
-  const envVersion = process.env.HERMOS_VERSION || process.env.NEXT_PUBLIC_APP_VERSION;
+  const envVersion =
+    (typeof process !== "undefined" ? process.env.HERMOS_VERSION || process.env.NEXT_PUBLIC_APP_VERSION : undefined);
+
   if (envVersion && isValidSemverString(envVersion.trim())) {
     cachedVersion = envVersion.trim();
     return cachedVersion;
   }
 
-  // Check package.json candidate paths
-  const candidatePkgPaths = [
-    path.join(process.cwd(), "package.json"),
-    path.resolve(__dirname, "../../package.json"),
-    path.resolve(__dirname, "../package.json"),
-  ];
-
-  for (const p of candidatePkgPaths) {
-    if (existsSync(p)) {
-      try {
-        const raw = readFileSync(p, "utf-8");
-        const parsed = JSON.parse(raw) as { version?: unknown };
-        if (typeof parsed?.version === "string" && isValidSemverString(parsed.version)) {
-          cachedVersion = parsed.version.trim();
-          return cachedVersion;
-        }
-      } catch {
-        /* continue to next fallback */
-      }
-    }
+  const pkgVer = (pkg as { version?: string })?.version;
+  if (typeof pkgVer === "string" && isValidSemverString(pkgVer)) {
+    cachedVersion = pkgVer.trim();
+    return cachedVersion;
   }
 
-  // Check src-tauri/tauri.conf.json
-  const candidateTauriPaths = [
-    path.join(process.cwd(), "src-tauri", "tauri.conf.json"),
-    path.resolve(__dirname, "../../src-tauri/tauri.conf.json"),
-  ];
-
-  for (const p of candidateTauriPaths) {
-    if (existsSync(p)) {
-      try {
-        const raw = readFileSync(p, "utf-8");
-        const parsed = JSON.parse(raw) as { version?: unknown };
-        if (typeof parsed?.version === "string" && isValidSemverString(parsed.version)) {
-          cachedVersion = parsed.version.trim();
-          return cachedVersion;
-        }
-      } catch {
-        /* continue to next fallback */
-      }
-    }
-  }
-
-  cachedVersion = DEFAULT_VERSION;
+  cachedVersion = FALLBACK_VERSION;
   return cachedVersion;
 }
 
@@ -122,9 +85,12 @@ export function getAppVersion(): string {
  */
 export function getAppRepo(): string {
   const envRepo =
-    process.env.HERMOS_REPO ||
-    process.env.NEXT_PUBLIC_HERMOS_REPO ||
-    process.env.GITHUB_REPOSITORY;
+    typeof process !== "undefined"
+      ? process.env.HERMOS_REPO ||
+        process.env.NEXT_PUBLIC_HERMOS_REPO ||
+        process.env.GITHUB_REPOSITORY
+      : undefined;
+
   if (envRepo && /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(envRepo.trim())) {
     return envRepo.trim();
   }
@@ -136,9 +102,9 @@ export function getAppRepo(): string {
  */
 export function getReleaseChannel(): ReleaseChannel {
   const envChannel = (
-    process.env.HERMOS_RELEASE_CHANNEL ||
-    process.env.NEXT_PUBLIC_HERMOS_RELEASE_CHANNEL ||
-    ""
+    (typeof process !== "undefined"
+      ? process.env.HERMOS_RELEASE_CHANNEL || process.env.NEXT_PUBLIC_HERMOS_RELEASE_CHANNEL
+      : "") || ""
   ).toLowerCase().trim();
 
   if (envChannel === "beta" || envChannel === "nightly" || envChannel === "enterprise") {
@@ -160,10 +126,12 @@ export function getBuildHash(): string {
   if (cachedBuildHash) return cachedBuildHash;
 
   const envHash =
-    process.env.HERMOS_BUILD_HASH ||
-    process.env.NEXT_PUBLIC_BUILD_HASH ||
-    process.env.VERCEL_GIT_COMMIT_SHA ||
-    process.env.GITHUB_SHA;
+    typeof process !== "undefined"
+      ? process.env.HERMOS_BUILD_HASH ||
+        process.env.NEXT_PUBLIC_BUILD_HASH ||
+        process.env.VERCEL_GIT_COMMIT_SHA ||
+        process.env.GITHUB_SHA
+      : undefined;
 
   if (envHash && /^[a-fA-F0-9]{7,40}$/.test(envHash.trim())) {
     cachedBuildHash = envHash.trim().slice(0, 7);
@@ -181,7 +149,7 @@ export function isDesktopApp(): boolean {
   if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
     return true;
   }
-  return process.env.HERMOS_DESKTOP === "1" || process.env.TAURI_ENV_PLATFORM !== undefined;
+  return typeof process !== "undefined" && (process.env.HERMOS_DESKTOP === "1" || process.env.TAURI_ENV_PLATFORM !== undefined);
 }
 
 /**
@@ -201,7 +169,9 @@ export function getAppInfo(): AppInfoDTO {
     name: "HermOS IDE",
     channel,
     buildHash,
-    buildDate: process.env.HERMOS_BUILD_DATE || new Date().toISOString().split("T")[0],
+    buildDate:
+      (typeof process !== "undefined" ? process.env.HERMOS_BUILD_DATE : undefined) ||
+      new Date().toISOString().split("T")[0],
     repo,
     repoUrl,
     releasesUrl,

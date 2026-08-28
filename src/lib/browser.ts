@@ -114,7 +114,7 @@ export function findAgentBrowserCli(): string {
     path.resolve(__dirname, "node_modules/agent-browser/bin/agent-browser.js"),
   ];
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(/*turbopackIgnore: true*/ candidate)) return candidate;
   }
   return candidates[0];
 }

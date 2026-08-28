@@ -288,9 +288,13 @@ function bundleAgentBrowserIntoStandalone() {
   );
 }
 
-if (result.error) {
-  console.error("[nextjs-build] Failed to spawn next build:", result.error);
-  process.exit(1);
+if (result.error || result.status !== 0) {
+  console.error(
+    "[nextjs-build] Next build failed with exit code:",
+    result.status,
+    result.error || "",
+  );
+  process.exit(result.status ?? 1);
 }
 
 // [fix: prune env from standalone]
