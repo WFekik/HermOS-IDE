@@ -128,6 +128,7 @@ export function isSubpathOrEqual(target: string, base: string): boolean {
 
 const realBaseCache = new Map<string, { realBase: string | null; expires: number }>();
 const REAL_BASE_TTL_MS = 10_000;
+const MAX_REAL_BASE_CACHE_SIZE = 200;
 
 function getCachedRealBase(base: string): string | null {
   const now = Date.now();
@@ -135,6 +136,16 @@ function getCachedRealBase(base: string): string | null {
   if (entry && entry.expires > now) {
     return entry.realBase;
   }
+
+  // Evict expired entries or enforce size cap to prevent unbounded growth
+  if (realBaseCache.size >= MAX_REAL_BASE_CACHE_SIZE) {
+    for (const [key, val] of realBaseCache.entries()) {
+      if (val.expires <= now || realBaseCache.size >= MAX_REAL_BASE_CACHE_SIZE) {
+        realBaseCache.delete(key);
+      }
+    }
+  }
+
   let real: string | null = null;
   try {
     if (existsSync(base)) {

@@ -48,6 +48,7 @@ import type { AgentMode, ProviderId } from "@/lib/types";
 import { PermissionsSettings } from "@/components/settings/permissions-settings";
 import { UsageSettings } from "@/components/settings/usage-settings";
 import { DEFAULT_CONTEXT_CONFIG } from "@/lib/ai/context";
+import { openExternalUrl } from "@/lib/open-external";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -683,7 +684,11 @@ function AboutTab() {
           href={repoUrl}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5"
+          onClick={(e) => {
+            e.preventDefault();
+            void openExternalUrl(repoUrl);
+          }}
+          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
           <ExternalLink className="size-3.5" /> Source on GitHub
         </a>
@@ -691,7 +696,11 @@ function AboutTab() {
           href={`${repoUrl}/releases`}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5"
+          onClick={(e) => {
+            e.preventDefault();
+            void openExternalUrl(`${repoUrl}/releases`);
+          }}
+          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
           <ExternalLink className="size-3.5" /> Release Notes & Changelogs
         </a>

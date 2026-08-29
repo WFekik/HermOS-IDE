@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppearanceApplier } from "@/components/appearance-applier";
 import { toast } from "sonner";
 
+import { setupGlobalLinkInterceptor } from "@/lib/open-external";
+
 export function Providers({ children }: { children: React.ReactNode }) {
   // Single shared QueryClient for the whole app. Created once per browser
   // session so cache persists across navigations. Components that previously
@@ -33,11 +35,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   React.useEffect(() => {
+    // Install global click interceptor for all external links across the app
+    const cleanupLinks = setupGlobalLinkInterceptor();
+    let updaterTimeout: ReturnType<typeof setTimeout> | undefined;
+
     const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
     if (isTauri) {
       import("@/lib/updater")
         .then(({ checkForUpdates }) => {
-          setTimeout(() => {
+          updaterTimeout = setTimeout(() => {
             checkForUpdates().then((result) => {
               if (result.status === "error") {
                 // Make updater failures visible instead of silently swallowing them.
@@ -50,6 +56,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
         })
         .catch(console.error);
     }
+
+    return () => {
+      cleanupLinks();
+      if (updaterTimeout) clearTimeout(updaterTimeout);
+    };
   }, []);
 
   return (

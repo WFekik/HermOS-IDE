@@ -34,6 +34,7 @@ import { FILE_OP_TOOLS, computeDiffStats, formatBytes } from "@/lib/tool-ui-shar
 import { sanitizeContent, sanitizeThinkingContent, extractThinkingAndContent } from "@/lib/sanitize-content";
 import type { AttachmentDTO } from "@/lib/types";
 import type { UIMessage } from "@/stores/app-store";
+import { openExternalUrl } from "@/lib/open-external";
 
 /**
  * Memoized sanitize for stable segment contents. `sanitizeContent` is pure
@@ -512,7 +513,13 @@ const markdownComponents: Components = {
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="text-brand underline-offset-2 hover:underline font-medium"
+        onClick={(e) => {
+          if (href) {
+            e.preventDefault();
+            void openExternalUrl(href);
+          }
+        }}
+        className="text-brand underline-offset-2 hover:underline font-medium cursor-pointer"
       >
         {children}
       </a>

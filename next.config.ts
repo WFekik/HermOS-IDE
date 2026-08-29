@@ -66,7 +66,8 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
+        // Apply strict IDE CSP to all routes EXCEPT the sandboxed browser proxy
+        source: "/((?!api/browser/proxy).*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -123,7 +124,15 @@ const nextConfig: NextConfig = {
         // The headless browser proxy serves third-party HTML in an iframe.
         // The proxy route handler itself sets the authoritative CSP headers.
         source: "/api/browser/proxy",
-        headers: [{ key: "X-Content-Type-Options", value: "nosniff" }],
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          {
+            key: "Content-Security-Policy",
+            value:
+              "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
+          },
+        ],
       },
     ];
   },

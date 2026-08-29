@@ -186,7 +186,7 @@ async function updateLatestJson(releaseId) {
     });
 
     if (res.ok) {
-      console.log("✓ Published auto-updater manifest latest.json to release!");
+      console.log("[updater] Published auto-updater manifest latest.json to release!");
     } else {
       console.error("Failed to upload latest.json:", res.status, await res.text());
     }

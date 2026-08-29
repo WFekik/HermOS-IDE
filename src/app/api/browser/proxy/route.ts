@@ -19,6 +19,32 @@ function escapeHtmlAttr(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** Convert a relative or protocol-relative URL to a secure absolute URL */
+function toAbsoluteUrl(raw: string, base: string): string {
+  if (!raw || typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  // Strip dangerous executable script schemes completely
+  if (lower.startsWith("javascript:") || lower.startsWith("vbscript:")) {
+    return "#";
+  }
+  if (
+    lower.startsWith("data:") ||
+    lower.startsWith("blob:") ||
+    lower.startsWith("#")
+  ) {
+    return raw;
+  }
+  if (trimmed.startsWith("//")) {
+    return "https:" + trimmed;
+  }
+  try {
+    return new URL(trimmed, base).toString();
+  } catch {
+    return raw;
+  }
+}
+
 export const GET = withErrorHandler(async (req: NextRequest) => {
   const user = await requireUser();
   const limited = await withRateLimit(req, `browser-proxy:${user.id}`, { capacity: 30, refillPerSec: 2 });
@@ -89,18 +115,32 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     const contentType = res.headers.get("content-type") || "text/html; charset=utf-8";
     let body = await res.text();
 
-    // If HTML, inject a <base> tag so relative links, images, and scripts resolve
-    // correctly. The URL is attribute-escaped to prevent markup injection.
-    // Use the final post-redirect URL — after a host-changing redirect
-    // (http→https, apex→www) relative links must resolve against the current
-    // origin, not the original target. Case-insensitive regex matches <head>.
+    // If HTML, resolve relative subresources and inject base tag and referrer policy
     if (contentType.includes("text/html")) {
-      const baseTag = `<base href="${escapeHtmlAttr(current)}">`;
+      // 1. Rewrite relative and protocol-relative stylesheet links
+      body = body.replace(/<link\b([^>]*?)href=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, href, suffix) => {
+        const abs = toAbsoluteUrl(href, current);
+        return `<link ${prefix}href=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
+      });
+
+      // 2. Rewrite relative and protocol-relative script sources
+      body = body.replace(/<script\b([^>]*?)src=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, src, suffix) => {
+        const abs = toAbsoluteUrl(src, current);
+        return `<script ${prefix}src=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
+      });
+
+      // 3. Rewrite relative and protocol-relative image sources
+      body = body.replace(/<img\b([^>]*?)src=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, src, suffix) => {
+        const abs = toAbsoluteUrl(src, current);
+        return `<img ${prefix}src=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
+      });
+
+      // 4. Inject <base> and <meta name="referrer" content="no-referrer"> tag
+      const baseTag = `<base href="${escapeHtmlAttr(current)}"><meta name="referrer" content="no-referrer">`;
       const headPattern = /(<head\b[^>]*>)/i;
       if (headPattern.test(body)) {
         body = body.replace(headPattern, `$1${baseTag}`);
       } else {
-        // No <head> found — prepend the base tag directly.
         body = `${baseTag}${body}`;
       }
     }
@@ -110,12 +150,10 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     // Sandbox the proxied document: scripts/forms/popups still run so pages
     // render, but the document gets an opaque origin (no allow-same-origin),
     // so attacker-controlled HTML cannot read app cookies or call app APIs
-    // same-origin. The next.config.ts route rule's permissive CSP is overridden
-    // by this response header (response headers win over config headers in
-    // Next.js headers() merge order).
+    // same-origin. Permissive subresource CSP allows external CSS, fonts, and images.
     headers.set(
       "Content-Security-Policy",
-      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
+      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
     );
     headers.set("X-Content-Type-Options", "nosniff");
     // Prevent the browser from caching stale proxied pages.
