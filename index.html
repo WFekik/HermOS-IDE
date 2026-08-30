@@ -2002,9 +2002,16 @@
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(data) {
           if (!data || !data.assets || !data.assets.length) return;
-          var winAsset = data.assets.find(function(a) { return a.name.endsWith(".msi"); });
-          var macAsset = data.assets.find(function(a) { return a.name.endsWith(".dmg"); });
-          var linuxAsset = data.assets.find(function(a) { return a.name.endsWith(".deb"); });
+          var tag = (data.tag_name || "").replace(/^v/, "") || CONFIG.version;
+          CONFIG.version = tag;
+
+          var winAsset = data.assets.find(function(a) { return a.name.endsWith(".msi"); }) ||
+                         data.assets.find(function(a) { return a.name.endsWith("-setup.exe") || a.name.endsWith(".exe"); });
+          var macAsset = data.assets.find(function(a) { return a.name.endsWith(".dmg"); }) ||
+                         data.assets.find(function(a) { return a.name.endsWith(".tar.gz"); });
+          var linuxAsset = data.assets.find(function(a) { return a.name.endsWith(".deb"); }) ||
+                           data.assets.find(function(a) { return a.name.endsWith(".AppImage"); });
+
           if (winAsset) DOWNLOAD_URLS.win = winAsset.browser_download_url;
           if (macAsset) DOWNLOAD_URLS.mac = macAsset.browser_download_url;
           if (linuxAsset) DOWNLOAD_URLS.linux = linuxAsset.browser_download_url;
