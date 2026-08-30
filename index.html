@@ -78,7 +78,7 @@
           "availability": "https://schema.org/InStock"
         },
         "license": "https://opensource.org/licenses/MIT",
-        "softwareVersion": "1.0.0",
+        "softwareVersion": "1.0.3",
         "featureList": [
           "100% Local-first architecture with zero remote telemetry",
           "Autonomous subagent tree orchestration",
@@ -1797,7 +1797,7 @@
                 <h3>Windows</h3>
                 <p>Windows 10 / 11 · 64-bit .msi installer</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.0_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.3_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
                 Download for Windows
               </a>
             </div>
@@ -1811,7 +1811,7 @@
                 <h3>macOS</h3>
                 <p>Apple Silicon &amp; Intel · universal .dmg</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.0_universal.dmg" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.3_universal.dmg" target="_blank" rel="noopener noreferrer">
                 Download for macOS
               </a>
             </div>
@@ -1825,7 +1825,7 @@
                 <h3>Linux</h3>
                 <p>Ubuntu / Debian 64-bit · .deb package</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.0_amd64.deb" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.3_amd64.deb" target="_blank" rel="noopener noreferrer">
                 Download for Linux
               </a>
             </div>
@@ -1978,7 +1978,7 @@
       var CONFIG = {
         base: "https://hermos.is-a.dev",
         repo: "https://github.com/WFekik/HermOS-IDE",
-        version: "1.0.0",
+        version: "1.0.3",
         releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
       };
 
@@ -1996,6 +1996,21 @@
           els[i].href = DOWNLOAD_URLS[platform] || CONFIG.releases;
         }
       }
+
+      // Auto-query GitHub Releases API so buttons dynamically update across future releases
+      fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then(function(data) {
+          if (!data || !data.assets || !data.assets.length) return;
+          var winAsset = data.assets.find(function(a) { return a.name.endsWith(".msi"); });
+          var macAsset = data.assets.find(function(a) { return a.name.endsWith(".dmg"); });
+          var linuxAsset = data.assets.find(function(a) { return a.name.endsWith(".deb"); });
+          if (winAsset) DOWNLOAD_URLS.win = winAsset.browser_download_url;
+          if (macAsset) DOWNLOAD_URLS.mac = macAsset.browser_download_url;
+          if (linuxAsset) DOWNLOAD_URLS.linux = linuxAsset.browser_download_url;
+          updateDownloadLinks();
+        })
+        .catch(function() { /* Fallback to DOWNLOAD_URLS */ });
 
       // Keep canonical / OpenGraph / Twitter URLs derived from CONFIG.base.
       // Strip trailing slashes before joining so we never emit "//" URLs.
