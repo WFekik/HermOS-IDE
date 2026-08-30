@@ -18,6 +18,9 @@ import {
   trackNewFile,
   trackNewDir,
   restoreCheckpointsSinceTimestamp,
+  getSafeRelativePath,
+  deleteConversationCheckpoints,
+  listCheckpoints,
 } from "@/lib/checkpoints";
 
 describe("Multi-Turn Checkpoint & Undo System", () => {
@@ -91,4 +94,33 @@ describe("Multi-Turn Checkpoint & Undo System", () => {
     expect(await fs.stat(newFileC).catch(() => null)).toBeNull();
     expect(await fs.stat(newDir).catch(() => null)).toBeNull();
   });
+
+  it("should safely convert Windows and POSIX absolute paths to relative paths without colons", () => {
+    const p1 = getSafeRelativePath("C:\\Users\\ASUS\\repo\\src\\index.ts");
+    expect(p1.includes(":")).toBe(false);
+    expect(p1.startsWith("drive-C")).toBe(true);
+
+    const p2 = getSafeRelativePath("c:/Users/ASUS/repo/src/index.ts");
+    expect(p2.includes(":")).toBe(false);
+    expect(p2.startsWith("drive-C")).toBe(true);
+
+    const p3 = getSafeRelativePath("/home/user/project/src/index.ts");
+    expect(p3.includes(":")).toBe(false);
+    expect(p3).toBe("home/user/project/src/index.ts".replace(/\//g, path.sep));
+  });
+
+  it("should completely delete all checkpoints for a conversation", async () => {
+    const convId = "conv-delete-test";
+    const cp = await createCheckpoint(userId, convId, "Turn 1");
+    expect(cp.id).toBeDefined();
+
+    let list = await listCheckpoints(userId, convId);
+    expect(list.length).toBeGreaterThanOrEqual(1);
+
+    await deleteConversationCheckpoints(userId, convId);
+
+    list = await listCheckpoints(userId, convId);
+    expect(list.length).toBe(0);
+  });
 });
+

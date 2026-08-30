@@ -118,7 +118,7 @@ export function resolveMigrationsDir(): string | null {
   }
   for (const c of candidates) {
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(/* turbopackIgnore: true */ c)) return c;
     } catch {
       /* ignore */
     }
@@ -271,8 +271,8 @@ export async function provisionDatabaseIfNeeded(opts: ProvisionOptions): Promise
     );
   }
   const cliPath = opts.cliPath !== undefined ? opts.cliPath : resolvePrismaCli();
-  const prismaRoot = path.resolve(migrationsDir, ".."); // <root>/prisma
-  const rootDir = path.resolve(prismaRoot, ".."); // <root> (cwd for the CLI)
+  const prismaRoot = path.resolve(/* turbopackIgnore: true */ migrationsDir, ".."); // <root>/prisma
+  const rootDir = path.resolve(/* turbopackIgnore: true */ prismaRoot, ".."); // <root> (cwd for the CLI)
 
   const lockPath = path.join(dbDir, ".migrate.lock");
   await acquireLock(lockPath);

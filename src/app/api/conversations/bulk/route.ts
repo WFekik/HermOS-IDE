@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { clearConversationCache } from "@/lib/ai/executor";
 import { clearConversationDelivery } from "@/lib/ai/subagent-delivery";
 import { deleteAttachmentFiles } from "@/lib/provision-db";
+import { deleteConversationCheckpoints } from "@/lib/checkpoints";
 import {
   withErrorHandler,
   parseJson,
@@ -103,6 +104,7 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
   for (const cid of uniqueIds) {
     clearConversationCache(cid);
     clearConversationDelivery(user.id, cid);
+    await deleteConversationCheckpoints(user.id, cid);
   }
 
   // Audit log. Truncate the ids list so the column doesn't blow up.

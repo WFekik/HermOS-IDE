@@ -93,6 +93,9 @@ function scheduleFlush(): void {
     const onVisible = () => {
       document.removeEventListener("visibilitychange", onVisible);
       hiddenListenerPending = false;
+      // Immediately drain events that accumulated while the tab was hidden,
+      // rather than waiting for the next incoming SSE event to trigger a flush.
+      flushPending();
       scheduleFlush();
     };
     document.addEventListener("visibilitychange", onVisible);

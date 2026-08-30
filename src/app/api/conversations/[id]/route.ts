@@ -13,6 +13,7 @@ import { rmSync } from "fs";
 import path from "path";
 import { CHECKPOINTS_DIR } from "@/lib/paths";
 import { deleteAttachmentFiles } from "@/lib/provision-db";
+import { deleteConversationCheckpoints } from "@/lib/checkpoints";
 import {
   withErrorHandler,
   parseJson,
@@ -106,11 +107,7 @@ export const DELETE = withErrorHandler(
     await db.conversation.delete({ where: { id } });
     clearConversationCache(id);
     clearConversationDelivery(user.id, id);
-    try {
-      rmSync(path.join(CHECKPOINTS_DIR, user.id, id), { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
+    await deleteConversationCheckpoints(user.id, id);
     // Unlink uploaded files (realpath-containment-checked inside uploads root).
     deleteAttachmentFiles(attachments.map((a) => a.path));
     return ok({ ok: true });

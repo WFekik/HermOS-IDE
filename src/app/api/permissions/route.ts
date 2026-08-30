@@ -12,6 +12,7 @@ import {
 import {
   getPermissions,
   setPermissions,
+  KNOWN_PERMISSION_ACTIONS,
   type PermissionAction,
   type PermissionMode,
   type PermissionRule,
@@ -23,24 +24,10 @@ export const dynamic = "force-dynamic";
 
 const PERM_RATE = { capacity: 30, refillPerSec: 30 / 60 };
 
-const ACTIONS: PermissionAction[] = [
-  "file.read",
-  "file.write",
-  "command.run",
-  "browser.open",
-  "browser.click",
-  "browser.type",
-  "web.fetch",
-  "web.search",
-  "mcp.call",
-  "subagent.spawn",
-  "subagent.get",
-  "subagent.message",
-];
 const MODES: PermissionMode[] = ["allow", "deny", "ask"];
 
 const ruleSchema = z.object({
-  action: z.enum(ACTIONS as [PermissionAction, ...PermissionAction[]]),
+  action: z.enum([...KNOWN_PERMISSION_ACTIONS] as [PermissionAction, ...PermissionAction[]]),
   mode: z.enum(MODES as [PermissionMode, ...PermissionMode[]]),
 });
 const configSchema = z.object({

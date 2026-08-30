@@ -117,10 +117,15 @@ function throwProviderError(resp: Response, retryText: string) {
   throw err;
 }
 
-/** Max agent iterations — uncapped (Infinity) so the agent runs continuously
- *  until task completion, matching Antigravity autonomous design. The client
- *  disconnect and duration timeout serve as external stopping signals. */
-const MAX_ITERATIONS = Infinity;
+/** Max agent iterations — configurable via HERMOS_MAX_AGENT_ITERATIONS.
+ *  Defaults to Infinity (uncapped) to preserve autonomous design.
+ *  Operators can set a finite ceiling as a global safety net. */
+const MAX_ITERATIONS: number = (() => {
+  const raw = process.env.HERMOS_MAX_AGENT_ITERATIONS;
+  if (!raw) return Infinity;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : Infinity;
+})();
 
 // Fallback max_tokens only where a provider API REQUIRES the field.
 // See ANTHROPIC_SDK_DEFAULT_MAX_TOKENS in provider-payloads.ts.
@@ -309,6 +314,54 @@ function collapseDuplicateLines(text: string): string {
 /** Conversation session read tracker to catch repeated reads of identical line ranges. */
 const sessionReadTracker = new Map<string, Set<string>>();
 
+/**
+ * Detects when the agent is no longer making progress by fingerprinting
+ * each iteration's streamed text output (normalized: trim + lowercase +
+ * collapse whitespace). Identical output across iterations = no progress.
+ *
+ * An agent that is making genuine progress produces different text each
+ * iteration. An agent in a loop produces the same text repeatedly.
+ *
+ * Escalation ladder:
+ *   - 2 consecutive identical outputs → "warn" — caller injects a system
+ *     correction instructing the model to change approach
+ *   - 3 consecutive → "break" — caller force-terminates with a diagnostic
+ */
+class ConvergenceDetector {
+  private history: string[] = [];
+
+  private normalize(text: string): string {
+    return text.trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  /**
+   * Record this iteration's text output. Returns the action to take.
+   * @param iterText - The cleaned text output from this iteration (after
+   *   collapseDuplicateLines + stripToolCallBlocks).
+   */
+  record(iterText: string): "ok" | "warn" | "break" {
+    const normalized = this.normalize(iterText);
+    // Skip empty iterations (tool-only turns with no prose).
+    if (!normalized) return "ok";
+    this.history.push(normalized);
+
+    // Count consecutive trailing repetitions of the current fingerprint.
+    let consecutive = 0;
+    const current = this.history[this.history.length - 1];
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i] === current) consecutive++;
+      else break;
+    }
+
+    if (consecutive >= 3) return "break";
+    if (consecutive >= 2) return "warn";
+    return "ok";
+  }
+
+  reset(): void {
+    this.history = [];
+  }
+}
 const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermOS full-stack IDE. Complete tasks end-to-end: investigate, implement, verify, report.
 
 - GROUND TRUTH: Base claims only on tool output. Find files with grep/glob first; read targeted ranges (files <500 lines: whole; larger: by range). Never re-read identical ranges.
@@ -1288,6 +1341,17 @@ function buildAnthropicTools(
   );
 }
 
+/** Max chars the BufferedToolCallStream will hold back while waiting for a
+ *  tool-call closing fence. Configurable via HERMOS_STREAM_BUFFER_LIMIT.
+ *  Default: 100_000 (≈100KB — sufficient for any realistic tool payload
+ *  while preventing multi-second UI stalls on very large writes). */
+const STREAM_BUFFER_HOLD_LIMIT: number = (() => {
+  const raw = process.env.HERMOS_STREAM_BUFFER_LIMIT;
+  if (!raw) return 100_000;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 100_000;
+})();
+
 /** Buffers partial streaming output to hide incomplete tool-call syntax before emitting to the client. */
 class BufferedToolCallStream {
   private fullText = "";
@@ -1334,7 +1398,7 @@ class BufferedToolCallStream {
       // Incomplete block — hold back while the model generates the tool call payload.
       // Use a generous 500,000 char threshold so long file operations (like 200/1000-line write_file)
       // are not prematurely flushed into content prose mid-stream.
-      if (fromStart.length > 500000) {
+      if (fromStart.length > STREAM_BUFFER_HOLD_LIMIT) {
         out += fromStart;
         this.emittedUpTo = this.fullText.length;
         return out;
@@ -3751,6 +3815,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         typeof req.maxIterations === "number" && req.maxIterations > 0
           ? req.maxIterations
           : MAX_ITERATIONS;
+      const convergenceDetector = new ConvergenceDetector();
       for (let iter = 0; iter < effectiveMaxIterations; iter++) {
         if (signal?.aborted) {
           break;
@@ -4933,6 +4998,44 @@ const thinkInstruction = thinkPlan.kind === "params"
           totalTokensOut += estimateTokens(cleaned);
         }
 
+        // Cross-iteration convergence check: detect when the model is
+        // producing identical text output across consecutive iterations
+        // (the "output loop" pattern — same planning paragraph repeated).
+        const convergence = convergenceDetector.record(cleaned);
+        if (convergence === "warn") {
+          // First repeat — inject a system-level correction. Strip the
+          // duplicate text from the accumulated response.
+          if (cleaned && fullContent.endsWith(cleaned)) {
+            fullContent = fullContent.slice(0, -(cleaned.length)).replace(/\n\n$/, "");
+          }
+          try {
+            await db.message.create({
+              data: {
+                conversationId: conversation.id,
+                role: "user",
+                content:
+                  "[SYSTEM ERROR: Output loop detected. You produced identical " +
+                  "text output in consecutive iterations — you are not making " +
+                  "progress. CHANGE your approach, use different tools, or " +
+                  "provide your final answer. Do NOT repeat the same plan.]",
+              },
+            });
+          } catch { /* best-effort */ }
+        } else if (convergence === "break") {
+          // Third consecutive identical output — force-terminate.
+          if (cleaned && fullContent.endsWith(cleaned)) {
+            fullContent = fullContent.slice(0, -(cleaned.length)).replace(/\n\n$/, "");
+          }
+          emit({
+            type: "delta",
+            content:
+              "\n\n---\n⚠️ **Agent terminated**: identical output detected " +
+              "in 3 consecutive iterations. Please review and retry with " +
+              "a refined prompt or break the task into smaller steps.",
+          });
+          break;
+        }
+
         // No tool calls → this iteration is the final answer, UNLESS the model
         // only emitted reasoning/thinking without outputting prose or tools
         // (e.g. model says "Let me read the remaining config files..." but stops mid-turn).
@@ -5158,8 +5261,10 @@ const thinkInstruction = thinkPlan.kind === "params"
           }
         }
 
-        // Tool batch execution: three-pass pipeline (permission pre-pass, strictly sequential
-        // execution pass with immediate SSE streams, and persistence post-pass).
+        // Tool batch execution: interleaved pipeline — each tool is permission-checked
+        // and executed immediately before moving to the next, so tool_call_start events
+        // stream to the client as each tool's permission resolves (not after the entire
+        // batch is screened). The persistence post-pass remains separate.
 
         interface ToolBatchEntry {
           toolCallId: string;
@@ -5180,146 +5285,14 @@ const thinkInstruction = thinkPlan.kind === "params"
         const batch: ToolBatchEntry[] = [];
         const batchStartLen = allToolCalls.length;
 
-        // Load permission configuration once per tool batch.
+        // Load permission configuration and workspace once per tool batch.
         let batchPermConfig = await getPermissions(user.id);
-
-        for (let i = 0; i < toolCalls.length; i++) {
-          const tc = toolCalls[i];
-          const toolCallId = `${assistantMsg.id}-tc-${batchStartLen + i + 1}`;
-
-          if (mode === "architect" && tc.toolName === "spawn_subagent") {
-            // Architect mode: enforce read-only tool access by clipping allowedTools.
-            const requested = Array.isArray(tc.args?.allowedTools)
-              ? (tc.args.allowedTools as unknown[])
-              : [];
-            tc.args = {
-              ...tc.args,
-              allowedTools: requested.filter((t) =>
-                ARCHITECT_READ_ONLY_TOOLS.has(t as string),
-              ),
-            };
-          }
-
-          // Evaluate tool action permission ("deny" blocks, "ask" prompts user, "allow" executes).
-          let permissionMode: PermissionMode = "ask";
-          try {
-            permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, batchPermConfig);
-          } catch (e) {
-            console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
-            permissionMode = "ask"; // fail-closed: ask the user on errors
-          }
-          const action = actionForTool(tc.toolName);
-
-          const entry: ToolBatchEntry = {
-            toolCallId,
-            toolName: tc.toolName,
-            args: tc.args,
-            action,
-            allowed: false,
-            thought_signature: tc.thought_signature,
-            thoughtSignature: tc.thoughtSignature,
-          };
-
-          if (mode === "chat") {
-            entry.allowed = false;
-            entry.denyReason = "Tool execution is disabled in Chat mode. Switch to Agent or Architect mode to use tools.";
-            batch.push(entry);
-            continue;
-          }
-
-          if (mode === "architect" && !ARCHITECT_ALLOWED_TOOLS.has(tc.toolName)) {
-            entry.allowed = false;
-            entry.denyReason = `Tool '${tc.toolName}' is blocked in Architect mode (Architect mode is read-only for planning & architecture). Switch to Agent mode to modify files or execute commands.`;
-            batch.push(entry);
-            continue;
-          }
-
-          if (permissionMode === "deny") {
-            entry.allowed = false;
-            entry.denyReason = `Permission denied for ${action ?? tc.toolName}.`;
-            try {
-              await audit(
-                user.id,
-                "tool_denied",
-                JSON.stringify({ tool: tc.toolName, action }),
-              );
-            } catch {
-              /* ignore audit failures */
-            }
-            batch.push(entry);
-            continue;
-          }
-
-          if (permissionMode === "ask") {
-            const target = buildPermissionTarget(tc.toolName, action, tc.args);
-            const { id: approvalId, promise: approvalPromise } =
-              createPendingApproval({
-                userId: user.id,
-                conversationId: conversation.id,
-                messageId: assistantMsg.id,
-                toolCallId,
-                toolName: tc.toolName,
-                action,
-                target,
-                args: tc.args,
-              });
-            emit({
-              type: "tool_call_permission",
-              toolCallId,
-              toolName: tc.toolName,
-              action: action ?? tc.toolName,
-              target,
-              approvalId,
-            });
-            let decision: PermissionDecision;
-            try {
-              decision = await raceWithAbort(approvalPromise, signal);
-            } catch {
-              // Stream aborted: cancel pending approvals for conversation and treat as denied.
-              cancelPendingForConversation(conversation.id);
-              decision = "deny";
-            }
-            try {
-              await audit(
-                user.id,
-                "tool_permission_decision",
-                JSON.stringify({
-                  tool: tc.toolName,
-                  action,
-                  decision,
-                  approvalId,
-                }),
-              );
-            } catch {
-              /* ignore audit failures */
-            }
-            if (decision === "always_allow") {
-              // Refresh permission snapshot after always_allow so subsequent batch calls skip prompting.
-              batchPermConfig = await refreshPermissionsConfig(
-                user.id,
-                decision,
-                batchPermConfig,
-              );
-            }
-            if (decision === "deny") {
-              entry.allowed = false;
-              entry.denyReason = "Permission denied by the user.";
-              batch.push(entry);
-              continue;
-            }
-            // decision === "allow" | "always_allow": fall through to execute.
-          }
-
-          entry.allowed = true;
-          batch.push(entry);
-        }
-
         const batchWs = await resolveWs(user.id, conversation.id).catch(() => null);
         const batchRootDir = batchWs?.rootDir;
 
         const executeSingleEntry = async (entry: ToolBatchEntry) => {
-          // opencode-style: the card appears NOW, immediately before this
-          // tool runs (or is denied) — not when the batch was screened.
+          // The card appears NOW, immediately before this tool runs (or is
+          // denied) — interleaved with permission evaluation.
           emit({ type: "tool_call_start", toolCallId: entry.toolCallId, name: entry.toolName });
           emit({
             type: "tool_call_args",
@@ -5396,8 +5369,129 @@ const thinkInstruction = thinkPlan.kind === "params"
           emit({ type: "tool_call_end", toolCallId: entry.toolCallId });
         };
 
-        // Strictly sequential execution: tools run one at a time in model-emitted order.
-        for (const entry of batch) {
+        // Interleaved: evaluate permission → execute → emit for each tool
+        // sequentially, so each tool card appears in the UI as soon as its
+        // permission is resolved.
+        for (let i = 0; i < toolCalls.length; i++) {
+          const tc = toolCalls[i];
+          const toolCallId = `${assistantMsg.id}-tc-${batchStartLen + i + 1}`;
+
+          if (mode === "architect" && tc.toolName === "spawn_subagent") {
+            // Architect mode: enforce read-only tool access by clipping allowedTools.
+            const requested = Array.isArray(tc.args?.allowedTools)
+              ? (tc.args.allowedTools as unknown[])
+              : [];
+            tc.args = {
+              ...tc.args,
+              allowedTools: requested.filter((t) =>
+                ARCHITECT_READ_ONLY_TOOLS.has(t as string),
+              ),
+            };
+          }
+
+          // Evaluate tool action permission ("deny" blocks, "ask" prompts user, "allow" executes).
+          let permissionMode: PermissionMode = "ask";
+          try {
+            permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, batchPermConfig);
+          } catch (e) {
+            console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
+            permissionMode = "ask"; // fail-closed: ask the user on errors
+          }
+          const action = actionForTool(tc.toolName);
+
+          const entry: ToolBatchEntry = {
+            toolCallId,
+            toolName: tc.toolName,
+            args: tc.args,
+            action,
+            allowed: false,
+            thought_signature: tc.thought_signature,
+            thoughtSignature: tc.thoughtSignature,
+          };
+
+          if (mode === "chat") {
+            entry.allowed = false;
+            entry.denyReason = "Tool execution is disabled in Chat mode. Switch to Agent or Architect mode to use tools.";
+          } else if (mode === "architect" && !ARCHITECT_ALLOWED_TOOLS.has(tc.toolName)) {
+            entry.allowed = false;
+            entry.denyReason = `Tool '${tc.toolName}' is blocked in Architect mode (Architect mode is read-only for planning & architecture). Switch to Agent mode to modify files or execute commands.`;
+          } else if (permissionMode === "deny") {
+            entry.allowed = false;
+            entry.denyReason = `Permission denied for ${action ?? tc.toolName}.`;
+            try {
+              await audit(
+                user.id,
+                "tool_denied",
+                JSON.stringify({ tool: tc.toolName, action }),
+              );
+            } catch {
+              /* ignore audit failures */
+            }
+          } else if (permissionMode === "ask") {
+            const target = buildPermissionTarget(tc.toolName, action, tc.args);
+            const { id: approvalId, promise: approvalPromise } =
+              createPendingApproval({
+                userId: user.id,
+                conversationId: conversation.id,
+                messageId: assistantMsg.id,
+                toolCallId,
+                toolName: tc.toolName,
+                action,
+                target,
+                args: tc.args,
+              });
+            emit({
+              type: "tool_call_permission",
+              toolCallId,
+              toolName: tc.toolName,
+              action: action ?? tc.toolName,
+              target,
+              approvalId,
+            });
+            let decision: PermissionDecision;
+            try {
+              decision = await raceWithAbort(approvalPromise, signal);
+            } catch {
+              // Stream aborted: cancel pending approvals for conversation and treat as denied.
+              cancelPendingForConversation(conversation.id);
+              decision = "deny";
+            }
+            try {
+              await audit(
+                user.id,
+                "tool_permission_decision",
+                JSON.stringify({
+                  tool: tc.toolName,
+                  action,
+                  decision,
+                  approvalId,
+                }),
+              );
+            } catch {
+              /* ignore audit failures */
+            }
+            if (decision === "always_allow") {
+              // Refresh permission snapshot after always_allow so subsequent batch calls skip prompting.
+              batchPermConfig = await refreshPermissionsConfig(
+                user.id,
+                decision,
+                batchPermConfig,
+              );
+            }
+            if (decision === "deny") {
+              entry.allowed = false;
+              entry.denyReason = "Permission denied by the user.";
+            } else {
+              // decision === "allow" | "always_allow": fall through to execute.
+              entry.allowed = true;
+            }
+          } else {
+            entry.allowed = true;
+          }
+
+          batch.push(entry);
+
+          // Immediately execute this tool — the card appears in the UI now.
           await executeSingleEntry(entry);
         }
 

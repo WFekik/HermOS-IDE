@@ -111,12 +111,19 @@ function timestampFromId(id: string): number {
   return Number.isFinite(ts) ? ts : 0;
 }
 
-function getSafeRelativePath(filePath: string): string {
-  const parsed = path.parse(filePath);
-  if (filePath.startsWith(parsed.root)) {
-    return filePath.slice(parsed.root.length);
+export function getSafeRelativePath(filePath: string): string {
+  let normalized = path.normalize(filePath);
+  // Strip extended length prefix \\?\ or //?/ if present
+  if (normalized.startsWith("\\\\?\\") || normalized.startsWith("//?/")) {
+    normalized = normalized.slice(4);
   }
-  return filePath;
+  // Windows drive: e.g. "C:\foo\bar" or "c:\foo\bar" -> "drive-C\foo\bar"
+  if (/^[a-zA-Z]:[\\/]/.test(normalized)) {
+    const drive = normalized[0].toUpperCase();
+    return path.join(`drive-${drive}`, normalized.slice(3));
+  }
+  // Strip leading slashes for absolute POSIX paths (e.g. "/home/user/..." -> "home/user/...")
+  return normalized.replace(/^[\\/]+/, "");
 }
 
 async function verifyConversationOwnership(
@@ -476,3 +483,17 @@ async function pruneOldCheckpoints(
     }
   }
 }
+
+/** Delete all checkpoints for a conversation and clean up its folder on disk. */
+export async function deleteConversationCheckpoints(
+  userId: string,
+  conversationId: string,
+): Promise<void> {
+  const dir = conversationCheckpointsDir(userId, conversationId);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch {
+    /* ignore if folder did not exist */
+  }
+}
+

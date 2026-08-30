@@ -20,6 +20,7 @@ import {
 import {
   getPermissions,
   setPermissions,
+  KNOWN_PERMISSION_ACTIONS,
   type PermissionAction,
   type PermissionRule,
 } from "@/lib/permissions";
@@ -27,23 +28,11 @@ import {
 /**
  * Live permission prompt resolution endpoint.
  *
- * The agent executor (src/lib/ai/executor.ts), when it hits a tool whose
- * permission mode is "ask", emits a `tool_call_permission` SSE event and
- * registers a pending approval in the in-memory registry
- * (src/lib/permissions-prompt.ts). The frontend then POSTs here to resolve
- * it with one of:
+ * The agent executor emits a `tool_call_permission` SSE event and registers
+ * a pending approval. The frontend POSTs here to resolve it with one of:
  *   - "allow"         → execute this one tool call
  *   - "deny"          → block this one tool call
- *   - "always_allow"  → execute this call AND persist a new "allow" rule for
- *                       the action so future calls of the same action skip
- *                       the prompt entirely
- *
- * There is also a GET that lists the caller's currently-pending approvals
- * (useful if the SSE event was missed — e.g. on page reload mid-stream).
- *
- * Auth required throughout. 60/min/user rate limit. The registry is
- * per-process and entries are scoped by userId — callers can only resolve
- * their own pending approvals.
+ *   - "always_allow"  → execute this call AND persist a new "allow" rule
  */
 
 export const dynamic = "force-dynamic";
@@ -54,21 +43,6 @@ const resolveSchema = z.object({
   id: z.string().trim().min(1).max(128),
   decision: z.enum(["allow", "deny", "always_allow"] as const),
 });
-
-const KNOWN_ACTIONS: ReadonlySet<PermissionAction> = new Set<PermissionAction>([
-  "file.read",
-  "file.write",
-  "command.run",
-  "browser.open",
-  "browser.click",
-  "browser.type",
-  "web.fetch",
-  "web.search",
-  "mcp.call",
-  "subagent.spawn",
-  "subagent.get",
-  "subagent.message",
-]);
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
   let user;
@@ -146,7 +120,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   // evaluateToolPermission returns "allow" for null actions — but we defend
   // in depth), we fall back to treating the decision as a one-shot "allow".
   if (decision === "always_allow" && pending.action) {
-    if (KNOWN_ACTIONS.has(pending.action)) {
+    if (KNOWN_PERMISSION_ACTIONS.has(pending.action)) {
       try {
         const config = await getPermissions(user.id);
         const rules: PermissionRule[] = config.rules.filter(

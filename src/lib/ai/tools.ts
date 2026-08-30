@@ -1215,8 +1215,8 @@ async function snapshotBeforeEdit(ctx: ToolCtx, rootDir: string, filePath: strin
   try {
     const absPath = path.resolve(rootDir, filePath);
     await snapshotFile(ctx.userId, convScope(ctx), ctx.checkpointId, absPath);
-  } catch {
-    /* non-critical */
+  } catch (err) {
+    console.warn(`[checkpoints] snapshotBeforeEdit failed for ${filePath}:`, err);
   }
 }
 
