@@ -94,7 +94,10 @@ function copyPublicIntoStandalone() {
   if (!existsSync(sourcePublic)) return;
   const destPublic = join(standaloneDir, "public");
   rmSync(destPublic, { recursive: true, force: true });
-  cpSync(sourcePublic, destPublic, { recursive: true });
+  cpSync(sourcePublic, destPublic, {
+    recursive: true,
+    filter: (src) => !src.includes("public/installers") && !src.includes("public\\installers"),
+  });
   console.log("[nextjs-build] copied public/ into standalone");
 }
 
@@ -263,13 +266,11 @@ function bundlePrismaClientIntoStandalone() {
   );
 }
 
-// [fix: bundle agent-browser native binaries into standalone]
-// `agent-browser` relies on native binaries (agent-browser-win32-x64.exe,
-// agent-browser-darwin-arm64, agent-browser-linux-x64, etc.) located in
-// `node_modules/agent-browser/bin`. Next.js standalone file tracing ignores
-// .exe and native binary files from node_modules, causing "No binary found for win32-x64"
-// errors when the packaged desktop app runs browser commands.
-// Copy the entire agent-browser package (including native binaries) into standalone node_modules.
+// [fix: bundle target-platform agent-browser binary into standalone]
+// `agent-browser` ships ~85 MB of binaries across Windows, macOS, and Linux in
+// `node_modules/agent-browser/bin`. We only copy the binary for the TARGET platform
+// (e.g. agent-browser-win32-x64.exe for Windows, agent-browser-darwin-* for macOS),
+// saving ~70 MB of dead weight from every installer bundle.
 function bundleAgentBrowserIntoStandalone() {
   const repoNodeModules = fileURLToPath(
     new URL("../node_modules", import.meta.url),
@@ -282,9 +283,27 @@ function bundleAgentBrowserIntoStandalone() {
   const destAgentBrowser = join(standaloneNodeModules, "agent-browser");
   if (!existsSync(sourceAgentBrowser)) return;
   rmSync(destAgentBrowser, { recursive: true, force: true });
-  cpSync(sourceAgentBrowser, destAgentBrowser, { recursive: true });
+
+  const targetPlatform = process.env.TAURI_ENV_PLATFORM || process.platform;
+  cpSync(sourceAgentBrowser, destAgentBrowser, {
+    recursive: true,
+    filter: (src) => {
+      const base = src.split(/[\\/]/).pop() ?? src;
+      if (!src.includes("agent-browser") || !src.includes("bin")) return true;
+      if (base === "agent-browser" || base === "bin" || base === "agent-browser.js" || base === ".install-method" || base === "package.json") return true;
+
+      if (targetPlatform === "win32") {
+        return base.startsWith("agent-browser-win32");
+      } else if (targetPlatform === "darwin") {
+        return base.startsWith("agent-browser-darwin");
+      } else if (targetPlatform === "linux") {
+        return base.startsWith("agent-browser-linux");
+      }
+      return true;
+    },
+  });
   console.log(
-    "[nextjs-build] bundled agent-browser (including native binaries) into standalone",
+    `[nextjs-build] bundled agent-browser (${targetPlatform} target binary only) into standalone`,
   );
 }
 

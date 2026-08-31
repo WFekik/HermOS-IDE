@@ -86,6 +86,20 @@ jobs:
             cargo | "$(Agent.OS)"
           path: $(USERPROFILE)/.cargo/registry
         displayName: Cache Cargo registry
+      - task: Cache@2
+        inputs:
+          key: 'cargo-target | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo-target | "$(Agent.OS)"
+          path: src-tauri/target
+        displayName: Cache Cargo target
+      - task: Cache@2
+        inputs:
+          key: 'node-sidecar | "$(Agent.OS)" | scripts/provision-node-sidecar.mjs'
+          restoreKeys: |
+            node-sidecar | "$(Agent.OS)"
+          path: src-tauri/binaries
+        displayName: Cache Node sidecar binary
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
@@ -98,6 +112,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_ENV_PLATFORM: "win32"
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
         condition: succeededOrFailed()
@@ -130,6 +145,20 @@ jobs:
             cargo | "$(Agent.OS)"
           path: $(HOME)/.cargo/registry
         displayName: Cache Cargo registry
+      - task: Cache@2
+        inputs:
+          key: 'cargo-target | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo-target | "$(Agent.OS)"
+          path: src-tauri/target
+        displayName: Cache Cargo target
+      - task: Cache@2
+        inputs:
+          key: 'node-sidecar | "$(Agent.OS)" | scripts/provision-node-sidecar.mjs'
+          restoreKeys: |
+            node-sidecar | "$(Agent.OS)"
+          path: src-tauri/binaries
+        displayName: Cache Node sidecar binary
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
@@ -146,6 +175,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_ENV_PLATFORM: "darwin"
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
         condition: succeededOrFailed()
@@ -179,6 +209,20 @@ jobs:
             cargo | "$(Agent.OS)"
           path: $(HOME)/.cargo/registry
         displayName: Cache Cargo registry
+      - task: Cache@2
+        inputs:
+          key: 'cargo-target | "$(Agent.OS)" | src-tauri/Cargo.lock'
+          restoreKeys: |
+            cargo-target | "$(Agent.OS)"
+          path: src-tauri/target
+        displayName: Cache Cargo target
+      - task: Cache@2
+        inputs:
+          key: 'node-sidecar | "$(Agent.OS)" | scripts/provision-node-sidecar.mjs'
+          restoreKeys: |
+            node-sidecar | "$(Agent.OS)"
+          path: src-tauri/binaries
+        displayName: Cache Node sidecar binary
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
@@ -192,6 +236,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          TAURI_ENV_PLATFORM: "linux"
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
         condition: succeededOrFailed()
