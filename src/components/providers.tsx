@@ -39,34 +39,32 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const cleanupLinks = setupGlobalLinkInterceptor();
     let updaterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-    const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-    if (isTauri) {
-      import("@/lib/updater")
-        .then(({ checkForUpdates }) => {
-          updaterTimeout = setTimeout(() => {
-            checkForUpdates(false).then((result) => {
-              if (result.status === "available") {
-                toast.info(`HermOS IDE v${result.latestVersion} is available!`, {
-                  id: "app-update-available",
-                  duration: 20000,
-                  action: {
-                    label: "Update Now",
-                    onClick: () => {
+    import("@/lib/updater")
+      .then(({ checkForUpdates }) => {
+        updaterTimeout = setTimeout(() => {
+          checkForUpdates(false).then((result) => {
+            if (result.status === "available") {
+              toast.info(`HermOS IDE v${result.latestVersion} is available!`, {
+                id: "app-update-available",
+                duration: 20000,
+                action: {
+                  label: result.releaseUrl ? "View Release" : "Update Now",
+                  onClick: () => {
+                    if (result.releaseUrl) {
+                      import("@/lib/open-external").then(({ openExternalUrl }) => {
+                        openExternalUrl(result.releaseUrl!);
+                      });
+                    } else {
                       checkForUpdates(true);
-                    },
+                    }
                   },
-                });
-              } else if (result.status === "error") {
-                // Make updater failures visible instead of silently swallowing them.
-                toast.error(`Updates unavailable: ${result.message}`, {
-                  duration: 8000,
-                });
-              }
-            });
-          }, 5000);
-        })
-        .catch(console.error);
-    }
+                },
+              });
+            }
+          });
+        }, 4000);
+      })
+      .catch(console.error);
 
     return () => {
       cleanupLinks();

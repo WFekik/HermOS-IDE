@@ -29,21 +29,65 @@ export function isTauriDesktop(): boolean {
 export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckResult> {
   const currentVersion = getAppVersion();
 
+  // Helper to query our internal /api/version?checkRemote=true route (GitHub API backed)
+  const queryRemoteFallback = async (): Promise<UpdateCheckResult | null> => {
+    try {
+      const res = await fetch("/api/version?checkRemote=true", {
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          version?: string;
+          update?: {
+            hasUpdate: boolean;
+            latestVersion: string;
+            releaseName?: string;
+            releaseNotes?: string;
+            releaseUrl?: string;
+          };
+        };
+        if (data?.update?.hasUpdate) {
+          return {
+            status: "available",
+            currentVersion: data.version || currentVersion,
+            latestVersion: data.update.latestVersion,
+            releaseName: data.update.releaseName,
+            releaseNotes: data.update.releaseNotes,
+            releaseUrl: data.update.releaseUrl,
+          };
+        }
+        return { status: "up-to-date", currentVersion: data?.version || currentVersion };
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
   if (isTauriDesktop()) {
     try {
-      const { check } = await import('@tauri-apps/plugin-updater');
-      const update = await check();
+      const { check } = await import("@tauri-apps/plugin-updater");
+
+      // Wrap Tauri check() in a strict 5-second timeout so it never hangs indefinitely
+      const checkPromise = check();
+      const timeoutPromise = new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error("Tauri updater check timed out")), 5000),
+      );
+
+      const update = await Promise.race([checkPromise, timeoutPromise]);
 
       if (!update) {
-        return { status: 'up-to-date', currentVersion };
+        // Double check against remote GitHub API in case manifest format differs
+        const remote = await queryRemoteFallback();
+        return remote ?? { status: "up-to-date", currentVersion };
       }
 
       if (!autoInstall) {
         return {
-          status: 'available',
+          status: "available",
           currentVersion,
           latestVersion: update.version,
-          releaseNotes: update.body || '',
+          releaseNotes: update.body || "",
         };
       }
 
@@ -52,69 +96,42 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
 
       await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
         switch (event.event) {
-          case 'Started':
+          case "Started":
             totalBytes = event.data?.contentLength || 0;
             toast.loading(`Downloading HermOS IDE v${update.version}...`, {
-              id: 'app-update-progress',
+              id: "app-update-progress",
             });
             break;
-          case 'Progress':
+          case "Progress":
             downloadedBytes += event.data?.chunkLength || 0;
             if (totalBytes > 0) {
               const percent = Math.round((downloadedBytes / totalBytes) * 100);
               const mb = (downloadedBytes / (1024 * 1024)).toFixed(1);
               const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
               toast.loading(`Downloading update v${update.version}: ${percent}% (${mb}/${totalMb} MB)...`, {
-                id: 'app-update-progress',
+                id: "app-update-progress",
               });
             }
             break;
-          case 'Finished':
+          case "Finished":
             toast.success("Update downloaded! Relaunching HermOS IDE...", {
-              id: 'app-update-progress',
+              id: "app-update-progress",
               duration: 4000,
             });
             break;
         }
       });
 
-      const { relaunch } = await import('@tauri-apps/plugin-process');
+      const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
-      return { status: 'downloaded', version: update.version };
+      return { status: "downloaded", version: update.version };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const lower = message.toLowerCase();
-      const isNotFound =
-        lower.includes("404") ||
-        lower.includes("not_found") ||
-        lower.includes("latest.json") ||
-        lower.includes("could not fetch a valid release json") ||
-        lower.includes("release json") ||
-        lower.includes("no update");
+      console.info("[updater] Tauri native check failed/timed out, trying GitHub API fallback:", error);
+      const fallback = await queryRemoteFallback();
+      if (fallback) return fallback;
 
-      if (isNotFound) {
-        console.info("[updater] No update manifest available or release not found:", message);
-        // Fall back to querying /api/version?checkRemote=true to check if there is a GitHub release
-        try {
-          const res = await fetch("/api/version?checkRemote=true");
-          if (res.ok) {
-            const data = (await res.json()) as { update?: { hasUpdate: boolean; latestVersion: string; releaseUrl?: string } };
-            if (data?.update?.hasUpdate) {
-              return {
-                status: 'available',
-                currentVersion,
-                latestVersion: data.update.latestVersion,
-                releaseUrl: data.update.releaseUrl,
-              };
-            }
-          }
-        } catch {
-          /* ignore fallback error */
-        }
-        return { status: 'up-to-date', currentVersion };
-      }
-      console.error("Tauri Auto-Updater failed:", error);
-      return { status: 'error', message };
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "error", message };
     }
   }
 
