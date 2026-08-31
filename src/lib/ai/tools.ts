@@ -213,10 +213,10 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "browser_open",
     description:
-      "Open a URL in the headless browser. Returns page title and an accessibility snapshot with @eN refs for interaction.",
+      "Open a URL in the headless browser and preview panel. Supports both http:// and https:// URLs. When previewing the user's web application, open the project's actual dev server (e.g., http://localhost:3000, http://localhost:5173). NEVER open HermOS IDE's internal port (3001+). Returns page title and an accessibility snapshot with @eN refs for interaction.",
     inputSchema: {
       type: "object",
-      properties: { url: { type: "string" } },
+      properties: { url: { type: "string", description: "The full URL to open (e.g. http://localhost:3000 or https://example.com)." } },
       required: ["url"],
     },
   },

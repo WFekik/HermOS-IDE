@@ -5,6 +5,7 @@ import {
   browserClose,
   browserSnapshot,
 } from "./browser";
+import { normalizeBrowserUrl, isLocalOrPrivateUrl } from "@/components/browser/types";
 
 // Mock the CLI transport so the shared-session regression can exercise the
 // full open path without spawning a real headless browser.
@@ -108,5 +109,62 @@ describe("Browser Session Registry", () => {
     const firstCallArgs = execFileMock.mock.calls[0];
     expect(firstCallArgs[0]).toBe(process.execPath);
     await browserClose("user_portable");
+  });
+});
+
+describe("Browser URL Normalization & Local Dev Classification", () => {
+  it("preserves explicit http:// and https:// URLs", () => {
+    expect(normalizeBrowserUrl("http://localhost:3000")).toBe("http://localhost:3000");
+    expect(normalizeBrowserUrl("https://example.com/docs")).toBe("https://example.com/docs");
+    expect(normalizeBrowserUrl("http://192.168.1.10:8080")).toBe("http://192.168.1.10:8080");
+    expect(normalizeBrowserUrl("http://plain-http.org")).toBe("http://plain-http.org");
+  });
+
+  it("normalizes localhost and loopback IP with or without port to http://", () => {
+    expect(normalizeBrowserUrl("localhost:3000")).toBe("http://localhost:3000");
+    expect(normalizeBrowserUrl("localhost:5173/dashboard")).toBe("http://localhost:5173/dashboard");
+    expect(normalizeBrowserUrl("localhost")).toBe("http://localhost");
+    expect(normalizeBrowserUrl("127.0.0.1:3000")).toBe("http://127.0.0.1:3000");
+    expect(normalizeBrowserUrl("0.0.0.0:8080")).toBe("http://0.0.0.0:8080");
+    expect(normalizeBrowserUrl("::1:3000")).toBe("http://::1:3000");
+  });
+
+  it("normalizes LAN / private IPs and host-port combinations to http://", () => {
+    expect(normalizeBrowserUrl("192.168.1.100:3000")).toBe("http://192.168.1.100:3000");
+    expect(normalizeBrowserUrl("10.0.0.5:8000")).toBe("http://10.0.0.5:8000");
+    expect(normalizeBrowserUrl("172.20.0.2:3000")).toBe("http://172.20.0.2:3000");
+    expect(normalizeBrowserUrl("my-dev-box:3000")).toBe("http://my-dev-box:3000");
+    expect(normalizeBrowserUrl("vite-app:5173/page")).toBe("http://vite-app:5173/page");
+  });
+
+  it("normalizes public domain names to https://", () => {
+    expect(normalizeBrowserUrl("github.com")).toBe("https://github.com");
+    expect(normalizeBrowserUrl("developer.mozilla.org/en-US")).toBe("https://developer.mozilla.org/en-US");
+    expect(normalizeBrowserUrl("news.ycombinator.com")).toBe("https://news.ycombinator.com");
+  });
+
+  it("falls back to DuckDuckGo search for queries", () => {
+    expect(normalizeBrowserUrl("react router tutorial")).toBe("https://duckduckgo.com/?q=react%20router%20tutorial");
+    expect(normalizeBrowserUrl("hello world")).toBe("https://duckduckgo.com/?q=hello%20world");
+    expect(normalizeBrowserUrl("")).toBe("");
+  });
+
+  it("identifies localhost, loopback, and private LAN addresses as local", () => {
+    expect(isLocalOrPrivateUrl("http://localhost:3000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://127.0.0.1:5173")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://0.0.0.0:8080")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://[::1]:3000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://192.168.1.50:3000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://10.0.0.1:8000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://172.16.0.5:3000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://app.local:3000")).toBe(true);
+    expect(isLocalOrPrivateUrl("http://site.localhost:3000")).toBe(true);
+  });
+
+  it("identifies public internet domains as non-local", () => {
+    expect(isLocalOrPrivateUrl("https://example.com")).toBe(false);
+    expect(isLocalOrPrivateUrl("http://plain-http.org")).toBe(false);
+    expect(isLocalOrPrivateUrl("https://github.com/WFekik/HermOS-IDE")).toBe(false);
+    expect(isLocalOrPrivateUrl("https://duckduckgo.com")).toBe(false);
   });
 });

@@ -44,8 +44,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
       import("@/lib/updater")
         .then(({ checkForUpdates }) => {
           updaterTimeout = setTimeout(() => {
-            checkForUpdates().then((result) => {
-              if (result.status === "error") {
+            checkForUpdates(false).then((result) => {
+              if (result.status === "available") {
+                toast.info(`HermOS IDE v${result.latestVersion} is available!`, {
+                  id: "app-update-available",
+                  duration: 20000,
+                  action: {
+                    label: "Update Now",
+                    onClick: () => {
+                      checkForUpdates(true);
+                    },
+                  },
+                });
+              } else if (result.status === "error") {
                 // Make updater failures visible instead of silently swallowing them.
                 toast.error(`Updates unavailable: ${result.message}`, {
                   duration: 8000,

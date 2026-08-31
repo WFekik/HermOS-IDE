@@ -40,15 +40,44 @@ async function ghJson(method, urlPath, body) {
   return text ? JSON.parse(text) : null;
 }
 
+function getReleaseBody(tag) {
+  return `### HermOS IDE ${tag} — Local-First AI Agent Desktop IDE
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### 🚀 What's New in ${tag}
+- **Cross-Session Prompt Isolation**: Permission approvals and question prompts are now scoped per conversation with interactive "Go to session" notification toasts for background tasks.
+- **Parallel Chat Streaming & Rehydration**: Seamlessly switch between concurrent chats with zero loss of live tool calls, diffs, terminal outputs, or streaming history.
+- **Preview Browser & Dev Server Enhancements**: Full support for local \`http://\` dev servers (\`localhost:3000\`, \`127.0.0.1:5173\`, \`[::1]\`), LAN addresses, and hardened sandboxed proxy CSP for external web browsing.
+- **Agent Dev Server vs IDE Isolation**: Guided agent execution to always target project dev server ports (\`3000\`, \`5173\`, \`8000\`, \`8080\`) rather than the internal IDE desktop port (\`3001+\`).
+- **Clean Prompt Teardown**: Robust global and per-session cancellation of pending questions and permissions on stop.
+- **Dynamic Updater & Download Hub**: Real-time asset resolution and seamless auto-updater integration across Windows, macOS, and Linux.
+
+#### 📦 Downloads & Verification
+All installer binaries and signatures are signed with the HermOS Tauri release key. Download the installer for your platform below.`;
+}
+
 async function getOrCreateRelease() {
   try {
-    return await ghJson("GET", `/repos/${OWNER}/${REPO}/releases/tags/${TAG}`);
+    const existing = await ghJson("GET", `/repos/${OWNER}/${REPO}/releases/tags/${TAG}`);
+    if (existing && existing.id) {
+      // Keep release body up to date with rich notes
+      try {
+        await ghJson("PATCH", `/repos/${OWNER}/${REPO}/releases/${existing.id}`, {
+          name: `HermOS IDE ${TAG}`,
+          body: getReleaseBody(TAG),
+        });
+      } catch {
+        /* best-effort body update */
+      }
+    }
+    return existing;
   } catch (e) {
     if (!String(e.message).includes("404")) throw e;
     return ghJson("POST", `/repos/${OWNER}/${REPO}/releases`, {
       tag_name: TAG,
       name: `HermOS IDE ${TAG}`,
-      body: "### HermOS IDE — Local-First AI Agent Desktop IDE\n100% local, zero telemetry. Model Context Protocol (MCP) & subagent execution.",
+      body: getReleaseBody(TAG),
       draft: false,
       prerelease: false,
     });

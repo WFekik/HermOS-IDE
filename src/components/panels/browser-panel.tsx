@@ -62,6 +62,7 @@ import {
   fetchScreenshot,
   closeBrowser,
   normalizeBrowserUrl,
+  isLocalOrPrivateUrl,
   toErrorMessage,
   PRESSABLE_KEYS,
   type ScrollDirection,
@@ -342,8 +343,7 @@ function BrowserPanelInner() {
   React.useEffect(() => {
     if (!browserAgentActive) setAgentViewOverride(null);
   }, [browserAgentActive]);
-  const isLocalSession =
-    !!session?.url && (session.url.includes("localhost") || session.url.includes("127.0.0.1"));
+  const isLocalSession = !!session?.url && isLocalOrPrivateUrl(session.url);
   const activeMode: BrowserMode = browserAgentActive
     ? agentViewOverride ?? (isLocalSession ? "preview" : "snapshot")
     : mode;
@@ -797,7 +797,7 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
     setShowFallback(false);
   };
 
-  const isLocal = url.includes("localhost") || url.includes("127.0.0.1") || url.includes("0.0.0.0");
+  const isLocal = isLocalOrPrivateUrl(url);
   const iframeSrc = isLocal ? url : `/api/browser/proxy?url=${encodeURIComponent(url)}`;
 
   return (

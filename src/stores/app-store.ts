@@ -609,12 +609,14 @@ interface AppState {
 
   /** Pending tool-call permission prompt requiring user decision. */
   permissionPrompt: PermissionPromptState | null;
-  setPermissionPrompt: (prompt: PermissionPromptState | null) => void;
+  permissionPromptsByConversation: Record<string, PermissionPromptState>;
+  setPermissionPrompt: (prompt: PermissionPromptState | null, conversationId?: string) => void;
   resolvePermissionPrompt: (id: string, decision: PermissionDecision) => void;
 
   /** Pending agent question prompt requiring user answer. */
   questionPrompt: QuestionPromptState | null;
-  setQuestionPrompt: (prompt: QuestionPromptState | null) => void;
+  questionPromptsByConversation: Record<string, QuestionPromptState>;
+  setQuestionPrompt: (prompt: QuestionPromptState | null, conversationId?: string) => void;
   resolveQuestionPrompt: (
     id: string,
     payload: {
@@ -969,7 +971,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   editingMessageId: null,
   permissionPrompt: null,
+  permissionPromptsByConversation: {},
   questionPrompt: null,
+  questionPromptsByConversation: {},
 
   /* Open file tabs (workspace panel) — empty until the user opens a file */
   openFiles: [],
@@ -1115,12 +1119,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   logout: async () => {
-    // Settle any pending permission approval server-side (deny) before
-    // dropping the card, so awaiting closures don't hang forever across a
+    // Settle any pending permission approvals server-side (deny) before
+    // dropping the cards, so awaiting closures don't hang forever across a
     // re-login.
-    const pendingPrompt = get().permissionPrompt;
-    if (pendingPrompt) {
-      void get().resolvePermissionPrompt(pendingPrompt.id, "deny");
+    const pendingPrompts = Object.values(get().permissionPromptsByConversation);
+    for (const p of pendingPrompts) {
+      void get().resolvePermissionPrompt(p.id, "deny");
+    }
+    const singlePrompt = get().permissionPrompt;
+    if (singlePrompt && !pendingPrompts.some((p) => p.id === singlePrompt.id)) {
+      void get().resolvePermissionPrompt(singlePrompt.id, "deny");
     }
     set({
       conversations: [],
@@ -1187,7 +1195,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       streamingMessageId: null,
       // Drop any pending permission/question prompts.
       permissionPrompt: null,
+      permissionPromptsByConversation: {},
       questionPrompt: null,
+      questionPromptsByConversation: {},
       // Reset composer + message-edit state.
       composerDraft: "",
       editingMessageId: null,
@@ -1483,17 +1493,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   refreshMessages: async (conversationId: string) => {
-    set({ loadingMessages: true });
+    if (get().activeConversationId === conversationId) {
+      set({ loadingMessages: true });
+    }
     try {
       // The backend returns the full conversation with messages embedded.
       const data = await apiGet<{ conversation: ConversationDTO }>(
         `/api/conversations/${encodeURIComponent(conversationId)}`,
       );
-      // Discard stale response if active conversation changed during fetch
-      if (get().activeConversationId !== conversationId) {
-        set({ loadingMessages: false });
-        return;
-      }
       const isRunning = data?.conversation?.isAgentRunning ?? false;
       const curStreamingState = get().streamingStateByConversation[conversationId];
       if (isRunning && !curStreamingState?.isStreaming) {
@@ -1521,7 +1528,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
 
       set((s) => {
-        const existing = s.messagesByConversation[conversationId] ?? [];
+        const existing = s.messagesByConversation[conversationId] ?? (conversationId === s.activeConversationId ? s.messages : []);
         const seen = new Set<string>();
         const merged: UIMessage[] = [];
 
@@ -1606,31 +1613,33 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
 
         const patch: Partial<AppState> = {
-          loadingMessages: false,
           messagesByConversation: {
             ...s.messagesByConversation,
             [conversationId]: merged,
           },
         };
 
-        if (detectedArtifacts.length > 0) {
-          const currentList = s.artifactsList ?? [];
-          const combined = Array.from(new Set([...detectedArtifacts, ...currentList]));
-          patch.artifactsList = combined;
-          if (!s.activeArtifactPath) {
-            patch.activeArtifactPath = detectedArtifacts[0];
+        if (conversationId === s.activeConversationId) {
+          patch.loadingMessages = false;
+          patch.messages = merged;
+          if (detectedArtifacts.length > 0) {
+            const currentList = s.artifactsList ?? [];
+            const combined = Array.from(new Set([...detectedArtifacts, ...currentList]));
+            patch.artifactsList = combined;
+            if (!s.activeArtifactPath) {
+              patch.activeArtifactPath = detectedArtifacts[0];
+            }
           }
         }
 
-        if (conversationId === s.activeConversationId) patch.messages = merged;
         return patch;
       });
     } catch {
       set((s) => ({
-        loadingMessages: false,
+        ...(conversationId === s.activeConversationId ? { loadingMessages: false } : {}),
         messagesByConversation: {
           ...s.messagesByConversation,
-          [conversationId]: s.messagesByConversation[conversationId] ?? [],
+          [conversationId]: s.messagesByConversation[conversationId] ?? (conversationId === s.activeConversationId ? s.messages : []),
         },
       }));
     }
@@ -1767,6 +1776,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       isStreaming: streamingState?.isStreaming ?? false,
       streamingMessageId: streamingState?.streamingMessageId ?? null,
       composerDraft: get().composerDrafts[id] ?? "",
+      permissionPrompt: get().permissionPromptsByConversation[id] ?? null,
+      questionPrompt: get().questionPromptsByConversation[id] ?? null,
     });
 
     // Always refresh from server in background for up-to-date data
@@ -1999,6 +2010,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { [id]: _th, ...restThinking } = s.thinkingExpanded;
         const { [id]: _sc, ...restScroll } = s.scrollPositions;
         const { [id]: _cd, ...restDrafts } = s.composerDrafts;
+        const { [id]: _pp, ...restPerms } = s.permissionPromptsByConversation;
+        const { [id]: _qp, ...restQuests } = s.questionPromptsByConversation;
         const isActive = s.activeConversationId === id;
         return {
           conversations: s.conversations.filter((c) => c.id !== id),
@@ -2008,6 +2021,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           subagents: isActive ? [] : s.subagents,
           questionPrompt: isActive ? null : s.questionPrompt,
           permissionPrompt: isActive ? null : s.permissionPrompt,
+          permissionPromptsByConversation: restPerms,
+          questionPromptsByConversation: restQuests,
           messagesByConversation: restMessages,
           streamingStateByConversation: restStreaming,
           activeTodosByConversation: restTodos,
@@ -2025,10 +2040,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendAssistantPlaceholder: (messageId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       // Dedup against active and cached messages
       if (msgs.some((m) => m.id === messageId)) return s;
-      if (convId !== s.activeConversationId && s.messages.some((m) => m.id === messageId)) {
+      if (convId === s.activeConversationId && s.messages.some((m) => m.id === messageId)) {
         return s;
       }
       const placeholder: UIMessage = {
@@ -2052,7 +2067,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendUserMessage: (msg, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       // Dedup user messages by ID
       if (msgs.some((m) => m.id === msg.id)) return s;
 
@@ -2070,7 +2085,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendDelta: (messageId, delta, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const idx = msgs.findIndex((m) => m.id === messageId);
       if (idx === -1) return s;
       let nextContent = msgs[idx].content + delta;
@@ -2091,7 +2106,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setThinking: (messageId, content, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const updated = msgs.map((m) =>
         m.id === messageId
           ? { ...m, thinking: (m.thinking ?? "") + content }
@@ -2108,7 +2123,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   resetThinking: (messageId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const msg = msgs.find((m) => m.id === messageId);
       if (!msg) return s;
       const segments = (msg.segments ?? []).slice();
@@ -2128,7 +2143,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   startToolCall: (toolCallId, name, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
       if (!streamingId) return s;
       const updated = msgs.map((m) => {
@@ -2154,7 +2169,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendToolCallArgs: (toolCallId, delta, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
       if (!streamingId) return s;
       const updated = msgs.map((m) => {
@@ -2183,7 +2198,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   finishToolCall: (toolCallId, result, ok, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
       if (!streamingId) return s;
 
@@ -2228,9 +2243,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (convId === s.activeConversationId) patch.messages = updated;
       if (detectedArtifactPath) {
         patch.artifactsList = Array.from(new Set([detectedArtifactPath, ...(s.artifactsList ?? [])]));
-        patch.activeArtifactPath = detectedArtifactPath;
-        patch.rightPanelTab = "artifacts";
-        patch.rightPanelOpen = true;
+        if (convId === s.activeConversationId) {
+          patch.activeArtifactPath = detectedArtifactPath;
+          patch.rightPanelTab = "artifacts";
+          patch.rightPanelOpen = true;
+        }
       }
       if (detectedTodos) {
         if (detectedTodosCompleted) {
@@ -2256,7 +2273,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   endToolCall: (toolCallId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
       if (!streamingId) return s;
       const updated = msgs.map((m) => {
@@ -2283,7 +2300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendCommandOutput: (toolCallId, text, running, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
       if (!streamingId) return s;
       const updated = msgs.map((m) => {
@@ -2320,7 +2337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendSegmentText: (messageId, delta, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const msg = msgs.find((m) => m.id === messageId);
       if (!msg) return s;
       const segments = (msg.segments ?? []).slice();
@@ -2350,7 +2367,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendSegmentThinking: (messageId, delta, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const msg = msgs.find((m) => m.id === messageId);
       if (!msg) return s;
       const segments = (msg.segments ?? []).slice();
@@ -2378,7 +2395,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pushSegmentToolCall: (messageId, toolCallId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const msg = msgs.find((m) => m.id === messageId);
       if (!msg) return s;
       const segments = (msg.segments ?? []).slice();
@@ -2414,7 +2431,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const updated = msgs.map((m) =>
         m.id === messageId
           ? { ...m, tokensIn, tokensOut, promptTokens, cacheWrites, cacheReads, model, provider, promptTokensEstimated: estimated ?? false }
@@ -2432,7 +2449,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearMessageUsage: (messageId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const updated = msgs.map((m) =>
         m.id === messageId
           ? {
@@ -2458,7 +2475,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   finalizeStreamingMessage: (messageId, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const updated = msgs.map((m) =>
         m.id === messageId
           ? {
@@ -2483,7 +2500,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendAssistantError: (messageId, message, conversationId?) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
-      const msgs = s.messagesByConversation[convId] ?? s.messages;
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       if (msgs.some((m) => m.id === messageId)) {
         const updated = msgs.map((m) =>
           m.id === messageId
@@ -3099,11 +3116,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  setPermissionPrompt: (prompt) => set({ permissionPrompt: prompt }),
+  setPermissionPrompt: (prompt, conversationId?) => {
+    set((s) => {
+      if (!prompt) {
+        // When conversationId is omitted (undefined), clear ALL prompts globally across all sessions.
+        if (conversationId === undefined) {
+          return {
+            permissionPromptsByConversation: {},
+            permissionPrompt: null,
+          };
+        }
+        // Specific conversation targeted
+        const nextByConv = { ...s.permissionPromptsByConversation };
+        if (conversationId) delete nextByConv[conversationId];
+        return {
+          permissionPromptsByConversation: nextByConv,
+          permissionPrompt: conversationId === s.activeConversationId || !conversationId ? null : s.permissionPrompt,
+        };
+      }
+      const convId = conversationId ?? prompt.conversationId ?? s.activeConversationId;
+      const nextByConv = { ...s.permissionPromptsByConversation };
+      if (convId) {
+        nextByConv[convId] = { ...prompt, conversationId: convId };
+      }
+      return {
+        permissionPromptsByConversation: nextByConv,
+        permissionPrompt: convId === s.activeConversationId || !s.activeConversationId ? prompt : s.permissionPrompt,
+      };
+    });
+  },
 
   resolvePermissionPrompt: async (id, decision) => {
-    const current = get().permissionPrompt;
+    const current = Object.values(get().permissionPromptsByConversation).find((p) => p.id === id) ?? get().permissionPrompt;
     if (!current || current.id !== id) return;
+    const convId = current.conversationId ?? get().activeConversationId;
     // Map store decision strings to the API's PermissionDecision format.
     const apiDecision =
       decision === "allow-once"
@@ -3115,10 +3161,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (current.toolCallId && apiDecision === "deny") {
       const toolCallId = current.toolCallId;
       set((s) => {
-        const convId = current.conversationId ?? s.activeConversationId;
+        const targetConv = convId ?? s.activeConversationId;
         // Optimistic denial update for target conversation
-        if (!convId) return {};
-        const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
+        if (!targetConv) return {};
+        const msgs = s.messagesByConversation[targetConv] ?? (targetConv === s.activeConversationId ? s.messages : []);
         const updated = msgs.map((m) => {
           if (!m.liveToolCalls) return m;
           const calls = m.liveToolCalls.map((t) =>
@@ -3133,9 +3179,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           return { ...m, liveToolCalls: calls };
         });
         return {
-          messagesByConversation: { ...s.messagesByConversation, [convId]: updated },
-          // Keep active messages in sync with conversation cache only if convId is active
-          ...(convId === s.activeConversationId ? { messages: updated } : {}),
+          messagesByConversation: { ...s.messagesByConversation, [targetConv]: updated },
+          // Keep active messages in sync with conversation cache only if targetConv is active
+          ...(targetConv === s.activeConversationId ? { messages: updated } : {}),
         };
       });
     }
@@ -3152,22 +3198,81 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch {
       // resolver should never throw, but never let UI crash
     }
-    set({ permissionPrompt: null });
+    set((s) => {
+      const nextByConv = { ...s.permissionPromptsByConversation };
+      if (convId) delete nextByConv[convId];
+      for (const k of Object.keys(nextByConv)) {
+        if (nextByConv[k]?.id === id) delete nextByConv[k];
+      }
+      return {
+        permissionPromptsByConversation: nextByConv,
+        permissionPrompt: s.permissionPrompt?.id === id ? null : s.permissionPrompt,
+      };
+    });
   },
 
-  setQuestionPrompt: (prompt) => set({ questionPrompt: prompt }),
+  setQuestionPrompt: (prompt, conversationId?) => {
+    set((s) => {
+      if (!prompt) {
+        // When conversationId is omitted (undefined), clear ALL prompts globally across all sessions.
+        if (conversationId === undefined) {
+          return {
+            questionPromptsByConversation: {},
+            questionPrompt: null,
+          };
+        }
+        // Specific conversation targeted
+        const nextByConv = { ...s.questionPromptsByConversation };
+        if (conversationId) delete nextByConv[conversationId];
+        return {
+          questionPromptsByConversation: nextByConv,
+          questionPrompt: conversationId === s.activeConversationId || !conversationId ? null : s.questionPrompt,
+        };
+      }
+      const convId = conversationId ?? prompt.conversationId ?? s.activeConversationId;
+      const nextByConv = { ...s.questionPromptsByConversation };
+      if (convId) {
+        nextByConv[convId] = { ...prompt, conversationId: convId };
+      }
+      return {
+        questionPromptsByConversation: nextByConv,
+        questionPrompt: convId === s.activeConversationId || !s.activeConversationId ? prompt : s.questionPrompt,
+      };
+    });
+  },
 
   resolveQuestionPrompt: async (id, answer) => {
-    const current = get().questionPrompt;
+    const current = Object.values(get().questionPromptsByConversation).find((p) => p.id === id) ?? get().questionPrompt;
     if (!current || current.id !== id) return;
+    const convId = current.conversationId ?? get().activeConversationId;
 
     try {
       await apiPost("/api/agents/questions/pending", { id, ...answer });
-      set({ questionPrompt: null });
+      set((s) => {
+        const nextByConv = { ...s.questionPromptsByConversation };
+        if (convId) delete nextByConv[convId];
+        for (const k of Object.keys(nextByConv)) {
+          if (nextByConv[k]?.id === id) delete nextByConv[k];
+        }
+        return {
+          questionPromptsByConversation: nextByConv,
+          questionPrompt: s.questionPrompt?.id === id ? null : s.questionPrompt,
+        };
+      });
     } catch (e) {
       // Entry already resolved server-side (timeout/stop) — settle locally.
       if (e instanceof ApiRequestError && e.status === 404) {
-        set({ questionPrompt: null });
+        set((s) => {
+          const nextByConv = { ...s.questionPromptsByConversation };
+          if (convId) delete nextByConv[convId];
+          for (const k of Object.keys(nextByConv)) {
+            if (nextByConv[k]?.id === id) delete nextByConv[k];
+          }
+          return {
+            questionPromptsByConversation: nextByConv,
+            questionPrompt: s.questionPrompt?.id === id ? null : s.questionPrompt,
+          };
+        });
         return;
       }
       // Transient failure — keep the card so the answer is not lost.
@@ -3176,25 +3281,30 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   recoverQuestionPrompt: async (conversationId: string) => {
-    if (get().questionPrompt) return;
+    if (get().questionPromptsByConversation[conversationId] || get().questionPrompt) return;
     try {
       const data = await apiGet<{ pending: PendingQuestionDTO[] }>(
         "/api/agents/questions/pending",
       );
       const match = data?.pending?.find((p) => p.conversationId === conversationId);
-      if (match && !get().questionPrompt) {
-        set({
-          questionPrompt: {
-            id: match.id,
-            toolCallId: match.toolCallId,
-            conversationId: match.conversationId,
-            questions: match.questions,
-            question: match.questions[0]?.question,
-            options: match.questions[0]?.options ?? [],
-            isMultiSelect: match.questions[0]?.isMultiSelect ?? false,
-            createdAt: match.createdAt,
+      if (match && !get().questionPromptsByConversation[conversationId]) {
+        const qObj: QuestionPromptState = {
+          id: match.id,
+          toolCallId: match.toolCallId,
+          conversationId: match.conversationId,
+          questions: match.questions,
+          question: match.questions[0]?.question,
+          options: match.questions[0]?.options ?? [],
+          isMultiSelect: match.questions[0]?.isMultiSelect ?? false,
+          createdAt: match.createdAt,
+        };
+        set((s) => ({
+          questionPromptsByConversation: {
+            ...s.questionPromptsByConversation,
+            [conversationId]: qObj,
           },
-        });
+          questionPrompt: conversationId === s.activeConversationId || !s.activeConversationId ? qObj : s.questionPrompt,
+        }));
       }
     } catch {
       // best-effort — ignore
@@ -3202,27 +3312,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   recoverPermissionPrompt: async (conversationId: string) => {
-    if (get().permissionPrompt) return;
+    if (get().permissionPromptsByConversation[conversationId] || get().permissionPrompt) return;
     try {
       const data = await apiGet<{ pending: PendingApprovalDTO[] }>(
         "/api/permissions/pending",
       );
       const match = data?.pending?.find((p) => p.conversationId === conversationId);
-      if (match && !get().permissionPrompt) {
-        set({
-          permissionPrompt: {
-            id: match.id,
-            conversationId: match.conversationId,
-            action: match.action || match.toolName || "action",
-            target: match.target,
-            toolCallId: match.toolCallId,
-            toolName: match.toolName,
-            createdAt: match.createdAt,
-            resolve: (decision) => {
-              void get().resolvePermissionPrompt(match.id, decision);
-            },
+      if (match && !get().permissionPromptsByConversation[conversationId]) {
+        const pObj: PermissionPromptState = {
+          id: match.id,
+          conversationId: match.conversationId,
+          action: match.action || match.toolName || "action",
+          target: match.target,
+          toolCallId: match.toolCallId,
+          toolName: match.toolName,
+          createdAt: match.createdAt,
+          resolve: (decision) => {
+            void get().resolvePermissionPrompt(match.id, decision);
           },
-        });
+        };
+        set((s) => ({
+          permissionPromptsByConversation: {
+            ...s.permissionPromptsByConversation,
+            [conversationId]: pObj,
+          },
+          permissionPrompt: conversationId === s.activeConversationId || !s.activeConversationId ? pObj : s.permissionPrompt,
+        }));
       }
     } catch {
       // best-effort — ignore

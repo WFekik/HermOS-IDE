@@ -151,12 +151,10 @@ export function useChatStream(): UseChatStreamReturn {
         // Call the server-side stop endpoint to abort the executor
         // Also stop any running commands on the backend
         apiPost("/api/workspace/command/stop", { conversationId }).catch(() => {});
-        // The server-side stop cancels any pending question for this
-        // conversation — drop the composer card so it doesn't linger.
-        const curQ = useAppStore.getState().questionPrompt;
-        if (curQ && curQ.conversationId === conversationId) {
-          useAppStore.getState().setQuestionPrompt(null);
-        }
+        // The server-side stop cancels any pending question or permission for this
+        // conversation — drop the composer card and per-conversation entries so they don't linger.
+        useAppStore.getState().setQuestionPrompt(null, conversationId);
+        useAppStore.getState().setPermissionPrompt(null, conversationId);
         // The server's teardown drain may have persisted subagent report
         // rows after the last frame we read — reconcile them (the `done`
         // event path does the same on a normal finish).
@@ -199,8 +197,9 @@ export function useChatStream(): UseChatStreamReturn {
           apiPost("/api/agents/chat/stop", { conversationId: activeId }).catch(() => {});
           apiPost("/api/workspace/command/stop", { conversationId: activeId }).catch(() => {});
         }
-        // Stopping everything also cancels every pending question server-side.
+        // Stopping everything also cancels every pending question and permission prompt server-side.
         useAppStore.getState().setQuestionPrompt(null);
+        useAppStore.getState().setPermissionPrompt(null);
         // Reconcile teardown-drained rows for every stopped conversation.
         // Staggered: immediate (stop ACKs resolved above) + safety-net.
         if (activeId && !stoppedIds.includes(activeId)) stoppedIds.push(activeId);
@@ -366,16 +365,40 @@ export function useChatStream(): UseChatStreamReturn {
           // No-op. The store's resolvePermissionPrompt action already sends
           // the apiPost request to resolve the pending permission on the server.
         };
-        store.setPermissionPrompt({
-          id: approvalId,
-          conversationId: convId,
-          action: evt.action,
-          target: evt.target,
-          toolCallId: evt.toolCallId,
-          toolName: evt.toolName,
-          resolve: resolver,
-          createdAt: Date.now(),
-        });
+        store.setPermissionPrompt(
+          {
+            id: approvalId,
+            conversationId: convId,
+            action: evt.action,
+            target: evt.target,
+            toolCallId: evt.toolCallId,
+            toolName: evt.toolName,
+            resolve: resolver,
+            createdAt: Date.now(),
+          },
+          convId,
+        );
+
+        if (convId !== store.activeConversationId) {
+          const session =
+            store.conversations.find((c) => c.id === convId) ||
+            store.pendingConversations.find((p) => p.id === convId);
+          const sessionTitle = session?.title ? `"${session.title}"` : "another session";
+          const actionDesc = evt.action
+            ? `${evt.action}${evt.target ? ` (${evt.target})` : ""}`
+            : evt.toolName || "action";
+
+          toast.warning(`Permission requested in ${sessionTitle}: ${actionDesc}`, {
+            id: `perm-${approvalId}`,
+            duration: 30000,
+            action: {
+              label: "Go to session",
+              onClick: () => {
+                void useAppStore.getState().selectConversation(convId);
+              },
+            },
+          });
+        }
         break;
       }
       case "tool_call_question": {
@@ -392,16 +415,36 @@ export function useChatStream(): UseChatStreamReturn {
                   },
                 ]
               : [];
-        store.setQuestionPrompt({
-          id: evt.questionId,
-          toolCallId: evt.toolCallId,
-          conversationId: convId,
-          questions,
-          question: evt.question ?? questions[0]?.question,
-          options: evt.options ?? questions[0]?.options ?? [],
-          isMultiSelect: evt.isMultiSelect ?? questions[0]?.isMultiSelect ?? false,
-          createdAt: Date.now(),
-        });
+        store.setQuestionPrompt(
+          {
+            id: evt.questionId,
+            toolCallId: evt.toolCallId,
+            conversationId: convId,
+            questions,
+            question: evt.question ?? questions[0]?.question,
+            options: evt.options ?? questions[0]?.options ?? [],
+            isMultiSelect: evt.isMultiSelect ?? questions[0]?.isMultiSelect ?? false,
+            createdAt: Date.now(),
+          },
+          convId,
+        );
+
+        if (convId !== store.activeConversationId) {
+          const session =
+            store.conversations.find((c) => c.id === convId) ||
+            store.pendingConversations.find((p) => p.id === convId);
+          const sessionTitle = session?.title ? `"${session.title}"` : "another session";
+          toast.info(`HermOS asked a question in ${sessionTitle}`, {
+            id: `quest-${evt.questionId}`,
+            duration: 30000,
+            action: {
+              label: "Go to session",
+              onClick: () => {
+                void useAppStore.getState().selectConversation(convId);
+              },
+            },
+          });
+        }
         break;
       }
       case "usage": {

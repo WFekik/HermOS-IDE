@@ -36,7 +36,8 @@ function toAbsoluteUrl(raw: string, base: string): string {
     return raw;
   }
   if (trimmed.startsWith("//")) {
-    return "https:" + trimmed;
+    const proto = base.startsWith("http:") ? "http:" : "https:";
+    return proto + trimmed;
   }
   try {
     return new URL(trimmed, base).toString();
@@ -153,7 +154,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     // same-origin. Permissive subresource CSP allows external CSS, fonts, and images.
     headers.set(
       "Content-Security-Policy",
-      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
+      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob: https: http:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
     );
     headers.set("X-Content-Type-Options", "nosniff");
     // Prevent the browser from caching stale proxied pages.

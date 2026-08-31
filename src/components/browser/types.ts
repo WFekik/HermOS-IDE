@@ -119,15 +119,49 @@ export async function closeBrowser(): Promise<BrowserCloseResponse> {
 /* ----------------------------- URL helpers ----------------------------- */
 
 /**
- * Normalize a user-entered string into a URL the backend can open. If the
- * input looks like a URL (has a scheme or a dot in the host), prepend
- * https:// when missing. Otherwise treat it as a search query.
+ * Check if a raw host or URL points to a local/loopback/private network address.
+ */
+export function isLocalOrPrivateUrl(rawUrl: string): boolean {
+  try {
+    const target = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `http://${rawUrl}`;
+    const u = new URL(target);
+    const h = u.hostname.toLowerCase();
+    if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+    if (h === "127.0.0.1" || h === "0.0.0.0" || h === "::1" || h === "[::1]") return true;
+    if (/^127\.\d+\.\d+\.\d+$/.test(h)) return true;
+    if (/^10\.\d+\.\d+\.\d+$/.test(h)) return true;
+    if (/^192\.168\.\d+\.\d+$/.test(h)) return true;
+    if (/^172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalize a user-entered or agent string into a URL the backend/preview can open.
+ * - If already has http:// or https:// scheme, returns as is.
+ * - If it's a loopback/local address or has a port (e.g. localhost:3000, 127.0.0.1:5173, myapp:8080), prepends http://
+ * - If it's a standard web domain (e.g. github.com, example.com/test), prepends https://
+ * - Otherwise treats it as a search query.
  */
 export function normalizeBrowserUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
-  // Already has a scheme.
+  // Already has an explicit scheme.
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Loopback, local host, or IP with or without port (e.g. localhost:3000, 127.0.0.1:5173, [::1]:8080)
+  if (/^(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\]|::1)(?::\d+)?(?:\/.*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  // Private LAN IP addresses with or without port (10.x, 192.168.x, 172.16-31.x)
+  if (/^(?:10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(?::\d+)?(?:\/.*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  // Any hostname explicitly with a port (e.g. my-app:3000, dev.local:8080, vite-app:5173)
+  if (/^[a-zA-Z0-9_.-]+:\d+(?:\/.*)?$/.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
   // Looks like a domain (something.tld with no spaces).
   if (/^[^\s]+\.[^\s]{2,}(\/[^\s]*)?$/.test(trimmed)) {
     return `https://${trimmed}`;

@@ -93,7 +93,7 @@ jobs:
         displayName: "npm ci"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar"
-      - script: npx tauri build --bundles nsis,msi
+      - script: npx tauri build --bundles nsis,msi -- --locked
         displayName: "Build Tauri (Windows)"
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
@@ -141,7 +141,7 @@ jobs:
           HERMOS_MACOS_UNIVERSAL: "1"
       - script: node scripts/ensure-extra-prisma-engines.mjs darwin
         displayName: "Fetch Prisma engines (macOS)"
-      - script: npx tauri build --target universal-apple-darwin --bundles app,dmg
+      - script: npx tauri build --target universal-apple-darwin --bundles app,dmg -- --locked
         displayName: "Build Tauri (macOS universal)"
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
@@ -186,7 +186,7 @@ jobs:
         displayName: "npm ci"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar"
-      - script: npx tauri build --bundles deb
+      - script: npx tauri build --bundles deb -- --locked
         displayName: "Build Tauri (Linux)"
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)

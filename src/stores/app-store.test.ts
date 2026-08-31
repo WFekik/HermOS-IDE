@@ -993,4 +993,200 @@ describe("useAppStore Unit Test Suite", () => {
       expect(state.activeFileTab).toBe("tab-new.ts");
     });
   });
+
+  describe("Parallel Chats & Cross-Session Isolation", () => {
+    it("stores and scopes permission prompts per conversation without overwriting active prompt", () => {
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: null,
+        permissionPromptsByConversation: {},
+      });
+
+      // Background chat requests permission
+      useAppStore.getState().setPermissionPrompt(
+        {
+          id: "perm-bg",
+          conversationId: "conv-2",
+          action: "execute_command",
+          target: "npm test",
+          createdAt: Date.now(),
+          resolve: vi.fn(),
+        },
+        "conv-2",
+      );
+
+      let state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-2"]?.id).toBe("perm-bg");
+      expect(state.permissionPrompt).toBeNull(); // Active conversation has no prompt
+
+      // Active chat requests permission
+      useAppStore.getState().setPermissionPrompt(
+        {
+          id: "perm-active",
+          conversationId: "conv-1",
+          action: "write_file",
+          target: "index.ts",
+          createdAt: Date.now(),
+          resolve: vi.fn(),
+        },
+        "conv-1",
+      );
+
+      state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("perm-active");
+      expect(state.permissionPromptsByConversation["conv-2"]?.id).toBe("perm-bg");
+      expect(state.permissionPrompt?.id).toBe("perm-active");
+    });
+
+    it("restores conversation-scoped permission and question prompts on selectConversation", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPromptsByConversation: {
+          "conv-2": {
+            id: "perm-2",
+            conversationId: "conv-2",
+            action: "cmd",
+            target: "git status",
+            createdAt: Date.now(),
+            resolve: vi.fn(),
+          },
+        },
+        questionPromptsByConversation: {
+          "conv-2": {
+            id: "quest-2",
+            conversationId: "conv-2",
+            questions: [{ question: "Deploy now?", options: ["Yes", "No"] }],
+            createdAt: Date.now(),
+          },
+        },
+      });
+
+      mockApiGet.mockResolvedValue({ conversation: { id: "conv-2", messages: [] } });
+
+      await useAppStore.getState().selectConversation("conv-2");
+
+      const state = useAppStore.getState();
+      expect(state.activeConversationId).toBe("conv-2");
+      expect(state.permissionPrompt?.id).toBe("perm-2");
+      expect(state.questionPrompt?.id).toBe("quest-2");
+    });
+
+    it("isolates background message streaming so active messages are never contaminated", () => {
+      const activeMsgs = [{ id: "m-active-1", role: "user" as const, content: "hello from active", createdAt: new Date().toISOString() }];
+      useAppStore.setState({
+        activeConversationId: "conv-active",
+        messages: [...activeMsgs],
+        messagesByConversation: {
+          "conv-active": [...activeMsgs],
+        },
+        streamingStateByConversation: {
+          "conv-bg": { isStreaming: true, streamingMessageId: "m-bg-assistant" },
+        },
+      });
+
+      // Streaming events arriving for background conversation
+      useAppStore.getState().appendAssistantPlaceholder("m-bg-assistant", "conv-bg");
+      useAppStore.getState().appendSegmentText("m-bg-assistant", "Background text delta", "conv-bg");
+      useAppStore.getState().startToolCall("tc-bg-1", "edit_file", "conv-bg");
+      useAppStore.getState().finishToolCall("tc-bg-1", { path: "src/test.ts" }, true, "conv-bg");
+
+      const state = useAppStore.getState();
+      // Active messages must remain exactly unchanged!
+      expect(state.messages).toEqual(activeMsgs);
+
+      // Background messages must contain the assistant message with its tool calls
+      const bgMsgs = state.messagesByConversation["conv-bg"];
+      expect(bgMsgs).toBeDefined();
+      expect(bgMsgs?.length).toBe(1);
+      expect(bgMsgs?.[0]?.content).toBe("Background text delta");
+      expect(bgMsgs?.[0]?.liveToolCalls?.[0]?.name).toBe("edit_file");
+      expect(bgMsgs?.[0]?.liveToolCalls?.[0]?.status).toBe("done");
+    });
+
+    it("refreshes background conversation messages without discarding server updates", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-active",
+        messages: [{ id: "m-act", role: "user", content: "active text", createdAt: new Date().toISOString() }],
+        messagesByConversation: {},
+      });
+
+      mockApiGet.mockResolvedValueOnce({
+        conversation: {
+          id: "conv-bg",
+          isAgentRunning: false,
+          messages: [
+            { id: "m-bg-1", role: "user", content: "background task", createdAt: new Date().toISOString() },
+            { id: "m-bg-2", role: "assistant", content: "completed work in background", createdAt: new Date().toISOString() },
+          ],
+        },
+      });
+
+      await useAppStore.getState().refreshMessages("conv-bg");
+
+      const state = useAppStore.getState();
+      // Active messages remain untouched
+      expect(state.messages[0]?.content).toBe("active text");
+
+      // Background conversation cache is populated with server messages
+      const bgMsgs = state.messagesByConversation["conv-bg"];
+      expect(bgMsgs?.length).toBe(2);
+      expect(bgMsgs?.[1]?.content).toBe("completed work in background");
+    });
+
+    it("clears prompts globally across all sessions when prompt is null without conversationId", () => {
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+        questionPrompt: { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
+        permissionPromptsByConversation: {
+          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2, resolve: vi.fn() },
+        },
+        questionPromptsByConversation: {
+          "conv-1": { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
+          "conv-2": { id: "q2", conversationId: "conv-2", questions: [], createdAt: 2 },
+        },
+      });
+
+      // Global clear
+      useAppStore.getState().setQuestionPrompt(null);
+      useAppStore.getState().setPermissionPrompt(null);
+
+      const state = useAppStore.getState();
+      expect(state.permissionPrompt).toBeNull();
+      expect(state.questionPrompt).toBeNull();
+      expect(state.permissionPromptsByConversation).toEqual({});
+      expect(state.questionPromptsByConversation).toEqual({});
+    });
+
+    it("clears prompt for specific background session without disturbing active session", () => {
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+        questionPrompt: { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
+        permissionPromptsByConversation: {
+          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2, resolve: vi.fn() },
+        },
+        questionPromptsByConversation: {
+          "conv-1": { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
+          "conv-2": { id: "q2", conversationId: "conv-2", questions: [], createdAt: 2 },
+        },
+      });
+
+      // Clear specific background session conv-2
+      useAppStore.getState().setQuestionPrompt(null, "conv-2");
+      useAppStore.getState().setPermissionPrompt(null, "conv-2");
+
+      const state = useAppStore.getState();
+      // Active prompt is preserved
+      expect(state.permissionPrompt?.id).toBe("p1");
+      expect(state.questionPrompt?.id).toBe("q1");
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("p1");
+      expect(state.questionPromptsByConversation["conv-1"]?.id).toBe("q1");
+      // Background session conv-2 is cleared
+      expect(state.permissionPromptsByConversation["conv-2"]).toBeUndefined();
+      expect(state.questionPromptsByConversation["conv-2"]).toBeUndefined();
+    });
+  });
 });

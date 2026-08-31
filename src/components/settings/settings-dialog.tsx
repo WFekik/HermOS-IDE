@@ -616,12 +616,19 @@ function AboutTab() {
         toast.success(`HermOS IDE is up to date (v${res.currentVersion}).`);
       } else if (res.status === "available") {
         toast.info(`New version v${res.latestVersion} is available!`, {
+          id: "app-update-available",
+          duration: 20000,
           action: res.releaseUrl
             ? {
                 label: "View Release",
-                onClick: () => window.open(res.releaseUrl, "_blank"),
+                onClick: () => openExternalUrl(res.releaseUrl!),
               }
-            : undefined,
+            : {
+                label: "Update Now",
+                onClick: () => {
+                  checkForUpdates(true);
+                },
+              },
         });
       } else if (res.status === "error") {
         toast.error(`Update check failed: ${res.message}`);

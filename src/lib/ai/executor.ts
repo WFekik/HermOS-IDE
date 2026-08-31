@@ -371,6 +371,7 @@ const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermO
 - TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
 - ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
 - CONCISE, ENGLISH: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
+- PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
 - SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
 
 Use the tools exposed via the native function-calling API.`;
@@ -397,6 +398,7 @@ function buildTextFallbackSystemPrompt(enabledTools: string[], mode: AgentMode):
 - TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
 - ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
 - CONCISE, ENGLISH: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
+- PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
 - SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
 
 To call a tool, output a JSON object on its own line:
@@ -3432,7 +3434,8 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         const cwd = activeWs.name ? `./ (${activeWs.name})` : "./";
         const wsRoot = activeWs.rootDir;
         const runtimeMode = process.env.HERMOS_DESKTOP === "true" ? "Desktop App (Tauri Native)" : "Web Server / Dev";
-        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.`;
+        const appPort = process.env.PORT || (process.env.HERMOS_DESKTOP === "true" ? "3001+" : "3000");
+        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.\n- **Dev Servers vs IDE Ports**: HermOS IDE itself runs on internal port ${appPort}. The user's project dev servers run on standard framework ports (e.g. 3000 for Next.js, 5173 for Vite, 8000, 8080). When opening web pages or browser tools (browser_open), always target the user's project dev server port, NEVER HermOS IDE's internal port (${appPort}).`;
       }
     } catch {
       envBlock = "";

@@ -112,9 +112,13 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   const updateMessageContent = useAppStore((s) => s.updateMessageContent);
   const removeMessagesAfter = useAppStore((s) => s.removeMessagesAfter);
-  const permissionPrompt = useAppStore((s) => s.permissionPrompt);
+  const permissionPrompt = useAppStore((s) =>
+    activeConversationId ? s.permissionPromptsByConversation[activeConversationId] ?? null : s.permissionPrompt,
+  );
   const resolvePermissionPrompt = useAppStore((s) => s.resolvePermissionPrompt);
-  const questionPrompt = useAppStore((s) => s.questionPrompt);
+  const questionPrompt = useAppStore((s) =>
+    activeConversationId ? s.questionPromptsByConversation[activeConversationId] ?? null : s.questionPrompt,
+  );
   const resolveQuestionPrompt = useAppStore((s) => s.resolveQuestionPrompt);
 
   // composerDraft in the store is the single source of truth — suggestion cards
@@ -595,12 +599,12 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                 : "border-border/60 hover:border-border",
           )}
         >
-          {permissionPrompt ? (
+          {permissionPrompt && (!permissionPrompt.conversationId || permissionPrompt.conversationId === activeConversationId) ? (
             <PermissionPromptCard
               prompt={permissionPrompt}
               onResolve={(decision) => resolvePermissionPrompt(permissionPrompt.id, decision)}
             />
-          ) : questionPrompt ? (
+          ) : questionPrompt && (!questionPrompt.conversationId || questionPrompt.conversationId === activeConversationId) ? (
             <QuestionPromptCard
               prompt={questionPrompt}
               onResolve={(answer) => resolveQuestionPrompt(questionPrompt.id, answer)}
