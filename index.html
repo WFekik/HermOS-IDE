@@ -78,7 +78,7 @@
           "availability": "https://schema.org/InStock"
         },
         "license": "https://opensource.org/licenses/MIT",
-        "softwareVersion": "1.0.3",
+        "softwareVersion": "1.0.4",
         "featureList": [
           "100% Local-first architecture with zero remote telemetry",
           "Autonomous subagent tree orchestration",
@@ -1978,7 +1978,7 @@
       var CONFIG = {
         base: "https://hermos.is-a.dev",
         repo: "https://github.com/WFekik/HermOS-IDE",
-        version: "1.0.3",
+        version: "1.0.4",
         releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
       };
 
@@ -1997,7 +1997,7 @@
         }
       }
 
-      // Auto-query GitHub Releases API so buttons dynamically update across future releases
+      // Auto-query GitHub Releases API so buttons and metadata dynamically update across future releases
       fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(data) {
@@ -2005,12 +2005,25 @@
           var tag = (data.tag_name || "").replace(/^v/, "") || CONFIG.version;
           CONFIG.version = tag;
 
+          // Dynamically sync JSON-LD structured data for Google SEO
+          try {
+            var ldJson = document.querySelector('script[type="application/ld+json"]');
+            if (ldJson) {
+              var parsed = JSON.parse(ldJson.textContent);
+              if (parsed && parsed["@graph"]) {
+                var app = parsed["@graph"].find(function(item) { return item["@type"] === "SoftwareApplication"; });
+                if (app) app.softwareVersion = tag;
+                ldJson.textContent = JSON.stringify(parsed);
+              }
+            }
+          } catch(e) {}
+
           var winAsset = data.assets.find(function(a) { return a.name.endsWith(".msi"); }) ||
                          data.assets.find(function(a) { return a.name.endsWith("-setup.exe") || a.name.endsWith(".exe"); });
           var macAsset = data.assets.find(function(a) { return a.name.endsWith(".dmg"); }) ||
                          data.assets.find(function(a) { return a.name.endsWith(".tar.gz"); });
           var linuxAsset = data.assets.find(function(a) { return a.name.endsWith(".deb"); }) ||
-                           data.assets.find(function(a) { return a.name.endsWith(".AppImage"); });
+                            data.assets.find(function(a) { return a.name.endsWith(".AppImage"); });
 
           if (winAsset) DOWNLOAD_URLS.win = winAsset.browser_download_url;
           if (macAsset) DOWNLOAD_URLS.mac = macAsset.browser_download_url;
