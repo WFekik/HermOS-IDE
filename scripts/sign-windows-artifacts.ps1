@@ -1,5 +1,6 @@
-# Automated Windows binary signing via official SignPath PowerShell Module for CI release pipelines.
+# Mandatory Automated Windows binary signing via official SignPath PowerShell Module for CI release pipelines.
 # Replaces un-signed bundle .exe and .msi files with trusted Authenticode signed versions.
+# BLOCKS release if signing fails.
 
 param(
     [string]$ApiToken = $env:SIGNPATH_API_TOKEN,
@@ -9,8 +10,8 @@ param(
 )
 
 if (-not $ApiToken) {
-    Write-Host "[SignPath] SIGNPATH_API_TOKEN not configured - skipping automated Windows code signing."
-    exit 0
+    Write-Error "[SignPath] FATAL: SIGNPATH_API_TOKEN is not configured! Mandatory Windows code signing cannot proceed."
+    exit 1
 }
 
 Write-Host "[SignPath] Installing and loading official SignPath PowerShell module..."
@@ -21,8 +22,8 @@ try {
     Import-Module SignPath -ErrorAction Stop
     Write-Host "[SignPath] Module loaded successfully."
 } catch {
-    Write-Warning "[SignPath] Failed to install/import SignPath PowerShell module: $_"
-    exit 0
+    Write-Error "[SignPath] FATAL: Failed to install/import SignPath PowerShell module: $_"
+    exit 1
 }
 
 $bundleDirs = @(
@@ -41,22 +42,22 @@ foreach ($dir in $bundleDirs) {
 }
 
 if ($targetFiles.Count -eq 0) {
-    Write-Host "[SignPath] No Windows .exe / .msi installer files found to sign."
-    exit 0
+    Write-Error "[SignPath] FATAL: No Windows .exe / .msi installer files found to sign."
+    exit 1
 }
 
 Write-Host "[SignPath] Found $($targetFiles.Count) Windows binary installer(s) to sign."
 
 foreach ($file in $targetFiles) {
-    Write-Host "`n[SignPath] Submitting $($file.Name) to SignPath for Authenticode signing..."
+    Write-Host "`n[SignPath] Submitting $($file.Name) to SignPath for mandatory Authenticode signing..."
     try {
         Submit-SigningRequest -InputArtifactPath $file.FullName -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -OutputArtifactPath $file.FullName -WaitForCompletion
         Write-Host "[SignPath] Successfully signed $($file.Name) with Authenticode certificate!"
     } catch {
-        Write-Warning "[SignPath] Signing failed for $($file.Name): $_"
-        Write-Warning "[SignPath] Continuing release pipeline with built installer."
+        Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
+        exit 1
     }
 }
 
-Write-Host "`n[SignPath] Windows signing step completed."
+Write-Host "`n✓ All Windows artifacts successfully signed with Authenticode certificate."
 exit 0

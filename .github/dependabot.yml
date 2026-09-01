@@ -49,6 +49,12 @@ updates:
       # uuid 11.x — major bumps may change UUID generation
       - dependency-name: "uuid"
         update-types: ["version-update:semver-major"]
+      # jsdom 29.x — 30.x has breaking Node engine requirements
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
+      # @types/node pinned to matching Node LTS runtime
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
