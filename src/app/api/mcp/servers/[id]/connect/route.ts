@@ -4,6 +4,7 @@ import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { connectMcpClient } from "@/lib/mcp/manager";
 import { commandsDisabledMessage } from "@/lib/workspace";
+import { tryDecryptJson } from "@/lib/encryption";
 import {
   withErrorHandler,
   toMcpServerDTO,
@@ -50,9 +51,9 @@ export const POST = withErrorHandler(
         transport: row.transport as "stdio" | "sse" | "streamable-http",
         command: row.command || undefined,
         args: row.args ? JSON.parse(row.args as string) : undefined,
-        env: row.env ? JSON.parse(row.env as string) : undefined,
+        env: tryDecryptJson(row.env),
         url: row.url || undefined,
-        headers: row.headers ? JSON.parse(row.headers as string) : undefined,
+        headers: tryDecryptJson(row.headers),
       });
     } catch (e: any) {
       status = "error";

@@ -691,11 +691,11 @@ export function useChatStream(): UseChatStreamReturn {
       const st = useAppStore.getState();
       const cid = st.activeConversationId;
       if (cid) await st.refreshCheckpoints(cid);
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[HermOS] post-stream checkpoint refresh failed:", e); }
 
     try {
       useAppStore.getState().setStreaming(false, convId);
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[HermOS] post-stream state reset failed:", e); }
     const finalSt = useAppStore.getState();
     finalSt.setStreamingMessageId(null, convId);
     if (!rateLimited) finalSt.setRateLimitRetry(null);
@@ -706,11 +706,11 @@ export function useChatStream(): UseChatStreamReturn {
       if (conv && conv.title === "New conversation") {
         await apiPost(`/api/conversations/${encodeURIComponent(conv.id)}/generate-title`, {});
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[HermOS] post-stream title generation failed:", e); }
 
     try {
       await finalSt.refreshConversations();
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[HermOS] post-stream conversation refresh failed:", e); }
   };
 
   const regenerate = useCallback(
@@ -777,10 +777,20 @@ export function useChatStream(): UseChatStreamReturn {
     return () => {
       // The controller/buffer registries are MODULE-level and shared across
       // instances — an unmount here must NOT abort streams owned by other
-      // mounted consumers. Drain buffered frames into the store, then clear
-      // the buffers so nothing from a torn-down view dispatches later.
+      // mounted consumers. Drain buffered frames into the store first.
       flushPending();
-      cancelFlushTimer();
+      // Only cancel the shared timer if no other stream has pending data.
+      // If buffers refilled between flushPending() and this check (another
+      // stream wrote in the same microtask), leave the timer alive so their
+      // data gets flushed on schedule.
+      const hasRemainingData =
+        pendingText.size > 0 ||
+        pendingThinking.size > 0 ||
+        pendingArgs.size > 0 ||
+        pendingCmd.size > 0;
+      if (!hasRemainingData) {
+        cancelFlushTimer();
+      }
     };
   }, []);
 

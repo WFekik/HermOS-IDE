@@ -20,6 +20,8 @@ pr: none
 
 variables:
   NODE_VERSION: "24"
+  NEXT_TELEMETRY_DISABLED: "1"
+  CI: "true"
 
 jobs:
   - job: test
@@ -113,10 +115,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           TAURI_ENV_PLATFORM: "win32"
+      - script: node scripts/sign-windows-artifacts.mjs
+        displayName: "Sign Windows Artifacts (SignPath)"
+        condition: succeeded()
+        env:
+          SIGNPATH_API_TOKEN: $(SIGNPATH_API_TOKEN)
+          SIGNPATH_ORGANIZATION_ID: $(SIGNPATH_ORGANIZATION_ID)
+          SIGNPATH_PROJECT_SLUG: $(SIGNPATH_PROJECT_SLUG)
+          SIGNPATH_POLICY_SLUG: $(SIGNPATH_POLICY_SLUG)
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
-        condition: succeededOrFailed()
-        continueOnError: true
+        condition: succeeded()
         env:
           GITHUB_TOKEN: $(GITHUB_TOKEN)
           RELEASE_TAG: $(Build.SourceBranchName)
@@ -178,8 +187,7 @@ jobs:
           TAURI_ENV_PLATFORM: "darwin"
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
-        condition: succeededOrFailed()
-        continueOnError: true
+        condition: succeeded()
         env:
           GITHUB_TOKEN: $(GITHUB_TOKEN)
           RELEASE_TAG: $(Build.SourceBranchName)
@@ -239,8 +247,7 @@ jobs:
           TAURI_ENV_PLATFORM: "linux"
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
-        condition: succeededOrFailed()
-        continueOnError: true
+        condition: succeeded()
         env:
           GITHUB_TOKEN: $(GITHUB_TOKEN)
           RELEASE_TAG: $(Build.SourceBranchName)

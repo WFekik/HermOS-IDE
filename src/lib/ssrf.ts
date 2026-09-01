@@ -122,10 +122,15 @@ export function hostClassError(cls: HostClass): string | null {
 
 /**
  * Well-known local-AI hosts the app legitimately talks to (Ollama, LM Studio,
- * llama.cpp, vLLM …) — allowed on any port even under the strict policy.
+ * llama.cpp, vLLM …) — allowed on standard model ports even under the strict policy.
  * Matched against the CONFIGURED host string, not DNS-resolved addresses.
  */
 const LOCAL_AI_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+/** Standard local AI and local application service ports allowed on loopback. */
+const LOCAL_AI_ALLOWED_PORTS = new Set([
+  80, 443, 1234, 2242, 3000, 5000, 5173, 8000, 8080, 8081, 11434,
+]);
 
 function isLocalAiHost(host: string): boolean {
   const h = host.toLowerCase();
@@ -142,8 +147,13 @@ function isLocalAiHost(host: string): boolean {
 }
 
 /** Combined policy: allowlist first, then class-based policy. */
-function policyErrorFor(host: string, cls: HostClass): string | null {
-  if (isLocalAiHost(host)) return null;
+function policyErrorFor(host: string, cls: HostClass, port?: number): string | null {
+  if (isLocalAiHost(host)) {
+    if (port !== undefined && !LOCAL_AI_ALLOWED_PORTS.has(port)) {
+      return `Requests to loopback port ${port} are blocked (only standard local-model and web ports are allowed).`;
+    }
+    return null;
+  }
   return hostClassError(cls);
 }
 
@@ -162,17 +172,18 @@ export async function checkUrlHost(urlStr: string): Promise<string | null> {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     return "Only http(s) URLs are allowed.";
   }
+  const port = u.port ? Number(u.port) : u.protocol === "https:" ? 443 : 80;
   let host = u.hostname.toLowerCase();
   if (host.endsWith(".")) host = host.slice(0, -1);
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
   if (!host) return "Invalid URL host.";
   if (host === "localhost" || host === "localhost.localdomain") {
-    return policyErrorFor(host, "loopback");
+    return policyErrorFor(host, "loopback", port);
   }
   const literal = parseIpv4Literal(host);
-  if (literal) return policyErrorFor(literal, classifyIpv4(literal));
-  if (isIP(host) === 6) return policyErrorFor(host, classifyIpv6(host));
-  if (isIP(host) === 4) return policyErrorFor(host, classifyIpv4(host));
+  if (literal) return policyErrorFor(literal, classifyIpv4(literal), port);
+  if (isIP(host) === 6) return policyErrorFor(host, classifyIpv6(host), port);
+  if (isIP(host) === 4) return policyErrorFor(host, classifyIpv4(host), port);
   try {
     const addrs = await dnsLookup(host, { all: true, verbatim: true });
     for (const a of addrs) {
@@ -181,7 +192,7 @@ export async function checkUrlHost(urlStr: string): Promise<string | null> {
       // the local-AI allowlist must only match what the user configured, so
       // an attacker-controlled domain resolving to 127.0.0.1 is still refused
       // under the strict policy (DNS-rebinding protection).
-      const err = policyErrorFor(host, cls);
+      const err = policyErrorFor(host, cls, port);
       if (err) return err;
     }
   } catch {

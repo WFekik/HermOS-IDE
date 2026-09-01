@@ -3,12 +3,14 @@ updates:
   # Maintain npm dependencies for the Next.js / TypeScript application
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "main"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "04:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "javascript"
@@ -17,18 +19,49 @@ updates:
         dependency-type: "production"
       dev-dependencies:
         dependency-type: "development"
+    ignore:
+      # Prisma 6.x is pinned for SQLite stability — block major bumps
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 5.x ecosystem — major bumps require migration
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # ESLint 9.x flat config — major bumps need config rewrite
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # vitest 3.x — major bumps change snapshot format and runner APIs
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      # recharts 2.x — major bumps break chart component APIs
+      - dependency-name: "recharts"
+        update-types: ["version-update:semver-major"]
+      # react-resizable-panels 3.x — major bumps break panel APIs
+      - dependency-name: "react-resizable-panels"
+        update-types: ["version-update:semver-major"]
+      # lucide-react 0.x — 1.x changes import format
+      - dependency-name: "lucide-react"
+        update-types: ["version-update:semver-major"]
+      # framer-motion 12.x — major bumps break animation APIs
+      - dependency-name: "framer-motion"
+        update-types: ["version-update:semver-major"]
+      # uuid 11.x — major bumps may change UUID generation
+      - dependency-name: "uuid"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
   # Maintain Rust crates for the desktop Tauri application
   - package-ecosystem: "cargo"
     directory: "/src-tauri"
+    target-branch: "main"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "04:30"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "rust"
@@ -36,5 +69,12 @@ updates:
       cargo-dependencies:
         patterns:
           - "*"
+    ignore:
+      # getrandom 0.2 is pinned for stable Tauri builds (commit 28581f0)
+      - dependency-name: "getrandom"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # reqwest 0.12 is pinned for native-tls compatibility (commit 28581f0)
+      - dependency-name: "reqwest"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "chore(deps-cargo)"

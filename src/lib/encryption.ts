@@ -92,7 +92,13 @@ export function decrypt(serialized: string): string {
     const iv = Buffer.from(payload.iv, "base64");
     const tag = Buffer.from(payload.tag, "base64");
     const ct = Buffer.from(payload.ct, "base64");
-    const decipher = createDecipheriv(ALGO, key, iv);
+    if (tag.length !== 16) {
+      throw new Error("Invalid authentication tag length (must be 16 bytes)");
+    }
+    if (iv.length !== 12) {
+      throw new Error("Invalid initialization vector length (must be 12 bytes)");
+    }
+    const decipher = createDecipheriv(ALGO, key, iv, { authTagLength: 16 });
     decipher.setAuthTag(tag);
     const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
     return pt.toString("utf8");
@@ -105,10 +111,38 @@ export function decrypt(serialized: string): string {
   }
 }
 
+/** Safely decrypts a stored JSON string or parses legacy plaintext JSON. */
+export function tryDecryptJson<T = Record<string, string>>(serialized?: string | null): T | undefined {
+  if (!serialized || typeof serialized !== "string") return undefined;
+  const trimmed = serialized.trim();
+  if (!trimmed) return undefined;
+  try {
+    const decrypted = decrypt(trimmed);
+    return JSON.parse(decrypted) as T;
+  } catch {
+    try {
+      return JSON.parse(trimmed) as T;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
 /** Mask a key for display, keeping the last 4 chars. */
 export function maskKey(key: string): string {
+  if (!key || typeof key !== "string") return "••••";
   if (key.length <= 4) return "••••";
   return "••••" + key.slice(-4);
+}
+
+/** Mask all values in a key-value record for safe display/DTO export. */
+export function maskRecord(record?: Record<string, string> | null): Record<string, string> | undefined {
+  if (!record || typeof record !== "object") return undefined;
+  const masked: Record<string, string> = {};
+  for (const [k, v] of Object.entries(record)) {
+    masked[k] = typeof v === "string" ? maskKey(v) : "••••";
+  }
+  return masked;
 }
 
 /** Constant-time string compare that does not leak length information. */

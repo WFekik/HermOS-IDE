@@ -1241,7 +1241,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         : list.find((w) => w.isActive) ?? null;
       set({ workspaces: list, activeWorkspace: activeItem, workspacesLoading: false });
-    } catch {
+    } catch (e) {
+      console.warn("[HermOS] refreshWorkspaces failed:", e);
       set({ workspacesLoading: false });
     }
   },
@@ -1378,7 +1379,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeWorkspace: s.activeWorkspace?.id === workspaceId ? { ...s.activeWorkspace, name: updated.name } : s.activeWorkspace,
       }));
       return true;
-    } catch {
+    } catch (e) {
+      console.warn("[HermOS] renameWorkspace failed:", e);
       return false;
     }
   },
@@ -1403,7 +1405,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().refreshWorkspaces();
       }
       return true;
-    } catch {
+    } catch (e) {
+      console.warn("[HermOS] deleteWorkspace failed:", e);
       return false;
     }
   },
@@ -1459,8 +1462,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const data = await apiGet<{ keys: ProviderKeyDTO[] }>("/api/providers/keys");
       set({ providerKeys: data?.keys ?? [] });
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] refreshProviderKeys failed:", e);
     }
   },
 
@@ -1487,7 +1490,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         isStreaming: s.activeConversationId && runningPatch[s.activeConversationId] ? true : s.isStreaming,
       }));
-    } catch {
+    } catch (e) {
+      console.warn("[HermOS] refreshConversations failed:", e);
       set({ loadingConversations: false });
     }
   },
@@ -1657,7 +1661,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         return patch;
       });
-    } catch {
+    } catch (e) {
+      console.warn("[HermOS] refreshMessages failed for", conversationId, ":", e);
       set((s) => ({
         ...(conversationId === s.activeConversationId ? { loadingMessages: false } : {}),
         messagesByConversation: {
@@ -1995,8 +2000,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
       }));
       broadcastTabSync("refresh_conversations");
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] renameConversation failed:", e);
     }
   },
 
@@ -2012,8 +2017,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const updated = res.conversation;
       set((s) => ({ conversations: s.conversations.map((c) => (c.id === id ? updated : c)) }));
       broadcastTabSync("refresh_conversations");
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] togglePin failed:", e);
     }
   },
 
@@ -2065,8 +2070,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         };
       });
       broadcastTabSync("refresh_conversations");
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] deleteConversation failed:", e);
     }
   },
 
@@ -3339,8 +3344,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           questionPrompt: conversationId === s.activeConversationId || !s.activeConversationId ? qObj : s.questionPrompt,
         }));
       }
-    } catch {
-      // best-effort — ignore
+    } catch (e) {
+      console.warn("[HermOS] recoverQuestionPrompt failed for", conversationId, ":", e);
     }
   },
 
@@ -3372,8 +3377,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           permissionPrompt: conversationId === s.activeConversationId || !s.activeConversationId ? pObj : s.permissionPrompt,
         }));
       }
-    } catch {
-      // best-effort — ignore
+    } catch (e) {
+      console.warn("[HermOS] recoverPermissionPrompt failed for", conversationId, ":", e);
     }
   },
 
@@ -3655,8 +3660,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await apiDelete(`/api/mcp/servers/${encodeURIComponent(id)}`);
       set((s) => ({ mcpServers: s.mcpServers.filter((x) => x.id !== id) }));
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] deleteMcpServer failed for", id, ":", e);
     }
   },
 
@@ -3669,8 +3674,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       const updated = res.server;
       set((s) => ({ mcpServers: s.mcpServers.map((x) => (x.id === id ? updated : x)) }));
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] connectMcpServer failed for", id, ":", e);
     }
   },
 
@@ -3683,8 +3688,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
     try {
       await apiPost(`/api/mcp/servers/${encodeURIComponent(id)}/disconnect`, {});
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] disconnectMcpServer failed for", id, ":", e);
     }
     await get().refreshMcpServers();
   },
@@ -3720,8 +3725,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         plugins: s.plugins.map((x) => (x.id === id ? updated : x)),
         skills: s.skills.map((x) => (x.id === id ? updated : x)),
       }));
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] togglePlugin failed for", id, ":", e);
     }
   },
 
@@ -3732,8 +3737,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         plugins: s.plugins.filter((x) => x.id !== id),
         skills: s.skills.filter((x) => x.id !== id),
       }));
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[HermOS] deletePlugin failed for", id, ":", e);
     }
   },
 

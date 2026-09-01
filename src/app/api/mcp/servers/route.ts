@@ -4,6 +4,7 @@ import { createMcpServerSchema } from "@/lib/validation";
 import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { seedIfNeeded } from "@/lib/seed";
+import { encrypt } from "@/lib/encryption";
 import {
   withErrorHandler,
   parseJson,
@@ -40,6 +41,8 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     });
   }
   const { name, transport, command, args, env, url, headers } = parsed.data;
+  const storedEnv = env ? encrypt(JSON.stringify(env)) : null;
+  const storedHeaders = headers ? encrypt(JSON.stringify(headers)) : null;
   // Upsert by (userId, name): re-creating with the same name returns the existing row.
   const upserted = await db.mcpServer.upsert({
     where: { userId_name: { userId: user.id, name } },
@@ -47,9 +50,9 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       transport,
       command: command ?? null,
       args: args ? JSON.stringify(args) : null,
-      env: env ? JSON.stringify(env) : null,
+      env: storedEnv,
       url: url ?? null,
-      headers: headers ? JSON.stringify(headers) : null,
+      headers: storedHeaders,
     },
     create: {
       userId: user.id,
@@ -57,9 +60,9 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       transport,
       command: command ?? null,
       args: args ? JSON.stringify(args) : null,
-      env: env ? JSON.stringify(env) : null,
+      env: storedEnv,
       url: url ?? null,
-      headers: headers ? JSON.stringify(headers) : null,
+      headers: storedHeaders,
       status: "disconnected",
     },
   });

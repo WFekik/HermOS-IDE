@@ -90,7 +90,10 @@ export async function executePluginTool(
     if (!tool.command) {
       throw new Error(`Plugin tool "${tool.name}" is configured as script but has no command.`);
     }
-    const argsArray = Object.entries(args || {}).map(([k, v]) => `--${k}=${v}`);
+    const argsArray = Object.entries(args || {}).map(([k, v]) => {
+      const cleanKey = String(k).replace(/[^a-zA-Z0-9_-]/g, "");
+      return `--${cleanKey}=${String(v)}`;
+    });
     const { stdout, stderr } = await execFileAsync(tool.command, argsArray, {
       timeout: 15000,
     });

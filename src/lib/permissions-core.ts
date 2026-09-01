@@ -48,7 +48,7 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
     { action: "browser.open", mode: "ask" },
     { action: "browser.click", mode: "ask" },
     { action: "browser.type", mode: "ask" },
-    { action: "web.fetch", mode: "allow" },
+    { action: "web.fetch", mode: "ask" },
     { action: "web.search", mode: "allow" },
     { action: "mcp.call", mode: "ask" },
     { action: "subagent.spawn", mode: "allow" },
@@ -59,7 +59,6 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
 
 const READONLY_ACTIONS: ReadonlySet<PermissionAction> = new Set([
   "file.read",
-  "web.fetch",
   "web.search",
   "question.ask",
 ]);

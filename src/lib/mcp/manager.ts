@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { checkUrlHost } from "@/lib/ssrf";
 import { commandsDisabledMessage } from "@/lib/workspace";
+import { tryDecryptJson } from "@/lib/encryption";
 import type { McpTool } from "@/lib/types";
 
 // Active client pool matching server ID to live client connection details
@@ -155,10 +156,8 @@ export async function connectMcpClient(server: {
     }
     if (!envObj.NODE_ENV) envObj.NODE_ENV = process.env.NODE_ENV ?? "production";
     if (!envObj.PYTHONIOENCODING) envObj.PYTHONIOENCODING = "utf-8";
-    // Overlay server-specific env (user-configured per MCP server) — intentionally
-    // allowed to set secrets/API keys for THAT server only.
     if (server.env) {
-      const parsedEnv = typeof server.env === "string" ? JSON.parse(server.env) : server.env;
+      const parsedEnv = typeof server.env === "string" ? tryDecryptJson<Record<string, string>>(server.env) : server.env;
       if (parsedEnv && typeof parsedEnv === "object") {
         for (const [k, v] of Object.entries(parsedEnv)) {
           if (typeof k === "string" && typeof v === "string") {
@@ -187,7 +186,7 @@ export async function connectMcpClient(server: {
     // (no hook to re-validate a 3xx Location). The initial URL — the only
     // user-controlled input — is gated above; provider-side redirects are
     // only reachable via a URL the user already configured explicitly.
-    const headers = typeof server.headers === "string" ? JSON.parse(server.headers) : server.headers;
+    const headers = typeof server.headers === "string" ? tryDecryptJson<Record<string, string>>(server.headers) : server.headers;
     transport = new SSEClientTransport(new URL(server.url), {
       eventSourceInit: headers ? ({ headers } as any) : undefined,
     });

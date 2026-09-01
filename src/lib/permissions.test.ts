@@ -124,9 +124,10 @@ describe("evaluatePermission — rule resolution", () => {
   it("auto-allows readonly actions when autoAllowReadonly is on", () => {
     const cfg: PermissionsConfig = { rules: [], autoAllowReadonly: true };
     expect(evaluatePermission(cfg, "file.read")).toBe("allow");
-    expect(evaluatePermission(cfg, "web.fetch")).toBe("allow");
     expect(evaluatePermission(cfg, "web.search")).toBe("allow");
-    // Non-readonly still defaults to 'ask'.
+    expect(evaluatePermission(cfg, "question.ask")).toBe("allow");
+    // Non-readonly and web.fetch still default to 'ask'.
+    expect(evaluatePermission(cfg, "web.fetch")).toBe("ask");
     expect(evaluatePermission(cfg, "file.write")).toBe("ask");
     expect(evaluatePermission(cfg, "command.run")).toBe("ask");
   });
@@ -355,7 +356,7 @@ describe("DEFAULT_PERMISSIONS", () => {
         { action: "browser.open", mode: "ask" },
         { action: "browser.click", mode: "ask" },
         { action: "browser.type", mode: "ask" },
-        { action: "web.fetch", mode: "allow" },
+        { action: "web.fetch", mode: "ask" },
         { action: "web.search", mode: "allow" },
         { action: "mcp.call", mode: "ask" },
         { action: "subagent.spawn", mode: "allow" },

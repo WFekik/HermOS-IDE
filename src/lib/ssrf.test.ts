@@ -118,6 +118,13 @@ describe("checkUrlHost — default mode (fail-closed, local-AI allowlist)", () =
     expect(await m.checkUrlHost("http://[::ffff:7f00:1]/")).toBeNull();
   });
 
+  it("blocks unapproved loopback ports (e.g. redis, postgres, ssh)", async () => {
+    const m = await loadSsrf("default");
+    expect(await m.checkUrlHost("http://127.0.0.1:6379/")).toMatch(/blocked/);
+    expect(await m.checkUrlHost("http://localhost:22/")).toMatch(/blocked/);
+    expect(await m.checkUrlHost("http://127.0.0.1:5432/")).toMatch(/blocked/);
+  });
+
   it("blocks RFC1918 and other loopback-adjacent ranges by default", async () => {
     const m = await loadSsrf("default");
     expect(await m.checkUrlHost("http://10.0.0.5/")).toMatch(/private\/internal/);

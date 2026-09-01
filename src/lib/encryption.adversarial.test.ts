@@ -16,7 +16,7 @@ describe("Crypto Audit Verification Tests", () => {
     const tag16 = Buffer.alloc(16).toString("base64");
     const iv2 = Buffer.alloc(2).toString("base64");
     const payload = JSON.stringify({ ct: "YWI=", iv: iv2, tag: tag16 });
-    expect(() => decrypt(payload)).toThrow(/unable to authenticate data|Unsupported state/i);
+    expect(() => decrypt(payload)).toThrow(/unable to authenticate data|Unsupported state|Invalid initialization vector length/i);
   });
 
   it("throws Error on invalid authentication tag length", () => {

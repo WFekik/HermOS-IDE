@@ -21,19 +21,23 @@ class BrowserProcessSupervisor {
     this.registerSignalHandlers();
   }
 
-  public register(child: ChildProcess): void {
+  public register(child?: ChildProcess): void {
+    if (!child) return;
     if (this.isShuttingDown) {
       try {
-        child.kill("SIGKILL");
+        child.kill?.("SIGKILL");
       } catch { /* ignore */ }
       return;
     }
     this.activeProcesses.add(child);
-    child.once("close", () => this.activeProcesses.delete(child));
-    child.once("exit", () => this.activeProcesses.delete(child));
+    if (typeof child.once === "function") {
+      child.once("close", () => this.activeProcesses.delete(child));
+      child.once("exit", () => this.activeProcesses.delete(child));
+    }
   }
 
-  public unregister(child: ChildProcess): void {
+  public unregister(child?: ChildProcess): void {
+    if (!child) return;
     this.activeProcesses.delete(child);
   }
 
@@ -124,6 +128,10 @@ export function findAgentBrowserCli(): string {
   );
 
   // 3. Walk up from __dirname (up to 10 levels)
+  // Guard: __dirname is undefined in ESM mode or under Turbopack virtual builds.
+  // Strategies 1 (cwd) and 2 (execPath) cover all production paths; this is a
+  // defense-in-depth fallback for unusual dev/CI environments.
+  if (typeof __dirname !== "undefined") {
   let dir = __dirname;
   for (let i = 0; i < 10; i++) {
     candidates.push(
@@ -135,6 +143,7 @@ export function findAgentBrowserCli(): string {
     if (!parent || parent === dir) break;
     dir = parent;
   }
+  } // end __dirname guard
 
   for (const candidate of candidates) {
     try {
@@ -291,13 +300,17 @@ async function runCli(args: string[], sessionKey = "default"): Promise<RunResult
       },
     );
 
-    browserSupervisor.register(child);
+    if (child) {
+      browserSupervisor.register(child);
 
-    // Ensure child process errors are handled and cleaned up.
-    child.on("error", (e) => {
-      browserSupervisor.unregister(child);
-      resolve({ ok: false, stdout: "", stderr: "", error: e.message });
-    });
+      // Ensure child process errors are handled and cleaned up.
+      if (typeof child.on === "function") {
+        child.on("error", (e) => {
+          browserSupervisor.unregister(child);
+          resolve({ ok: false, stdout: "", stderr: "", error: e.message });
+        });
+      }
+    }
   });
 }
 
@@ -326,6 +339,28 @@ async function getUrl(sessionKey = "default"): Promise<string> {
 }
 
 /**
+ * Validate the live browser URL against SSRF policy after navigation or redirects.
+ * If the navigated URL is prohibited, immediately blanks out the page and returns an error.
+ */
+async function enforceCurrentUrlSsrf(key: string): Promise<string | null> {
+  const currentUrl = await getUrl(key);
+  if (!currentUrl || currentUrl === "about:blank") return null;
+  const blocked = await checkUrlHost(currentUrl);
+  if (blocked) {
+    // Proactively blank out the page and notify session listeners
+    await runCli(["open", "about:blank"], key);
+    const s = sessions.get(key);
+    if (s) {
+      s.url = "about:blank";
+      s.title = "Blocked by SSRF Policy";
+      browserEvents.emit("change", { sessionKey: key, session: { ...s } });
+    }
+    return `SSRF policy blocked navigation to target host (${currentUrl}): ${blocked}`;
+  }
+  return null;
+}
+
+/**
  * Refresh a session's url/title from the live page and broadcast a change
  * event so the integrated panel mirrors agent navigation in real time.
  * Reads run in parallel — they are independent queries after an action.
@@ -333,7 +368,18 @@ async function getUrl(sessionKey = "default"): Promise<string> {
 async function syncSessionState(key: string): Promise<void> {
   const s = sessions.get(key);
   if (!s) return;
-  const [url, title] = await Promise.all([getUrl(key), getTitle(key)]);
+  const url = await getUrl(key);
+  if (url && url !== "about:blank") {
+    const blocked = await checkUrlHost(url);
+    if (blocked) {
+      await runCli(["open", "about:blank"], key);
+      s.url = "about:blank";
+      s.title = "Blocked by SSRF Policy";
+      browserEvents.emit("change", { sessionKey: key, session: { ...s } });
+      return;
+    }
+  }
+  const title = await getTitle(key);
   // Re-check identity: the session may have been closed or evicted while the
   // CLI reads were in flight — never resurrect a dead session's state.
   if (sessions.get(key) !== s) return;
@@ -368,6 +414,12 @@ export async function browserOpen(
   // Best-effort wait for DOM content loaded.
   await runCli(["wait", "--load", "domcontentloaded"], key);
 
+  // Validate post-navigation/redirect URL against SSRF policy.
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) {
+    return err(postNavBlocked);
+  }
+
   const session: BrowserSession = {
     id: randomUUID(),
     url: url,
@@ -401,6 +453,8 @@ export async function browserSnapshot(
   pruneStaleSessions();
   if (!sessions.has(key)) return err("No active browser session. Open a URL first.");
   touchSession(key);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   const r = await snapshotCompact(key);
   if (!r.ok) return err(r.error || "Failed to capture snapshot.");
   return { ok: true, snapshot: r.stdout };
@@ -427,6 +481,8 @@ export async function browserClick(
   // Wait for any post-click navigation/render.
   await runCli(["wait", "--load", "domcontentloaded"], key);
   const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   if (!snap.ok) return err(snap.error || "Click succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }
@@ -481,6 +537,8 @@ export async function browserPress(
   if (!r.ok) return err(r.error || `Failed to press ${k}.`);
   await runCli(["wait", "--load", "domcontentloaded"], sKey);
   const [snap] = await Promise.all([snapshotCompact(sKey), syncSessionState(sKey)]);
+  const postNavBlocked = await enforceCurrentUrlSsrf(sKey);
+  if (postNavBlocked) return err(postNavBlocked);
   if (!snap.ok) return err(snap.error || "Press succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }
@@ -514,6 +572,8 @@ export async function browserScreenshot(
   pruneStaleSessions();
   if (!sessions.has(key)) return err("No active browser session.");
   touchSession(key);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   try {
     await mkdir(SCREENSHOT_DIR, { recursive: true });
   } catch { /* ignore */ }
@@ -574,6 +634,8 @@ export async function browserExtractText(
   pruneStaleSessions();
   if (!sessions.has(key)) return err("No active browser session.");
   touchSession(key);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   const r = await snapshotFull(key);
   if (!r.ok) return err(r.error || "Failed to capture snapshot.");
   return { ok: true, text: snapshotToPlainText(r.stdout) };
@@ -593,6 +655,8 @@ export async function browserGoBack(
   const r = await runCli(["press", "BrowserBack"], key);
   if (!r.ok) return err(r.error || "Failed to go back.");
   const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   if (!snap.ok) return err(snap.error || "Back succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }
@@ -611,6 +675,8 @@ export async function browserGoForward(
   const r = await runCli(["press", "BrowserForward"], key);
   if (!r.ok) return err(r.error || "Failed to go forward.");
   const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
+  const postNavBlocked = await enforceCurrentUrlSsrf(key);
+  if (postNavBlocked) return err(postNavBlocked);
   if (!snap.ok) return err(snap.error || "Forward succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }

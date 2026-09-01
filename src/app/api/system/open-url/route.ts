@@ -51,8 +51,9 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
 
   try {
     if (platform === "win32") {
-      // Windows: use start command with an empty title argument to launch default browser
-      spawn("cmd.exe", ["/c", "start", "", safeTarget], {
+      // Windows: use rundll32 FileProtocolHandler to launch default browser securely
+      // without invoking cmd.exe shell or interpreting command separators (&, |, etc.)
+      spawn("rundll32.exe", ["url.dll,FileProtocolHandler", safeTarget], {
         windowsHide: true,
         detached: true,
         stdio: "ignore",

@@ -9,7 +9,8 @@ describe("Tool read/write classification", () => {
     expect(isReadOnlyTool("glob")).toBe(true);
     expect(isReadOnlyTool("list_directory")).toBe(true);
     expect(isReadOnlyTool("web_search")).toBe(true);
-    expect(isReadOnlyTool("http_fetch")).toBe(true);
+    // http_fetch is gated as ask mode by default to prevent silent exfiltration
+    expect(isReadOnlyTool("http_fetch")).toBe(false);
 
     expect(isReadOnlyTool("edit_file")).toBe(false);
     expect(isReadOnlyTool("write_file")).toBe(false);

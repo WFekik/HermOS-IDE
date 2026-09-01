@@ -8,6 +8,44 @@ export const dynamic = "force-dynamic";
 
 const MAX_REDIRECTS = 5;
 const PROXY_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MB size limit to prevent memory DoS
+
+async function readResponseTextWithLimit(res: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<string> {
+  const cl = res.headers.get("content-length");
+  if (cl && Number(cl) > maxBytes) {
+    try { await res.body?.cancel(); } catch {}
+    throw new Error(`Response size exceeds limit of ${maxBytes / (1024 * 1024)}MB.`);
+  }
+  if (res.body && typeof res.body.getReader === "function") {
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          try { await reader.cancel(); } catch {}
+          throw new Error(`Response size exceeds limit of ${maxBytes / (1024 * 1024)}MB.`);
+        }
+        chunks.push(value);
+      }
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+    return new TextDecoder().decode(merged);
+  }
+  const txt = await res.text();
+  if (txt.length > maxBytes) {
+    throw new Error(`Response size exceeds limit of ${maxBytes / (1024 * 1024)}MB.`);
+  }
+  return txt;
+}
 
 /** Escape a URL for safe interpolation inside an HTML attribute value. */
 function escapeHtmlAttr(value: string): string {
@@ -114,7 +152,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     }
 
     const contentType = res.headers.get("content-type") || "text/html; charset=utf-8";
-    let body = await res.text();
+    let body = await readResponseTextWithLimit(res);
 
     // If HTML, resolve relative subresources and inject base tag and referrer policy
     if (contentType.includes("text/html")) {

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { safeJsonParse } from "@/lib/utils";
 import { normalizeThinkingLevel } from "@/lib/reasoning";
 import { isAgentRunning } from "@/lib/agent-abort";
+import { tryDecryptJson, maskRecord } from "@/lib/encryption";
 import type {
   AgentPresetDTO,
   ConversationDTO,
@@ -207,23 +208,16 @@ function isLoopbackRemoteIp(ip: string): boolean {
 /** Returns a 403 NextResponse when the request violates the Host/Origin policy, else null. */
 export function enforceLoopbackRequest(req: Request | null | undefined): NextResponse | null {
   if (!req) return null;
-  // Runtime bind enforcement: the server MUST be bound to loopback in desktop mode.
-  // next dev defaults to 0.0.0.0; start-standalone.mjs and Tauri set HOSTNAME=127.0.0.1.
-  // If the operator deliberately binds to an external interface, they MUST opt-in via
-  // HERMOS_ALLOW_REMOTE=true or TRUST_PROXY=true (behind a trusted proxy). Without
-  // that, Host-header checks are trivially bypassable (attacker sends Host: localhost
-  // over a remotely-reachable socket) and would expose unauthenticated RCE via
-  // requireUser() -> local admin.
+  // Runtime bind enforcement: HermOS IDE operates in local desktop single-user mode.
+  // The server MUST be bound strictly to loopback (127.0.0.1). Binding to external
+  // interfaces without authenticated multi-tenant session management is strictly disallowed.
   const bindHost = process.env.HOSTNAME?.trim();
   if (bindHost && !isLoopbackBind(bindHost)) {
-    const hasExplicitGate = process.env.HERMOS_ALLOW_REMOTE === "true" || process.env.TRUST_PROXY === "true";
-    if (!hasExplicitGate) {
-      const isAllInterfaces = bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "[::]" || bindHost === "0:0:0:0";
-      const msg = isAllInterfaces
-        ? "Server is bound to 0.0.0.0 (all interfaces) without an authentication gate — refusing request. Set HOSTNAME=127.0.0.1 for desktop loopback or configure HERMOS_ALLOW_REMOTE=true / TRUST_PROXY=true behind a trusted proxy."
-        : `Server is bound to non-loopback interface "${bindHost}" without an authentication gate — refusing request. Set HOSTNAME=127.0.0.1 for desktop loopback or configure HERMOS_ALLOW_REMOTE=true / TRUST_PROXY=true.`;
-      return apiError(msg, 403);
-    }
+    const isAllInterfaces = bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "[::]" || bindHost === "0:0:0:0";
+    const msg = isAllInterfaces
+      ? "Server is bound to 0.0.0.0 (all interfaces) — refusing unauthenticated request. HermOS requires loopback binding (HOSTNAME=127.0.0.1)."
+      : `Server is bound to non-loopback interface "${bindHost}" — refusing unauthenticated request. HermOS requires loopback binding (HOSTNAME=127.0.0.1).`;
+    return apiError(msg, 403);
   }
   const reason = validateHostPolicy(req);
   if (reason) return apiError(reason, 403);
@@ -442,8 +436,10 @@ export function toMcpServerDTO(r: {
   createdAt: Date;
 }): McpServerDTO {
   const args = r.args ? safeJsonParse<string[]>(r.args) : undefined;
-  const env = r.env ? safeJsonParse<Record<string, string>>(r.env) : undefined;
-  const headers = r.headers ? safeJsonParse<Record<string, string>>(r.headers) : undefined;
+  const rawEnv = r.env ? tryDecryptJson<Record<string, string>>(r.env) : undefined;
+  const env = maskRecord(rawEnv);
+  const rawHeaders = r.headers ? tryDecryptJson<Record<string, string>>(r.headers) : undefined;
+  const headers = maskRecord(rawHeaders);
   const tools = r.tools ? safeJsonParse<McpServerDTO["tools"]>(r.tools) : undefined;
   return {
     id: r.id,

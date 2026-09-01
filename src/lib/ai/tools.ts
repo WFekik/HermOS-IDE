@@ -62,6 +62,7 @@ import { isSubagentReportDelivered } from "@/lib/ai/subagent-queue";
 import { db } from "@/lib/db";
 import { ARTIFACTS_DIR } from "@/lib/paths";
 import { checkUrlHost, getSsrfDispatcher } from "@/lib/ssrf";
+import { tryDecryptJson } from "@/lib/encryption";
 import { publishTodos } from "@/lib/todo-pubsub";
 import { snapshotFile, trackNewFile } from "@/lib/checkpoints";
 import { truncateOutput, truncationUserDir, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from "@/lib/truncate";
@@ -1179,8 +1180,8 @@ async function realMcpCall(serverName: string, tool: string, args?: unknown, use
     if (err?.message?.includes("not connected")) {
       try {
         const parsedArgs = typeof mcpServer.args === "string" ? JSON.parse(mcpServer.args) : mcpServer.args;
-        const parsedEnv = typeof mcpServer.env === "string" ? JSON.parse(mcpServer.env) : mcpServer.env;
-        const parsedHeaders = typeof mcpServer.headers === "string" ? JSON.parse(mcpServer.headers) : mcpServer.headers;
+        const parsedEnv = tryDecryptJson(mcpServer.env);
+        const parsedHeaders = tryDecryptJson(mcpServer.headers);
         
         await connectMcpClient({
           id: mcpServer.id,
