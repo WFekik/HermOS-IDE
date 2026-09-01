@@ -115,8 +115,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           TAURI_ENV_PLATFORM: "win32"
-      - script: node scripts/sign-windows-artifacts.mjs
+      - script: powershell -ExecutionPolicy Bypass -File scripts/sign-windows-artifacts.ps1
         displayName: "Sign Windows Artifacts (SignPath)"
+        continueOnError: true
         condition: succeeded()
         env:
           SIGNPATH_API_TOKEN: $(SIGNPATH_API_TOKEN)
