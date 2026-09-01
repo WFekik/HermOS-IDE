@@ -22,7 +22,7 @@ try {
     Import-Module SignPath -ErrorAction Stop
     Write-Host "[SignPath] Module loaded successfully."
 } catch {
-    Write-Error "[SignPath] FATAL: Failed to install/import SignPath PowerShell module: $_"
+    Write-Error "[SignPath] FATAL: Failed to install or import SignPath PowerShell module: $_"
     exit 1
 }
 
@@ -42,14 +42,14 @@ foreach ($dir in $bundleDirs) {
 }
 
 if ($targetFiles.Count -eq 0) {
-    Write-Error "[SignPath] FATAL: No Windows .exe / .msi installer files found to sign."
+    Write-Error "[SignPath] FATAL: No Windows installer files (.exe or .msi) found to sign."
     exit 1
 }
 
 Write-Host "[SignPath] Found $($targetFiles.Count) Windows binary installer(s) to sign."
 
 foreach ($file in $targetFiles) {
-    Write-Host "`n[SignPath] Submitting $($file.Name) to SignPath for mandatory Authenticode signing..."
+    Write-Host "[SignPath] Submitting $($file.Name) to SignPath for mandatory Authenticode signing..."
     try {
         Submit-SigningRequest -InputArtifactPath $file.FullName -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -OutputArtifactPath $file.FullName -WaitForCompletion
         Write-Host "[SignPath] Successfully signed $($file.Name) with Authenticode certificate!"
@@ -59,5 +59,5 @@ foreach ($file in $targetFiles) {
     }
 }
 
-Write-Host "`n✓ All Windows artifacts successfully signed with Authenticode certificate."
+Write-Host "[SignPath] All Windows artifacts successfully signed with Authenticode certificate."
 exit 0
