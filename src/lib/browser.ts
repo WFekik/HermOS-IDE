@@ -105,21 +105,47 @@ export const browserSupervisor = new BrowserProcessSupervisor();
  */
 
 export function findAgentBrowserCli(): string {
-  const candidates = [
+  const candidates: string[] = [];
+
+  // 1. cwd-anchored (dev: repo root; standalone: server.js cwd)
+  candidates.push(
     path.resolve(process.cwd(), "node_modules", "agent-browser", "bin", "agent-browser.js"),
     path.resolve(process.cwd(), ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
     path.resolve(process.cwd(), "_up_", ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
-    path.resolve(__dirname, "../../node_modules/agent-browser/bin/agent-browser.js"),
-    path.resolve(__dirname, "../node_modules/agent-browser/bin/agent-browser.js"),
-    path.resolve(__dirname, "node_modules/agent-browser/bin/agent-browser.js"),
-  ];
+  );
+
+  // 2. Relative to process.execPath (in desktop standalone, sidecar node executable is next to the bundle)
+  const execDir = path.dirname(process.execPath);
+  candidates.push(
+    path.join(execDir, "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.join(execDir, "resources", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.join(execDir, "..", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    path.join(execDir, "..", "Resources", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+  );
+
+  // 3. Walk up from __dirname (up to 10 levels)
+  let dir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    candidates.push(
+      path.join(dir, "node_modules", "agent-browser", "bin", "agent-browser.js"),
+      path.join(dir, "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+      path.join(dir, ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
+    );
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+
   for (const candidate of candidates) {
-    if (existsSync(/*turbopackIgnore: true*/ candidate)) return candidate;
+    try {
+      if (existsSync(/*turbopackIgnore: true*/ candidate)) return candidate;
+    } catch {
+      /* ignore */
+    }
   }
   return candidates[0];
 }
 
-const CLI_PATH = findAgentBrowserCli();
 const TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10_000_000;
 const MAX_URL_LEN = 2000;
@@ -200,12 +226,22 @@ function getCleanSessionKey(sessionKey = "default"): string {
 
 function getSafeBrowserEnv(sessionKey: string): NodeJS.ProcessEnv {
   return {
+    ...process.env,
     NODE_ENV: process.env.NODE_ENV ?? "development",
     PATH: process.env.PATH || "",
     HOME: process.env.HOME || process.env.USERPROFILE || "",
     USERPROFILE: process.env.USERPROFILE || "",
+    LOCALAPPDATA: process.env.LOCALAPPDATA || "",
+    APPDATA: process.env.APPDATA || "",
+    PROGRAMFILES: process.env["PROGRAMFILES"] || process.env["ProgramFiles"] || "C:\\Program Files",
+    "PROGRAMFILES(X86)": process.env["PROGRAMFILES(X86)"] || process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+    ProgramData: process.env["ProgramData"] || "C:\\ProgramData",
+    SYSTEMROOT: process.env.SYSTEMROOT || process.env.SystemRoot || "C:\\Windows",
+    COMSPEC: process.env.COMSPEC || process.env.ComSpec || "cmd.exe",
+    PATHEXT: process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WSF;.WSH",
     TEMP: process.env.TEMP || os.tmpdir(),
     TMP: process.env.TMP || os.tmpdir(),
+    TMPDIR: process.env.TMPDIR || os.tmpdir(),
     LANG: process.env.LANG || "en_US.UTF-8",
     TZ: process.env.TZ || "UTC",
     AGENT_BROWSER_HEADED: "false",
@@ -222,11 +258,12 @@ interface RunResult {
 
 async function runCli(args: string[], sessionKey = "default"): Promise<RunResult> {
   const safeKey = getCleanSessionKey(sessionKey).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const cliPath = findAgentBrowserCli();
   const cliArgs = ["--session", safeKey, ...args];
   return new Promise((resolve) => {
     const child = execFile(
       process.execPath,
-      [CLI_PATH, ...cliArgs],
+      [cliPath, ...cliArgs],
       {
         maxBuffer: MAX_BUFFER,
         timeout: TIMEOUT_MS,

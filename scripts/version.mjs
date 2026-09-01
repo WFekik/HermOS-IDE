@@ -27,6 +27,7 @@ const PKG_PATH = path.join(ROOT_DIR, "package.json");
 const PKG_LOCK_PATH = path.join(ROOT_DIR, "package-lock.json");
 const TAURI_CONF_PATH = path.join(ROOT_DIR, "src-tauri", "tauri.conf.json");
 const CARGO_TOML_PATH = path.join(ROOT_DIR, "src-tauri", "Cargo.toml");
+const CARGO_LOCK_PATH = path.join(ROOT_DIR, "src-tauri", "Cargo.lock");
 const WEBSITE_PATH = path.join(ROOT_DIR, "hermos-website", "index.html");
 
 function parseSemver(v) {
@@ -134,6 +135,16 @@ function updateCargoToml(newVersion) {
   fs.writeFileSync(CARGO_TOML_PATH, content, "utf-8");
 }
 
+function updateCargoLock(newVersion) {
+  if (!fs.existsSync(CARGO_LOCK_PATH)) return;
+  let content = fs.readFileSync(CARGO_LOCK_PATH, "utf-8");
+  content = content.replace(
+    /(\[\[package\]\]\r?\nname = "app"\r?\nversion = )"[^"]+"/m,
+    `$1"${newVersion}"`
+  );
+  fs.writeFileSync(CARGO_LOCK_PATH, content, "utf-8");
+}
+
 function updateHermosWebsite(newVersion) {
   if (!fs.existsSync(WEBSITE_PATH)) return;
   let content = fs.readFileSync(WEBSITE_PATH, "utf-8");
@@ -150,6 +161,7 @@ function applyVersion(newVersion) {
   updatePackageLock(parsed.raw);
   updateTauriConf(parsed.raw);
   updateCargoToml(parsed.raw);
+  updateCargoLock(parsed.raw);
   updateHermosWebsite(parsed.raw);
 
   console.log(`✓ Synchronized HermOS version to v${parsed.raw}`);
