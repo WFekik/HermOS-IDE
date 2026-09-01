@@ -51,7 +51,7 @@ Write-Host "[SignPath] Found $($targetFiles.Count) Windows binary installer(s) t
 foreach ($file in $targetFiles) {
     Write-Host "[SignPath] Submitting $($file.Name) to SignPath for mandatory Authenticode signing..."
     try {
-        Submit-SigningRequest -InputArtifactPath $file.FullName -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -OutputArtifactPath $file.FullName -WaitForCompletion
+        Submit-SigningRequest -InputArtifactPath $file.FullName -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -OutputArtifactPath $file.FullName -WaitForCompletion -Force
         Write-Host "[SignPath] Successfully signed $($file.Name) with Authenticode certificate!"
     } catch {
         Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
