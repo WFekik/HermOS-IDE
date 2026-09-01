@@ -154,6 +154,7 @@ export function mergeSegments(
   toolCallById: Map<string, LiveToolCall>,
 ): RenderSegment[] {
   const result: RenderSegment[] = [];
+  const renderedToolIds = new Set<string>();
 
   for (const seg of rawSegments) {
     if (!seg) continue;
@@ -164,6 +165,7 @@ export function mergeSegments(
       if (!tc || HIDDEN_TOOLS.has(tc.name)) {
         continue;
       }
+      renderedToolIds.add(tc.id);
       result.push({
         kind: "tool_call",
         id: seg.id || `tc-${seg.toolCallId}`,
@@ -186,6 +188,18 @@ export function mergeSegments(
         kind: seg.kind,
         id: seg.id || `${seg.kind}-${Math.random()}`,
         content,
+      });
+    }
+  }
+
+  // Ensure any liveToolCalls not yet in segments are appended so they never disappear
+  for (const [id, tc] of toolCallById.entries()) {
+    if (!renderedToolIds.has(id) && !HIDDEN_TOOLS.has(tc.name)) {
+      renderedToolIds.add(id);
+      result.push({
+        kind: "tool_call",
+        id: `tc-${id}`,
+        toolCallId: id,
       });
     }
   }

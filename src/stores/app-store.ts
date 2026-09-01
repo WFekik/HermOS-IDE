@@ -1515,14 +1515,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       const withToolCalls = list.map((m) => {
         const msg: UIMessage = { ...m, streaming: false };
         if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
-          msg.liveToolCalls = m.toolCalls.map((tc: any) => ({
-            id: tc.id,
-            name: tc.name,
-            args: JSON.stringify(tc.args),
-            parsedArgs: tc.args,
-            status: (tc.status || "done") as any,
-            result: tc.result,
-          }));
+          msg.liveToolCalls = m.toolCalls.map((tc: any) => {
+            let parsedArgs = tc.args;
+            let argsStr = "";
+            if (typeof tc.args === "string") {
+              argsStr = tc.args;
+              try {
+                parsedArgs = JSON.parse(tc.args);
+              } catch {
+                parsedArgs = {};
+              }
+            } else if (tc.args && typeof tc.args === "object") {
+              parsedArgs = tc.args;
+              argsStr = JSON.stringify(tc.args);
+            } else {
+              argsStr = JSON.stringify(tc.args ?? {});
+              parsedArgs = tc.args ?? {};
+            }
+            return {
+              id: tc.id || `tc-${Math.random()}`,
+              name: tc.name,
+              args: argsStr,
+              parsedArgs,
+              status: (tc.status || "done") as any,
+              result: tc.result,
+            };
+          });
         }
         return msg;
       });
@@ -1551,22 +1569,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 
           if (local) {
             matchedLocalIds.add(local.id);
-            // Merge liveToolCalls: prefer local liveToolCalls if they have detailed result object
+            // Merge liveToolCalls: preserve local liveToolCalls and their details/results
+            let mergedTc: LiveToolCall[] = m.liveToolCalls || [];
             if (local.liveToolCalls && local.liveToolCalls.length > 0) {
               const localTcMap = new Map(local.liveToolCalls.map((t) => [t.id, t]));
-              const mergedTc = (m.liveToolCalls || []).map((stc) => {
-                const ltc = localTcMap.get(stc.id);
-                return (ltc && ltc.result !== undefined) ? ltc : { ...stc, result: ltc?.result ?? stc.result, status: ltc?.status ?? stc.status };
-              });
-              merged.push({
-                ...m,
-                streaming: local.streaming ?? false,
-                segments: m.segments,
-                liveToolCalls: mergedTc.length > 0 ? mergedTc : local.liveToolCalls,
-              });
-            } else {
-              merged.push({ ...m, streaming: local.streaming ?? false });
+              if (m.liveToolCalls && m.liveToolCalls.length > 0) {
+                mergedTc = m.liveToolCalls.map((stc) => {
+                  const ltc = localTcMap.get(stc.id);
+                  return (ltc && ltc.result !== undefined)
+                    ? ltc
+                    : { ...stc, result: ltc?.result ?? stc.result, status: ltc?.status ?? stc.status };
+                });
+              } else {
+                mergedTc = local.liveToolCalls;
+              }
             }
+            merged.push({
+              ...m,
+              streaming: local.streaming ?? false,
+              segments: local.segments ?? m.segments,
+              liveToolCalls: mergedTc.length > 0 ? mergedTc : (local.liveToolCalls ?? m.liveToolCalls),
+            });
           } else if (m.role === "user") {
             // Match local user message by content to preserve local state
             const localUser = existing.find(
@@ -1779,6 +1802,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       permissionPrompt: get().permissionPromptsByConversation[id] ?? null,
       questionPrompt: get().questionPromptsByConversation[id] ?? null,
     });
+
+    // Dismiss any active toast notifications for this conversation since the user has now focused it
+    const activePerm = get().permissionPromptsByConversation[id];
+    if (activePerm?.id && typeof toast?.dismiss === "function") {
+      toast.dismiss(`perm-${activePerm.id}`);
+    }
+    const activeQuest = get().questionPromptsByConversation[id];
+    if (activeQuest?.id && typeof toast?.dismiss === "function") {
+      toast.dismiss(`quest-${activeQuest.id}`);
+    }
 
     // Always refresh from server in background for up-to-date data
     void get().refreshMessages(id);

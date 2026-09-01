@@ -383,16 +383,17 @@ export function useChatStream(): UseChatStreamReturn {
           const session =
             store.conversations.find((c) => c.id === convId) ||
             store.pendingConversations.find((p) => p.id === convId);
-          const sessionTitle = session?.title ? `"${session.title}"` : "another session";
+          const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
           const actionDesc = evt.action
             ? `${evt.action}${evt.target ? ` (${evt.target})` : ""}`
             : evt.toolName || "action";
 
-          toast.warning(`Permission requested in ${sessionTitle}: ${actionDesc}`, {
+          toast("Permission Requested", {
             id: `perm-${approvalId}`,
+            description: `${sessionTitle} · ${actionDesc}`,
             duration: 30000,
             action: {
-              label: "Go to session",
+              label: "Review",
               onClick: () => {
                 void useAppStore.getState().selectConversation(convId);
               },
@@ -433,12 +434,15 @@ export function useChatStream(): UseChatStreamReturn {
           const session =
             store.conversations.find((c) => c.id === convId) ||
             store.pendingConversations.find((p) => p.id === convId);
-          const sessionTitle = session?.title ? `"${session.title}"` : "another session";
-          toast.info(`HermOS asked a question in ${sessionTitle}`, {
+          const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
+          const questionSummary = evt.question || questions[0]?.question || "Agent needs your input";
+
+          toast("Agent Question", {
             id: `quest-${evt.questionId}`,
+            description: `${sessionTitle} · ${questionSummary}`,
             duration: 30000,
             action: {
-              label: "Go to session",
+              label: "Answer",
               onClick: () => {
                 void useAppStore.getState().selectConversation(convId);
               },

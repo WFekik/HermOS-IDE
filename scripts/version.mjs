@@ -27,6 +27,7 @@ const PKG_PATH = path.join(ROOT_DIR, "package.json");
 const PKG_LOCK_PATH = path.join(ROOT_DIR, "package-lock.json");
 const TAURI_CONF_PATH = path.join(ROOT_DIR, "src-tauri", "tauri.conf.json");
 const CARGO_TOML_PATH = path.join(ROOT_DIR, "src-tauri", "Cargo.toml");
+const WEBSITE_PATH = path.join(ROOT_DIR, "hermos-website", "index.html");
 
 function parseSemver(v) {
   const clean = String(v).trim().replace(/^v/i, "");
@@ -82,6 +83,19 @@ function readVersions() {
     if (m) versions.cargoToml = m[1];
   }
 
+  if (fs.existsSync(PKG_LOCK_PATH)) {
+    try {
+      const lock = JSON.parse(fs.readFileSync(PKG_LOCK_PATH, "utf-8"));
+      versions.packageLock = lock.version;
+    } catch { /* ignore parse errors */ }
+  }
+
+  if (fs.existsSync(WEBSITE_PATH)) {
+    const html = fs.readFileSync(WEBSITE_PATH, "utf-8");
+    const vm = html.match(/"softwareVersion":\s*"([^"]+)"/);
+    if (vm) versions.website = vm[1];
+  }
+
   return versions;
 }
 
@@ -120,6 +134,14 @@ function updateCargoToml(newVersion) {
   fs.writeFileSync(CARGO_TOML_PATH, content, "utf-8");
 }
 
+function updateHermosWebsite(newVersion) {
+  if (!fs.existsSync(WEBSITE_PATH)) return;
+  let content = fs.readFileSync(WEBSITE_PATH, "utf-8");
+  content = content.replace(/"softwareVersion":\s*"[^"]+"/g, `"softwareVersion": "${newVersion}"`);
+  content = content.replace(/version:\s*"[^"]+"/g, `version: "${newVersion}"`);
+  fs.writeFileSync(WEBSITE_PATH, content, "utf-8");
+}
+
 function applyVersion(newVersion) {
   const parsed = parseSemver(newVersion);
   if (!parsed) throw new Error(`Cannot apply invalid version: ${newVersion}`);
@@ -128,6 +150,7 @@ function applyVersion(newVersion) {
   updatePackageLock(parsed.raw);
   updateTauriConf(parsed.raw);
   updateCargoToml(parsed.raw);
+  updateHermosWebsite(parsed.raw);
 
   console.log(`✓ Synchronized HermOS version to v${parsed.raw}`);
 }
@@ -140,8 +163,10 @@ try {
     const vers = readVersions();
     console.log(`HermOS Version: ${vers.packageJson || "unknown"}`);
     console.log(`- package.json:          ${vers.packageJson || "N/A"}`);
+    console.log(`- package-lock.json:     ${vers.packageLock || "N/A"}`);
     console.log(`- src-tauri/tauri.conf:  ${vers.tauriConf || "N/A"}`);
     console.log(`- src-tauri/Cargo.toml:  ${vers.cargoToml || "N/A"}`);
+    console.log(`- hermos-website:        ${vers.website || "N/A"}`);
   } else if (action === "check") {
     const vers = readVersions();
     const unique = new Set(Object.values(vers).filter(Boolean));

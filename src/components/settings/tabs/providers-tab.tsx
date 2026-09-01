@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Search,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +39,8 @@ export function ProvidersTab() {
   const [customUrl, setCustomUrl] = React.useState("");
   const [customKey, setCustomKey] = React.useState("");
   const [adding, setAdding] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [filterCategory, setFilterCategory] = React.useState<"all" | "configured" | "free" | "custom">("all");
 
   const allProviders = React.useMemo(() => {
     const list: ProviderInfo[] = [...providers];
@@ -96,24 +100,51 @@ export function ProvidersTab() {
     }
   };
 
-  const sorted = React.useMemo(() => {
-    return [...allProviders].sort((a, b) => {
+  const keyFor = (id: ProviderId) => providerKeys.find((k) => k.provider === id);
+
+  const counts = React.useMemo(() => {
+    const configured = allProviders.filter((p) => keyFor(p.id)?.hasKey).length;
+    const free = allProviders.filter((p) => p.free).length;
+    const custom = allProviders.filter((p) => p.id.startsWith("custom")).length;
+    return { all: allProviders.length, configured, free, custom };
+  }, [allProviders, providerKeys]);
+
+  const filteredProviders = React.useMemo(() => {
+    let list = [...allProviders].sort((a, b) => {
       if (a.free !== b.free) return a.free ? -1 : 1;
       const ak = providerKeys.find((k) => k.provider === a.id)?.hasKey ? 1 : 0;
       const bk = providerKeys.find((k) => k.provider === b.id)?.hasKey ? 1 : 0;
       return bk - ak;
     });
-  }, [allProviders, providerKeys]);
 
-  const keyFor = (id: ProviderId) => providerKeys.find((k) => k.provider === id);
+    if (filterCategory === "configured") {
+      list = list.filter((p) => keyFor(p.id)?.hasKey);
+    } else if (filterCategory === "free") {
+      list = list.filter((p) => p.free);
+    } else if (filterCategory === "custom") {
+      list = list.filter((p) => p.id.startsWith("custom"));
+    }
+
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q) ||
+          (p.description && p.description.toLowerCase().includes(q)),
+      );
+    }
+
+    return list;
+  }, [allProviders, providerKeys, filterCategory, searchQuery]);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
         <div>
           <h3 className="text-base font-semibold">Providers (BYOK)</h3>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Bring your own API keys or configure custom OpenAI-compatible endpoints (Ollama, vLLM, LM Studio, etc.).
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Connect AI models via your own API keys or custom OpenAI-compatible endpoints.
           </p>
         </div>
         <Button
@@ -124,6 +155,45 @@ export function ProvidersTab() {
           <Save className="size-3.5" />
           Add Custom Provider
         </Button>
+      </div>
+
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="size-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search providers (OpenRouter, Anthropic, Ollama, DeepSeek)..."
+            className="h-8 pl-8 text-xs bg-muted/30"
+          />
+        </div>
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+          {(
+            [
+              { id: "all", label: "All", count: counts.all },
+              { id: "configured", label: "Connected", count: counts.configured },
+              { id: "free", label: "Free Tier", count: counts.free },
+              { id: "custom", label: "Custom", count: counts.custom },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterCategory(tab.id)}
+              className={cn(
+                "px-2.5 py-1 rounded-md text-xs font-medium transition-colors shrink-0 flex items-center gap-1.5",
+                filterCategory === tab.id
+                  ? "bg-brand/10 text-brand border border-brand/30"
+                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground border border-transparent",
+              )}
+            >
+              <span>{tab.label}</span>
+              <span className="text-[10px] opacity-70 font-mono">({tab.count})</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {addCustomOpen && (
@@ -176,11 +246,20 @@ export function ProvidersTab() {
         </div>
       )}
 
-      <div className="grid gap-2.5">
-        {sorted.map((p) => (
-          <ProviderCard key={p.id} provider={p} keyInfo={keyFor(p.id)} />
-        ))}
-      </div>
+      {filteredProviders.length === 0 ? (
+        <div className="rounded-xl border border-dashed p-8 text-center space-y-2">
+          <p className="text-xs text-muted-foreground">No providers found matching &ldquo;{searchQuery}&rdquo;</p>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setSearchQuery(""); setFilterCategory("all"); }}>
+            Reset filters
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-2.5">
+          {filteredProviders.map((p) => (
+            <ProviderCard key={p.id} provider={p} keyInfo={keyFor(p.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -21,11 +21,13 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: {
+  toast: Object.assign(vi.fn(), {
     success: vi.fn(),
     error: vi.fn(),
     info: vi.fn(),
-  },
+    dismiss: vi.fn(),
+    custom: vi.fn(),
+  }),
 }));
 
 const mockApiGet = vi.mocked(apiGet);

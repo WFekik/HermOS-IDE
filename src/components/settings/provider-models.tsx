@@ -12,6 +12,11 @@ import {
   Check,
   Plus,
   Trash2,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -357,6 +362,24 @@ export function ProviderModels({
     },
   });
 
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [modelFilter, setModelFilter] = React.useState("");
+
+  const filteredRows = React.useMemo(() => {
+    const q = modelFilter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) => r.id.toLowerCase().includes(q) || (r.name && r.name.toLowerCase().includes(q)),
+    );
+  }, [rows, modelFilter]);
+
+  const enabledCount = rows.filter((r) => r.enabled).length;
+
+  const handleToggleAll = (enable: boolean) => {
+    setRows((cur) => cur.map((r) => ({ ...r, enabled: enable })));
+    setDirty(true);
+  };
+
   const [customModelId, setCustomModelId] = React.useState("");
 
   const handleAddModel = () => {
@@ -401,34 +424,46 @@ export function ProviderModels({
 
   if (!hasKey) {
     return (
-      <div className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+      <div className="mt-2.5 rounded-lg border border-dashed p-2.5 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <Cpu className="size-3.5 text-muted-foreground" />
           <span className="font-medium">Models</span>
         </div>
-        <p className="mt-1">Add an API key above to manage models.</p>
+        <p className="mt-1 text-[11px]">Add an API key above to manage models.</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Cpu className="size-3.5 text-brand" />
-          <span className="text-xs font-medium">Models</span>
+    <div className="mt-2.5 rounded-lg border border-border/80 bg-muted/20 overflow-hidden">
+      <div className="flex items-center justify-between gap-2 p-2.5">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-2 text-left flex-1 min-w-0 hover:opacity-80 transition-opacity"
+        >
+          <Cpu className="size-3.5 text-brand shrink-0" />
+          <span className="text-xs font-medium truncate">Models</span>
           <Badge
-            variant="outline"
-            className="h-4 px-1 text-[9px] font-mono text-muted-foreground"
+            variant="secondary"
+            className="h-4 px-1.5 text-[9px] font-mono shrink-0"
           >
-            {rows.length}
+            {enabledCount}/{rows.length} active
           </Badge>
-        </div>
+          {isOpen ? (
+            <ChevronUp className="size-3.5 text-muted-foreground ml-auto shrink-0" />
+          ) : (
+            <ChevronDown className="size-3.5 text-muted-foreground ml-auto shrink-0" />
+          )}
+        </button>
         <Button
           size="sm"
           variant="outline"
-          className="h-7 gap-1 text-[11px]"
-          onClick={() => refreshMut.mutate()}
+          className="h-6 gap-1 text-[10px] px-2 shrink-0"
+          onClick={() => {
+            if (!isOpen) setIsOpen(true);
+            refreshMut.mutate();
+          }}
           disabled={refreshMut.isPending}
           aria-label="Refresh models from provider"
         >
@@ -437,19 +472,19 @@ export function ProviderModels({
           ) : (
             <RefreshCw className="size-3" />
           )}
-          Refresh models from provider
+          Fetch models
         </Button>
       </div>
 
       {fetchError && (
-        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+        <div className="mx-2.5 mb-2 flex items-start gap-1.5 rounded-md border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-2 text-[11px] text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" />
           <div className="flex-1">
             <p>{fetchError}</p>
             <Button
               size="sm"
               variant="ghost"
-              className="mt-1 h-6 px-2 text-[11px]"
+              className="mt-1 h-5 px-2 text-[10px]"
               onClick={() => refreshMut.mutate()}
             >
               Retry
@@ -458,79 +493,117 @@ export function ProviderModels({
         </div>
       )}
 
-      <div className="mt-2 space-y-1">
-        {rows.length === 0 ? (
-          <div className="space-y-1.5">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-            <p className="text-[11px] text-muted-foreground">
-              Click &ldquo;Refresh&rdquo; to load the model list from the
-              provider.
-            </p>
-          </div>
-        ) : (
-          rows.map((row) => (
-            <ModelRowView
-              key={row.id}
-              row={row}
-              levels={levelsFor(row)}
-              onToggleEnabled={(v) => setRowEnabled(row.id, v)}
-              onChangeThinking={(tl) => setRowThinking(row.id, tl)}
-              onDelete={() => handleRemoveModel(row.id)}
-            />
-          ))
-        )}
-      </div>
-
-      <div className="mt-2 flex items-center gap-1.5">
-        <Input
-          type="text"
-          value={customModelId}
-          onChange={(e) => setCustomModelId(e.target.value)}
-          placeholder="Add custom model ID..."
-          className="h-7 text-[11px] font-mono flex-1"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              handleAddModel();
-            }
-          }}
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-[11px] gap-1"
-          onClick={handleAddModel}
-          disabled={!customModelId.trim()}
-        >
-          <Plus className="size-3" /> Add
-        </Button>
-      </div>
-
-      {rows.length > 0 && (
-        <div className="mt-3 flex items-center gap-2">
-          <Button
-            size="sm"
-            className="gap-1 bg-brand text-brand-foreground hover:bg-brand/90"
-            onClick={handleSave}
-            disabled={!dirty || saveMut.isPending}
-          >
-            {saveMut.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Save className="size-3.5" />
-            )}
-            Save model config
-          </Button>
-          {dirty && (
-            <span className="text-[11px] text-amber-600 dark:text-amber-400">
-              Unsaved changes
-            </span>
+      {isOpen && (
+        <div className="p-2.5 pt-0 border-t border-border/40 space-y-2 mt-1">
+          {rows.length > 0 && (
+            <div className="flex items-center gap-1.5 pt-1.5">
+              <div className="relative flex-1">
+                <Search className="size-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                <Input
+                  type="text"
+                  value={modelFilter}
+                  onChange={(e) => setModelFilter(e.target.value)}
+                  placeholder="Filter models (claude, gpt, llama, deepseek)..."
+                  className="h-7 pl-6 text-[11px]"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-[10px] px-2 text-muted-foreground hover:text-foreground shrink-0"
+                onClick={() => handleToggleAll(true)}
+              >
+                Enable all
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-[10px] px-2 text-muted-foreground hover:text-foreground shrink-0"
+                onClick={() => handleToggleAll(false)}
+              >
+                Disable all
+              </Button>
+            </div>
           )}
-          {!dirty && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-brand">
-              <Check className="size-3" /> Saved
-            </span>
+
+          <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+            {rows.length === 0 ? (
+              <div className="space-y-1.5 py-2">
+                <Skeleton className="h-7 w-full" />
+                <Skeleton className="h-7 w-full" />
+                <p className="text-[11px] text-muted-foreground">
+                  Click &ldquo;Fetch models&rdquo; to load available models from this provider.
+                </p>
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">
+                No models matching &ldquo;{modelFilter}&rdquo;
+              </div>
+            ) : (
+              filteredRows.map((row) => (
+                <ModelRowView
+                  key={row.id}
+                  row={row}
+                  levels={levelsFor(row)}
+                  onToggleEnabled={(v) => setRowEnabled(row.id, v)}
+                  onChangeThinking={(tl) => setRowThinking(row.id, tl)}
+                  onDelete={() => handleRemoveModel(row.id)}
+                />
+              ))
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 pt-1">
+            <Input
+              type="text"
+              value={customModelId}
+              onChange={(e) => setCustomModelId(e.target.value)}
+              placeholder="Add custom model ID..."
+              className="h-7 text-[11px] font-mono flex-1"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAddModel();
+                }
+              }}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-[11px] gap-1 shrink-0"
+              onClick={handleAddModel}
+              disabled={!customModelId.trim()}
+            >
+              <Plus className="size-3" /> Add
+            </Button>
+          </div>
+
+          {rows.length > 0 && (
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                className="h-7 gap-1 bg-brand text-brand-foreground hover:bg-brand/90 text-xs"
+                onClick={handleSave}
+                disabled={!dirty || saveMut.isPending}
+              >
+                {saveMut.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Save className="size-3" />
+                )}
+                Save model config
+              </Button>
+              {dirty && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Unsaved changes
+                </span>
+              )}
+              {!dirty && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-brand">
+                  <Check className="size-3" /> Saved
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}

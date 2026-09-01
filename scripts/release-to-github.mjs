@@ -46,12 +46,11 @@ function getReleaseBody(tag) {
 100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
 
 #### 🚀 What's New in ${tag}
-- **Cross-Session Prompt Isolation**: Permission approvals and question prompts are now scoped per conversation with interactive "Go to session" notification toasts for background tasks.
-- **Parallel Chat Streaming & Rehydration**: Seamlessly switch between concurrent chats with zero loss of live tool calls, diffs, terminal outputs, or streaming history.
-- **Preview Browser & Dev Server Enhancements**: Full support for local \`http://\` dev servers (\`localhost:3000\`, \`127.0.0.1:5173\`, \`[::1]\`), LAN addresses, and hardened sandboxed proxy CSP for external web browsing.
-- **Agent Dev Server vs IDE Isolation**: Guided agent execution to always target project dev server ports (\`3000\`, \`5173\`, \`8000\`, \`8080\`) rather than the internal IDE desktop port (\`3001+\`).
-- **Clean Prompt Teardown**: Robust global and per-session cancellation of pending questions and permissions on stop.
-- **Dynamic Updater & Download Hub**: Real-time asset resolution and seamless auto-updater integration across Windows, macOS, and Linux.
+- **Professional Notification Experience**: Replaced harsh warning banners with sleek, minimal "Action Required" toasts with session context, action descriptions, and instant one-click session jump.
+- **Robust Tool Call State Retention**: Complete preservation of live tool calls, parsed parameters, and execution results across parallel chat switches with zero disappearing or flickering tool blocks.
+- **Streamlined BYOK Providers & Collapsible Models**: Redesigned Providers tab with category filters (\`Connected\`, \`Free Tier\`, \`Custom\`), provider search, and collapsible model drawers with capped scrolling and model search.
+- **Fail-Safe Auto-Updater**: Resilient update checks with timeout race conditions and automatic GitHub REST API fallback so older versions reliably receive updates without hanging.
+- **CI Build & Bundle Optimization**: Cargo incremental caching and platform-isolated binary stripping reducing build times and stripping ~70MB of unused cross-platform binaries.
 
 #### 📦 Downloads & Verification
 All installer binaries and signatures are signed with the HermOS Tauri release key. Download the installer for your platform below.`;
@@ -190,6 +189,7 @@ async function updateLatestJson(releaseId) {
       if (lower.includes("darwin") || lower.includes(".app.tar.gz") || lower.includes("universal.dmg")) {
         latest.platforms["darwin-x86_64"] = { signature, url: downloadUrl };
         latest.platforms["darwin-aarch64"] = { signature, url: downloadUrl };
+        latest.platforms["darwin-universal"] = { signature, url: downloadUrl };
       }
       if (lower.endsWith(".deb") || lower.endsWith(".appimage")) {
         latest.platforms["linux-x86_64"] = { signature, url: downloadUrl };
