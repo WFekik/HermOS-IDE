@@ -121,9 +121,6 @@ jobs:
         condition: succeeded()
         env:
           SIGNPATH_API_TOKEN: $(SIGNPATH_API_TOKEN)
-          SIGNPATH_ORGANIZATION_ID: $(SIGNPATH_ORGANIZATION_ID)
-          SIGNPATH_PROJECT_SLUG: $(SIGNPATH_PROJECT_SLUG)
-          SIGNPATH_POLICY_SLUG: $(SIGNPATH_POLICY_SLUG)
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
         condition: succeeded()
