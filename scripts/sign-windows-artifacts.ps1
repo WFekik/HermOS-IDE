@@ -1,13 +1,12 @@
 # Mandatory Automated Windows binary signing via official SignPath PowerShell Module for CI release pipelines.
-# Packages installer binaries into a temporary zip, submits to SignPath, and extracts signed binaries in-place.
+# Signs installer binaries in-place using official SignPath CI configuration.
 # BLOCKS release if signing fails.
 
 param(
     [string]$ApiToken = $env:SIGNPATH_API_TOKEN,
     [string]$OrganizationId = $(if ($env:SIGNPATH_ORGANIZATION_ID) { $env:SIGNPATH_ORGANIZATION_ID } else { "1390df68-6835-4914-86af-c378938047b4" }),
     [string]$ProjectSlug = $(if ($env:SIGNPATH_PROJECT_SLUG) { $env:SIGNPATH_PROJECT_SLUG } else { "HermOS-IDE" }),
-    [string]$PolicySlug = $(if ($env:SIGNPATH_POLICY_SLUG) { $env:SIGNPATH_POLICY_SLUG } else { "Release_signing" }),
-    [string]$ArtifactConfigurationSlug = $(if ($env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG) { $env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG } else { "initial-version" })
+    [string]$PolicySlug = $(if ($env:SIGNPATH_POLICY_SLUG) { $env:SIGNPATH_POLICY_SLUG } else { "Release_signing" })
 )
 
 if (-not $ApiToken) {
@@ -49,42 +48,22 @@ if ($targetFiles.Count -eq 0) {
 
 Write-Host "[SignPath] Found $($targetFiles.Count) Windows binary installer(s) to sign."
 
-$tempDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "HermOS_SignPath_" + [System.Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-try {
-    foreach ($file in $targetFiles) {
-        Write-Host "`n[SignPath] Packaging $($file.Name) into signing container..."
-        $inputZip = [System.IO.Path]::Combine($tempDir, "input_$($file.Name).zip")
-        $outputZip = [System.IO.Path]::Combine($tempDir, "output_$($file.Name).zip")
-        $extractDir = [System.IO.Path]::Combine($tempDir, "extract_$($file.Name)")
-
-        Compress-Archive -Path $file.FullName -DestinationPath $inputZip -Force
-
-        Write-Host "[SignPath] Submitting $($file.Name) container to SignPath..."
-        try {
-            Submit-SigningRequest -InputArtifactPath $inputZip -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -ArtifactConfigurationSlug $ArtifactConfigurationSlug -OutputArtifactPath $outputZip -WaitForCompletion -Force
-        } catch {
-            Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
-            exit 1
-        }
-
-        Write-Host "[SignPath] Extracting signed $($file.Name) from container..."
-        New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-        Expand-Archive -Path $outputZip -DestinationPath $extractDir -Force
-
-        $signedBinary = Get-ChildItem -Path $extractDir -Filter $file.Name -Recurse | Select-Object -First 1
-        if (-not $signedBinary) {
-            Write-Error "[SignPath] FATAL: Signed binary $($file.Name) was not found in returned SignPath archive."
-            exit 1
-        }
-
-        Copy-Item -Path $signedBinary.FullName -Destination $file.FullName -Force
-        Write-Host "[SignPath] Successfully verified and replaced $($file.Name) with Authenticode signed binary!"
-    }
-} finally {
-    if (Test-Path $tempDir) {
-        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($file in $targetFiles) {
+    Write-Host "`n[SignPath] Submitting $($file.Name) to SignPath for mandatory Authenticode signing..."
+    try {
+        Submit-SigningRequest `
+            -InputArtifactPath $file.FullName `
+            -ApiToken $ApiToken `
+            -OrganizationId $OrganizationId `
+            -ProjectSlug $ProjectSlug `
+            -SigningPolicySlug $PolicySlug `
+            -OutputArtifactPath $file.FullName `
+            -WaitForCompletion `
+            -Force
+        Write-Host "[SignPath] Successfully signed $($file.Name) with Authenticode certificate!"
+    } catch {
+        Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
+        exit 1
     }
 }
 
