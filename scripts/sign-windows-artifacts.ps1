@@ -4,9 +4,9 @@
 
 param(
     [string]$ApiToken = $env:SIGNPATH_API_TOKEN,
-    [string]$OrganizationId = $(if ($env:SIGNPATH_ORGANIZATION_ID -and -not $env:SIGNPATH_ORGANIZATION_ID.StartsWith("$(")) { $env:SIGNPATH_ORGANIZATION_ID } else { "1390df68-6835-4914-86af-c378938047b4" }),
-    [string]$ProjectSlug = $(if ($env:SIGNPATH_PROJECT_SLUG -and -not $env:SIGNPATH_PROJECT_SLUG.StartsWith("$(")) { $env:SIGNPATH_PROJECT_SLUG } else { "HermOS-IDE" }),
-    [string]$PolicySlug = $(if ($env:SIGNPATH_POLICY_SLUG -and -not $env:SIGNPATH_POLICY_SLUG.StartsWith("$(")) { $env:SIGNPATH_POLICY_SLUG } else { "Release_signing" })
+    [string]$OrganizationId = "1390df68-6835-4914-86af-c378938047b4",
+    [string]$ProjectSlug = "HermOS-IDE",
+    [string]$PolicySlug = "Release_signing"
 )
 
 if (-not $ApiToken) {
