@@ -117,7 +117,6 @@ jobs:
           TAURI_ENV_PLATFORM: "win32"
       - script: powershell -ExecutionPolicy Bypass -File scripts/sign-windows-artifacts.ps1
         displayName: "Sign Windows Artifacts (SignPath)"
-        continueOnError: true
         condition: succeeded()
         env:
           SIGNPATH_API_TOKEN: $(SIGNPATH_API_TOKEN)

@@ -1,5 +1,6 @@
-# Automated Windows binary signing via official SignPath PowerShell Module for CI release pipelines.
+# Mandatory Automated Windows binary signing via official SignPath PowerShell Module for CI release pipelines.
 # Packages installer binaries into a temporary zip container, submits to SignPath, and extracts signed binaries in-place.
+# BLOCKS release if signing fails.
 
 param(
     [string]$ApiToken = $env:SIGNPATH_API_TOKEN,
@@ -9,8 +10,8 @@ param(
 )
 
 if (-not $ApiToken) {
-    Write-Warning "[SignPath] SIGNPATH_API_TOKEN is not configured! Skipping Windows Authenticode signing."
-    exit 0
+    Write-Error "[SignPath] FATAL: SIGNPATH_API_TOKEN is not configured! Mandatory Windows code signing cannot proceed."
+    exit 1
 }
 
 Write-Host "[SignPath] Installing and loading official SignPath PowerShell module..."
@@ -21,8 +22,8 @@ try {
     Import-Module SignPath -ErrorAction Stop
     Write-Host "[SignPath] Module loaded successfully."
 } catch {
-    Write-Warning "[SignPath] Failed to install or import SignPath PowerShell module: $_"
-    exit 0
+    Write-Error "[SignPath] FATAL: Failed to install or import SignPath PowerShell module: $_"
+    exit 1
 }
 
 $bundleDirs = @(
@@ -41,8 +42,8 @@ foreach ($dir in $bundleDirs) {
 }
 
 if ($targetFiles.Count -eq 0) {
-    Write-Warning "[SignPath] No Windows installer files (.exe or .msi) found to sign."
-    exit 0
+    Write-Error "[SignPath] FATAL: No Windows installer files (.exe or .msi) found to sign."
+    exit 1
 }
 
 Write-Host "[SignPath] Found $($targetFiles.Count) Windows binary installer(s) to sign."
@@ -83,11 +84,13 @@ foreach ($file in $targetFiles) {
                 Copy-Item -Path $signedBinary.FullName -Destination $file.FullName -Force
                 Write-Host "[SignPath] Successfully signed and replaced $($file.Name) with Authenticode signed binary!"
             } else {
-                Write-Warning "[SignPath] Could not find $($file.Name) in returned container, keeping original build."
+                Write-Error "[SignPath] FATAL: Could not find $($file.Name) in returned container archive."
+                exit 1
             }
         }
     } catch {
-        Write-Warning "[SignPath] Code signing failed for $($file.Name): $_"
+        Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
+        exit 1
     } finally {
         if (Test-Path $tempZipIn) { Remove-Item $tempZipIn -Force -ErrorAction SilentlyContinue }
         if (Test-Path $tempZipOut) { Remove-Item $tempZipOut -Force -ErrorAction SilentlyContinue }
@@ -95,5 +98,5 @@ foreach ($file in $targetFiles) {
     }
 }
 
-Write-Host "`n[SignPath] Windows binary signing process completed."
+Write-Host "`n[SignPath] All Windows artifacts successfully signed with Authenticode certificate."
 exit 0
