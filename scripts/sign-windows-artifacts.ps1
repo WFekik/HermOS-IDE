@@ -6,7 +6,8 @@ param(
     [string]$ApiToken = $env:SIGNPATH_API_TOKEN,
     [string]$OrganizationId = $(if ($env:SIGNPATH_ORGANIZATION_ID) { $env:SIGNPATH_ORGANIZATION_ID } else { "1390df68-6835-4914-86af-c378938047b4" }),
     [string]$ProjectSlug = $(if ($env:SIGNPATH_PROJECT_SLUG) { $env:SIGNPATH_PROJECT_SLUG } else { "HermOS-IDE" }),
-    [string]$PolicySlug = $(if ($env:SIGNPATH_POLICY_SLUG) { $env:SIGNPATH_POLICY_SLUG } else { "Release_signing" })
+    [string]$PolicySlug = $(if ($env:SIGNPATH_POLICY_SLUG) { $env:SIGNPATH_POLICY_SLUG } else { "Release_signing" }),
+    [string]$ArtifactConfigurationSlug = $(if ($env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG) { $env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG } else { "initial-version" })
 )
 
 if (-not $ApiToken) {
@@ -62,7 +63,7 @@ try {
 
         Write-Host "[SignPath] Submitting $($file.Name) container to SignPath..."
         try {
-            Submit-SigningRequest -InputArtifactPath $inputZip -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -OutputArtifactPath $outputZip -WaitForCompletion -Force
+            Submit-SigningRequest -InputArtifactPath $inputZip -ApiToken $ApiToken -OrganizationId $OrganizationId -ProjectSlug $ProjectSlug -SigningPolicySlug $PolicySlug -ArtifactConfigurationSlug $ArtifactConfigurationSlug -OutputArtifactPath $outputZip -WaitForCompletion -Force
         } catch {
             Write-Error "[SignPath] FATAL: Mandatory Authenticode signing failed for $($file.Name): $_"
             exit 1
