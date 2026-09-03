@@ -688,6 +688,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
               )}
               <Textarea
                 ref={taRef}
+                id="hermos-chat-composer"
+                data-composer="true"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKeyDown}

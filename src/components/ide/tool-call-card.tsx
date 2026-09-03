@@ -196,6 +196,12 @@ export function FileTypeIcon({ ext, className }: { ext: string; className?: stri
 function handleOpenFile(filePath: string, line?: number) {
   if (!filePath) return;
   const store = useAppStore.getState();
+  if (/\.(pptx|docx|pdf)$/i.test(filePath)) {
+    store.openFileTab(filePath);
+    store.setRightPanelTab("office");
+    store.setRightPanelOpen(true);
+    return;
+  }
   store.openFileTab(filePath);
   store.setRightPanelTab("files");
   store.setRightPanelOpen(true);

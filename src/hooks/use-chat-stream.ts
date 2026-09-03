@@ -339,6 +339,12 @@ export function useChatStream(): UseChatStreamReturn {
         flushPending();
         store.finishToolCall(evt.toolCallId, evt.result, evt.ok, convId);
         void store.refreshSubagents(convId);
+        if (evt.result && typeof evt.result === "object" && "manifest" in (evt.result as any)) {
+          const manifest = (evt.result as any).manifest;
+          store.setActiveOfficeDoc(manifest);
+          store.setRightPanelTab("office");
+          store.setRightPanelOpen(true);
+        }
         break;
       }
       case "tool_call_end": {

@@ -1,10 +1,24 @@
 import path from "path";
 import fs from "fs/promises";
-import { createWriteStream } from "fs";
+import { existsSync, createWriteStream, readFileSync } from "fs";
 import { safePath } from "@/lib/workspace";
+import {
+  type OfficeDocType,
+  type OfficeThemeId,
+  type SlideLayout,
+  type PptSlide,
+  type DocSection,
+  type PdfSection,
+  type DocCoverPage,
+  type OfficeDocManifest,
+} from "./types";
+import {
+  resolveOfficeTheme,
+  hexToRgbTuple,
+  OFFICE_THEMES,
+} from "./themes";
 
 // Lazy dynamic imports for heavy document generation libraries.
-// These are only loaded when actually needed, avoiding startup bundle bloat.
 async function loadPptxGenJS() {
   const mod = await import("pptxgenjs");
   return mod.default;
@@ -17,66 +31,42 @@ async function loadPDFKit() {
   return mod.default;
 }
 
-/**
- * Office document generation (.pptx, .docx, .pdf) using pptxgenjs, docx, and pdfkit.
- * Validates paths via `safePath` and enforces caps on slide and section counts.
- */
-
-/** Emerald accent (matches the workspace brand color). Hex `#10b981`. */
-const EMERALD = "10B981";
-const EMERALD_DARK = "047857";
-const TEXT_DARK = "1F2937";
-const TEXT_MUTED = "6B7280";
-const PAGE_BG = "FFFFFF";
-
-/** Hard cap on slide / section counts to keep generation bounded. */
-export const MAX_SLIDES = 200;
-export const MAX_SECTIONS = 200;
-/** Cap on per-bullet / per-paragraph text length. */
-const MAX_BULLET_LEN = 1000;
-const MAX_PARA_LEN = 8000;
-/** Cap on the title text length. */
-const MAX_TITLE_LEN = 200;
-/** Cap on per-heading text length. */
-const MAX_HEADING_LEN = 200;
-
-export type PptTheme = "professional" | "modern" | "minimal";
-
-export interface PptSlide {
-  title: string;
-  bullets: string[];
-  notes?: string;
-}
-
-export interface DocSection {
-  heading: string;
-  paragraphs: string[];
-}
-
-export interface PdfSection {
-  heading: string;
-  paragraphs: string[];
-}
+/** Hard caps to keep generation bounded and responsive. */
+export const MAX_SLIDES = 100;
+export const MAX_SECTIONS = 100;
+const MAX_BULLET_LEN = 2000;
+const MAX_PARA_LEN = 10_000;
+const MAX_TITLE_LEN = 300;
+const MAX_HEADING_LEN = 300;
 
 export interface GeneratePptOpts {
   title: string;
+  subtitle?: string;
   slides: PptSlide[];
-  theme?: PptTheme;
-  /** Absolute path inside the workspace where the .pptx will be written. */
+  theme?: OfficeThemeId;
+  author?: string;
   outputPath: string;
 }
 
 export interface GenerateDocOpts {
   title: string;
+  subtitle?: string;
+  author?: string;
+  organization?: string;
+  coverPage?: boolean | DocCoverPage;
   sections: DocSection[];
-  /** Absolute path inside the workspace where the .docx will be written. */
+  theme?: OfficeThemeId;
   outputPath: string;
 }
 
 export interface GeneratePdfOpts {
   title: string;
-  sections: PdfSection[];
-  /** Absolute path inside the workspace where the .pdf will be written. */
+  subtitle?: string;
+  author?: string;
+  organization?: string;
+  coverPage?: boolean | DocCoverPage;
+  sections: DocSection[];
+  theme?: OfficeThemeId;
   outputPath: string;
 }
 
@@ -93,6 +83,35 @@ export async function resolveOutputPath(
   return abs;
 }
 
+export function getManifestPath(binaryPath: string): string {
+  const dir = path.dirname(binaryPath);
+  const base = path.basename(binaryPath);
+  return path.join(dir, `.${base}.hermos-office.json`);
+}
+
+export async function saveOfficeManifest(manifest: OfficeDocManifest): Promise<void> {
+  try {
+    const manifestPath = getManifestPath(manifest.path);
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+  } catch (err) {
+    console.warn("[saveOfficeManifest] Failed to save companion manifest:", err);
+  }
+}
+
+export async function readOfficeManifest(binaryOrManifestPath: string): Promise<OfficeDocManifest | null> {
+  try {
+    const targetPath = binaryOrManifestPath.endsWith(".hermos-office.json")
+      ? binaryOrManifestPath
+      : getManifestPath(binaryOrManifestPath);
+
+    if (!existsSync(targetPath)) return null;
+    const content = await fs.readFile(targetPath, "utf8");
+    return JSON.parse(content) as OfficeDocManifest;
+  } catch {
+    return null;
+  }
+}
+
 function clip(s: string, max: number): string {
   if (typeof s !== "string") return "";
   if (s.length <= max) return s;
@@ -100,169 +119,661 @@ function clip(s: string, max: number): string {
 }
 
 function cleanSlides(slides: PptSlide[]): PptSlide[] {
-  return slides.slice(0, MAX_SLIDES).map((s) => ({
-    title: clip(String(s.title || "").trim(), MAX_TITLE_LEN) || "Untitled slide",
+  return slides.slice(0, MAX_SLIDES).map((s, idx) => ({
+    id: s.id || `slide-${idx + 1}`,
+    title: clip(String(s.title || "").trim(), MAX_TITLE_LEN) || `Slide ${idx + 1}`,
+    subtitle: s.subtitle ? clip(String(s.subtitle).trim(), MAX_TITLE_LEN) : undefined,
+    layout: s.layout || (idx === 0 && !s.bullets?.length && !s.cards?.length ? "title" : "bullets"),
     bullets: Array.isArray(s.bullets)
-      ? s.bullets
-          .map((b) => clip(String(b || "").trim(), MAX_BULLET_LEN))
-          .filter((b) => b.length > 0)
-          .slice(0, 30)
+      ? s.bullets.map((b) => clip(String(b || "").trim(), MAX_BULLET_LEN)).filter((b) => b.length > 0).slice(0, 20)
       : [],
+    cards: Array.isArray(s.cards)
+      ? s.cards.slice(0, 6).map((c) => ({
+          title: clip(String(c.title || "").trim(), 100),
+          description: clip(String(c.description || "").trim(), 500),
+          value: c.value ? clip(String(c.value).trim(), 40) : undefined,
+          badge: c.badge ? clip(String(c.badge).trim(), 40) : undefined,
+          icon: c.icon ? clip(String(c.icon).trim(), 40) : undefined,
+        }))
+      : undefined,
+    columns: Array.isArray(s.columns)
+      ? s.columns.slice(0, 2).map((col) => ({
+          heading: clip(String(col.heading || "").trim(), 100),
+          bullets: Array.isArray(col.bullets)
+            ? col.bullets.map((b) => clip(String(b || "").trim(), 500)).filter(Boolean).slice(0, 10)
+            : [],
+        }))
+      : undefined,
+    image: s.image
+      ? {
+          path: String(s.image.path || "").trim(),
+          alt: s.image.alt ? clip(String(s.image.alt).trim(), 100) : undefined,
+          caption: s.image.caption ? clip(String(s.image.caption).trim(), 200) : undefined,
+          position: s.image.position || "right",
+        }
+      : undefined,
+    table: s.table && Array.isArray(s.table.headers) && Array.isArray(s.table.rows)
+      ? {
+          headers: s.table.headers.slice(0, 8).map((h) => clip(String(h).trim(), 80)),
+          rows: s.table.rows.slice(0, 15).map((row) =>
+            (Array.isArray(row) ? row : []).slice(0, 8).map((cell) => clip(String(cell).trim(), 200))
+          ),
+        }
+      : undefined,
+    steps: Array.isArray(s.steps)
+      ? s.steps.slice(0, 5).map((st, sIdx) => ({
+          step: clip(String(st.step || `0${sIdx + 1}`).trim(), 10),
+          title: clip(String(st.title || "").trim(), 100),
+          description: clip(String(st.description || "").trim(), 400),
+        }))
+      : undefined,
+    quote: s.quote
+      ? {
+          text: clip(String(s.quote.text || "").trim(), 1000),
+          author: s.quote.author ? clip(String(s.quote.author).trim(), 100) : undefined,
+          role: s.quote.role ? clip(String(s.quote.role).trim(), 100) : undefined,
+        }
+      : undefined,
     notes: s.notes ? clip(String(s.notes), MAX_PARA_LEN) : undefined,
+    accentColor: s.accentColor,
   }));
 }
 
 function cleanSections(sections: DocSection[]): DocSection[] {
-  return sections.slice(0, MAX_SECTIONS).map((sec) => ({
-    heading: clip(String(sec.heading || "").trim(), MAX_HEADING_LEN) || "Untitled section",
+  return sections.slice(0, MAX_SECTIONS).map((sec, idx) => ({
+    id: sec.id || `section-${idx + 1}`,
+    heading: clip(String(sec.heading || "").trim(), MAX_HEADING_LEN) || `Section ${idx + 1}`,
+    subheading: sec.subheading ? clip(String(sec.subheading).trim(), MAX_HEADING_LEN) : undefined,
     paragraphs: Array.isArray(sec.paragraphs)
-      ? sec.paragraphs
-          .map((p) => clip(String(p || "").trim(), MAX_PARA_LEN))
-          .filter((p) => p.length > 0)
-          .slice(0, 50)
+      ? sec.paragraphs.map((p) => clip(String(p || "").trim(), MAX_PARA_LEN)).filter((p) => p.length > 0).slice(0, 40)
       : [],
+    bullets: Array.isArray(sec.bullets)
+      ? sec.bullets.map((b) => clip(String(b || "").trim(), MAX_BULLET_LEN)).filter(Boolean).slice(0, 25)
+      : undefined,
+    callout: sec.callout
+      ? {
+          type: sec.callout.type || "info",
+          title: sec.callout.title ? clip(String(sec.callout.title).trim(), 100) : undefined,
+          text: clip(String(sec.callout.text || "").trim(), 2000),
+        }
+      : undefined,
+    table: sec.table && Array.isArray(sec.table.headers) && Array.isArray(sec.table.rows)
+      ? {
+          headers: sec.table.headers.slice(0, 8).map((h) => clip(String(h).trim(), 80)),
+          rows: sec.table.rows.slice(0, 20).map((row) =>
+            (Array.isArray(row) ? row : []).slice(0, 8).map((cell) => clip(String(cell).trim(), 200))
+          ),
+        }
+      : undefined,
+    metrics: Array.isArray(sec.metrics)
+      ? sec.metrics.slice(0, 4).map((m) => ({
+          label: clip(String(m.label || "").trim(), 80),
+          value: clip(String(m.value || "").trim(), 40),
+          change: m.change ? clip(String(m.change).trim(), 40) : undefined,
+        }))
+      : undefined,
+    image: sec.image
+      ? {
+          path: String(sec.image.path || "").trim(),
+          caption: sec.image.caption ? clip(String(sec.image.caption).trim(), 200) : undefined,
+        }
+      : undefined,
   }));
 }
 
 /**
- * Generate a styled .pptx presentation at outputPath supporting themes and speaker notes.
- * Returns written file path and content slide count.
+ * High-fidelity PowerPoint generator (.pptx) supporting 8 distinct slide layouts,
+ * executive theme palettes, KPI cards, tables, split comparisons, images, and notes.
  */
 export async function generatePpt(
   opts: GeneratePptOpts,
-): Promise<{ path: string; slides: number }> {
-  const title = clip(String(opts.title || "Untitled").trim(), MAX_TITLE_LEN);
+): Promise<{ path: string; slides: number; manifest: OfficeDocManifest }> {
+  const title = clip(String(opts.title || "Executive Presentation").trim(), MAX_TITLE_LEN);
+  const subtitle = opts.subtitle ? clip(String(opts.subtitle).trim(), MAX_TITLE_LEN) : undefined;
   const slides = cleanSlides(opts.slides || []);
-  const theme: PptTheme =
-    opts.theme === "modern" || opts.theme === "minimal" ? opts.theme : "professional";
+  const theme = resolveOfficeTheme(opts.theme);
 
   const PptxGenJS = await loadPptxGenJS();
   const pptx = new PptxGenJS();
-  pptx.author = "HermOS";
+  pptx.layout = "LAYOUT_16x9";
+  pptx.author = opts.author || "HermOS AI Studio";
   pptx.company = "HermOS";
   pptx.subject = title;
   pptx.title = title;
 
-  const accent = theme === "minimal" ? TEXT_DARK : EMERALD;
-  const bg = theme === "modern" ? "F9FAFB" : PAGE_BG;
+  const totalSlides = slides.length;
 
-  const titleSlide = pptx.addSlide();
-  titleSlide.background = { color: bg };
-  if (theme !== "minimal") {
-    // Emerald banner across the top of the title slide.
-    titleSlide.addShape("rect", {
-      x: 0,
-      y: 0,
-      w: "100%",
-      h: 1.4,
-      fill: { color: accent },
-      line: { color: accent, width: 0 },
-    });
-  }
-  titleSlide.addText(title, {
-    x: 0.5,
-    y: theme === "minimal" ? 1.5 : 1.7,
-    w: "90%",
-    h: 2.0,
-    align: "center",
-    bold: true,
-    color: TEXT_DARK,
-    fontSize: theme === "minimal" ? 32 : 40,
-    fontFace: "Calibri",
-  });
-  const subtitle = `${slides.length} slide${slides.length === 1 ? "" : "s"} • Generated by HermOS`;
-  titleSlide.addText(subtitle, {
-    x: 0.5,
-    y: theme === "minimal" ? 3.2 : 3.6,
-    w: "90%",
-    h: 0.6,
-    align: "center",
-    color: TEXT_MUTED,
-    fontSize: 16,
-    italic: true,
-    fontFace: "Calibri",
-  });
-
-  for (const slide of slides) {
+  for (let i = 0; i < slides.length; i++) {
+    const sData = slides[i];
     const s = pptx.addSlide();
-    s.background = { color: PAGE_BG };
+    const isFirst = i === 0;
+    const isTitleLayout = sData.layout === "title" || (isFirst && totalSlides > 1 && sData.layout !== "cards");
 
-    // Thin accent bar at the top of each content slide.
-    s.addShape("rect", {
-      x: 0,
-      y: 0,
-      w: "100%",
-      h: 0.18,
-      fill: { color: accent },
-      line: { color: accent, width: 0 },
-    });
+    // Set background color based on theme
+    s.background = { color: isTitleLayout && theme.isDarkTheme ? theme.primaryDark : theme.bg };
 
-    s.addText(slide.title, {
-      x: 0.5,
-      y: 0.4,
-      w: "90%",
-      h: 0.8,
-      bold: true,
-      color: TEXT_DARK,
-      fontSize: 26,
-      fontFace: "Calibri",
-    });
-
-    // Bullets. We pass an array of TextProps so each bullet carries its own
-    // `bullet: true` + `breakLine: true` styling.
-    if (slide.bullets.length > 0) {
-      const bulletItems = slide.bullets.map((b) => ({
-        text: b,
-        options: {
-          bullet: true,
-          color: TEXT_DARK,
-          fontSize: 18,
-          fontFace: "Calibri",
-          breakLine: true,
-        },
-      }));
-      s.addText(bulletItems, {
+    // Slide footer & page numbering (except cover)
+    if (!isTitleLayout) {
+      s.addShape("rect", {
         x: 0.6,
+        y: 7.0,
+        w: 12.13,
+        h: 0.02,
+        fill: { color: theme.border },
+        line: { color: theme.border, width: 0 },
+      });
+      s.addText(`${title} • HermOS Office`, {
+        x: 0.6,
+        y: 7.05,
+        w: 8.0,
+        h: 0.35,
+        fontSize: 10,
+        color: theme.textMuted,
+        fontFace: "Calibri",
+      });
+      s.addText(`${i + 1} / ${totalSlides}`, {
+        x: 10.0,
+        y: 7.05,
+        w: 2.73,
+        h: 0.35,
+        align: "right",
+        fontSize: 10,
+        color: theme.textMuted,
+        fontFace: "Calibri",
+      });
+    }
+
+    if (isTitleLayout) {
+      // ===== COVER SLIDE LAYOUT =====
+      // Top executive accent bar
+      s.addShape("rect", {
+        x: 0,
+        y: 0,
+        w: "100%",
+        h: 0.35,
+        fill: { color: theme.primary },
+        line: { color: theme.primary, width: 0 },
+      });
+
+      // Subtle decorative accent block
+      s.addShape("rect", {
+        x: 0.8,
+        y: 1.5,
+        w: 0.15,
+        h: 2.4,
+        fill: { color: theme.accent },
+        line: { color: theme.accent, width: 0 },
+      });
+
+      s.addText(sData.title || title, {
+        x: 1.2,
         y: 1.4,
-        w: "90%",
-        h: 4.6,
-        valign: "top",
-        color: TEXT_DARK,
+        w: 10.5,
+        h: 1.8,
+        bold: true,
+        fontSize: 40,
+        color: theme.textDark,
+        fontFace: "Calibri",
+      });
+
+      const coverSub = sData.subtitle || subtitle || `${totalSlides} Slides • Prepared with HermOS AI`;
+      s.addText(coverSub, {
+        x: 1.2,
+        y: 3.2,
+        w: 10.5,
+        h: 0.8,
+        fontSize: 18,
+        color: theme.secondary,
+        fontFace: "Calibri",
+      });
+
+      // Metadata pill badge
+      s.addShape("roundRect", {
+        x: 1.2,
+        y: 4.8,
+        w: 4.5,
+        h: 0.6,
+        rectRadius: 0.1,
+        fill: { color: theme.cardBg },
+        line: { color: theme.border, width: 1 },
+      });
+      s.addText(`Author: ${opts.author || "HermOS AI"}  •  ${new Date().toLocaleDateString()}`, {
+        x: 1.4,
+        y: 4.9,
+        w: 4.1,
+        h: 0.4,
+        fontSize: 11,
+        color: theme.textMuted,
+        fontFace: "Calibri",
       });
     } else {
-      s.addText("(no bullet points)", {
+      // Header for content slides
+      s.addShape("rect", {
         x: 0.6,
-        y: 1.4,
-        w: "90%",
-        h: 0.5,
-        color: TEXT_MUTED,
-        italic: true,
-        fontSize: 14,
+        y: 0.5,
+        w: 0.12,
+        h: 0.55,
+        fill: { color: sData.accentColor || theme.primary },
+        line: { color: sData.accentColor || theme.primary, width: 0 },
       });
+
+      s.addText(sData.title, {
+        x: 0.9,
+        y: 0.45,
+        w: 11.5,
+        h: 0.65,
+        bold: true,
+        fontSize: 24,
+        color: theme.textDark,
+        fontFace: "Calibri",
+      });
+
+      if (sData.subtitle) {
+        s.addText(sData.subtitle, {
+          x: 0.9,
+          y: 1.05,
+          w: 11.5,
+          h: 0.4,
+          fontSize: 13,
+          color: theme.textMuted,
+          fontFace: "Calibri",
+        });
+      }
+
+      const contentY = sData.subtitle ? 1.55 : 1.35;
+
+      // Layout Dispatcher
+      if (sData.layout === "cards" && sData.cards && sData.cards.length > 0) {
+        // ===== KPI / FEATURE CARDS LAYOUT =====
+        const count = Math.min(sData.cards.length, 4);
+        const cardW = count === 2 ? 5.5 : count === 3 ? 3.6 : 2.7;
+        const gap = 0.3;
+        const totalW = count * cardW + (count - 1) * gap;
+        const startX = 0.6 + Math.max(0, (12.13 - totalW) / 2);
+
+        for (let cIdx = 0; cIdx < count; cIdx++) {
+          const card = sData.cards[cIdx];
+          const cx = startX + cIdx * (cardW + gap);
+
+          s.addShape("roundRect", {
+            x: cx,
+            y: contentY + 0.2,
+            w: cardW,
+            h: 4.6,
+            rectRadius: 0.12,
+            fill: { color: theme.cardBg },
+            line: { color: theme.border, width: 1 },
+          });
+
+          // Card top accent line
+          s.addShape("rect", {
+            x: cx + 0.3,
+            y: contentY + 0.45,
+            w: 0.8,
+            h: 0.05,
+            fill: { color: theme.primary },
+            line: { color: theme.primary, width: 0 },
+          });
+
+          if (card.value) {
+            s.addText(card.value, {
+              x: cx + 0.3,
+              y: contentY + 0.65,
+              w: cardW - 0.6,
+              h: 0.8,
+              bold: true,
+              fontSize: 32,
+              color: theme.primary,
+              fontFace: "Calibri",
+            });
+          }
+
+          if (card.badge) {
+            s.addShape("roundRect", {
+              x: cx + 0.3,
+              y: contentY + (card.value ? 1.5 : 0.65),
+              w: Math.min(cardW - 0.6, 2.0),
+              h: 0.35,
+              rectRadius: 0.06,
+              fill: { color: theme.tagBg },
+              line: { color: theme.accent, width: 1 },
+            });
+            s.addText(card.badge, {
+              x: cx + 0.4,
+              y: contentY + (card.value ? 1.52 : 0.67),
+              w: Math.min(cardW - 0.8, 1.8),
+              h: 0.3,
+              fontSize: 10,
+              bold: true,
+              color: theme.primaryDark,
+              fontFace: "Calibri",
+            });
+          }
+
+          const titleY = contentY + (card.value ? (card.badge ? 2.0 : 1.6) : (card.badge ? 1.15 : 0.65));
+          s.addText(card.title, {
+            x: cx + 0.3,
+            y: titleY,
+            w: cardW - 0.6,
+            h: 0.6,
+            bold: true,
+            fontSize: 16,
+            color: theme.textDark,
+            fontFace: "Calibri",
+          });
+
+          s.addText(card.description, {
+            x: cx + 0.3,
+            y: titleY + 0.6,
+            w: cardW - 0.6,
+            h: 2.2,
+            fontSize: 12,
+            color: theme.textMuted,
+            fontFace: "Calibri",
+          });
+        }
+      } else if (sData.layout === "split" && sData.columns && sData.columns.length === 2) {
+        // ===== 2-COLUMN SPLIT COMPARISON =====
+        const colW = 5.7;
+        for (let colIdx = 0; colIdx < 2; colIdx++) {
+          const col = sData.columns[colIdx];
+          const cx = 0.6 + colIdx * 6.3;
+
+          s.addShape("roundRect", {
+            x: cx,
+            y: contentY + 0.1,
+            w: colW,
+            h: 4.8,
+            rectRadius: 0.1,
+            fill: { color: theme.cardBg },
+            line: { color: theme.border, width: 1 },
+          });
+
+          s.addText(col.heading, {
+            x: cx + 0.4,
+            y: contentY + 0.3,
+            w: colW - 0.8,
+            h: 0.5,
+            bold: true,
+            fontSize: 18,
+            color: colIdx === 0 ? theme.primary : theme.secondary,
+            fontFace: "Calibri",
+          });
+
+          const bulletItems = col.bullets.map((b) => ({
+            text: b,
+            options: { fontSize: 13, color: theme.textDark, bullet: true, spacing: { after: 12 } },
+          }));
+          s.addText(bulletItems, {
+            x: cx + 0.4,
+            y: contentY + 0.9,
+            w: colW - 0.8,
+            h: 3.8,
+            fontFace: "Calibri",
+          });
+        }
+      } else if (sData.layout === "table" && sData.table && sData.table.headers) {
+        // ===== DATA TABLE LAYOUT =====
+        const headers = sData.table.headers;
+        const rows = sData.table.rows || [];
+        const tableRows: any[] = [];
+
+        // Header row
+        tableRows.push(
+          headers.map((h) => ({
+            text: h,
+            options: {
+              bold: true,
+              color: "FFFFFF",
+              fill: { color: theme.primary },
+              fontSize: 12,
+              align: "center",
+            },
+          }))
+        );
+
+        // Data rows
+        for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+          const row = rows[rIdx];
+          const isEven = rIdx % 2 === 0;
+          tableRows.push(
+            row.map((cell) => ({
+              text: cell,
+              options: {
+                color: theme.textDark,
+                fill: { color: isEven ? theme.bg : theme.cardBg },
+                fontSize: 11,
+              },
+            }))
+          );
+        }
+
+        s.addTable(tableRows, {
+          x: 0.8,
+          y: contentY + 0.2,
+          w: 11.73,
+          border: { pt: 0.5, color: theme.border },
+          autoPage: false,
+        });
+      } else if (sData.layout === "quote" && sData.quote) {
+        // ===== IMPACT QUOTE LAYOUT =====
+        s.addShape("rect", {
+          x: 1.5,
+          y: contentY + 0.6,
+          w: 0.15,
+          h: 2.8,
+          fill: { color: theme.accent },
+          line: { color: theme.accent, width: 0 },
+        });
+
+        s.addText(`“${sData.quote.text}”`, {
+          x: 1.9,
+          y: contentY + 0.5,
+          w: 9.5,
+          h: 2.2,
+          italic: true,
+          fontSize: 24,
+          color: theme.textDark,
+          fontFace: "Calibri",
+        });
+
+        const attribution = sData.quote.role
+          ? `— ${sData.quote.author || "Anonymous"}, ${sData.quote.role}`
+          : `— ${sData.quote.author || "Anonymous"}`;
+        s.addText(attribution, {
+          x: 1.9,
+          y: contentY + 2.7,
+          w: 9.5,
+          h: 0.5,
+          bold: true,
+          fontSize: 14,
+          color: theme.primary,
+          fontFace: "Calibri",
+        });
+      } else if (sData.layout === "timeline" && sData.steps && sData.steps.length > 0) {
+        // ===== TIMELINE / STEPS LAYOUT =====
+        const stepCount = Math.min(sData.steps.length, 5);
+        const stepW = 11.5 / stepCount;
+
+        for (let stIdx = 0; stIdx < stepCount; stIdx++) {
+          const step = sData.steps[stIdx];
+          const stX = 0.9 + stIdx * stepW;
+
+          // Step circle badge
+          s.addShape("roundRect", {
+            x: stX,
+            y: contentY + 0.3,
+            w: 1.1,
+            h: 0.6,
+            rectRadius: 0.1,
+            fill: { color: theme.primary },
+            line: { color: theme.primary, width: 0 },
+          });
+          s.addText(step.step, {
+            x: stX,
+            y: contentY + 0.38,
+            w: 1.1,
+            h: 0.5,
+            align: "center",
+            bold: true,
+            fontSize: 14,
+            color: "FFFFFF",
+            fontFace: "Calibri",
+          });
+
+          // Step title
+          s.addText(step.title, {
+            x: stX,
+            y: contentY + 1.1,
+            w: stepW - 0.4,
+            h: 0.6,
+            bold: true,
+            fontSize: 15,
+            color: theme.textDark,
+            fontFace: "Calibri",
+          });
+
+          // Step description
+          s.addText(step.description, {
+            x: stX,
+            y: contentY + 1.7,
+            w: stepW - 0.4,
+            h: 2.8,
+            fontSize: 12,
+            color: theme.textMuted,
+            fontFace: "Calibri",
+          });
+        }
+      } else if (sData.layout === "image_split" && sData.image?.path) {
+        // ===== IMAGE SPLIT LAYOUT =====
+        const imgPath = sData.image.path;
+        const hasLocalImg = existsSync(imgPath);
+
+        if (hasLocalImg) {
+          try {
+            s.addImage({
+              path: imgPath,
+              x: 0.8,
+              y: contentY + 0.2,
+              w: 5.2,
+              h: 4.5,
+            });
+          } catch {
+            // Fallback placeholder card
+            s.addShape("roundRect", {
+              x: 0.8,
+              y: contentY + 0.2,
+              w: 5.2,
+              h: 4.5,
+              rectRadius: 0.1,
+              fill: { color: theme.cardBg },
+              line: { color: theme.border, width: 1 },
+            });
+            s.addText(`[Image: ${sData.image.caption || path.basename(imgPath)}]`, {
+              x: 1.0,
+              y: contentY + 2.0,
+              w: 4.8,
+              h: 1.0,
+              align: "center",
+              fontSize: 12,
+              color: theme.textMuted,
+            });
+          }
+        }
+
+        // Bullets on right side
+        const bulletItems = (sData.bullets || []).map((b) => ({
+          text: b,
+          options: { fontSize: 14, color: theme.textDark, bullet: true, spacing: { after: 14 } },
+        }));
+        s.addText(bulletItems, {
+          x: 6.4,
+          y: contentY + 0.3,
+          w: 5.8,
+          h: 4.5,
+          fontFace: "Calibri",
+        });
+      } else {
+        // ===== STANDARD BULLETS LAYOUT (Default) =====
+        const bulletItems = (sData.bullets || []).map((b) => ({
+          text: b,
+          options: {
+            fontSize: 15,
+            color: theme.textDark,
+            bullet: true,
+            spacing: { after: 16 },
+          },
+        }));
+
+        s.addText(bulletItems, {
+          x: 0.9,
+          y: contentY + 0.3,
+          w: 11.5,
+          h: 4.8,
+          fontFace: "Calibri",
+        });
+      }
     }
 
-    if (slide.notes) {
-      s.addNotes(slide.notes);
+    // Speaker notes
+    if (sData.notes) {
+      s.addNotes(sData.notes);
     }
   }
 
-  // Write the .pptx binary to outputPath. `outputType: 'nodebuffer'` returns
-  // a Node Buffer we can write directly with fs.promises.writeFile.
   const out = (await pptx.write({ outputType: "nodebuffer" })) as Buffer;
   await fs.writeFile(opts.outputPath, out);
-  return { path: opts.outputPath, slides: slides.length };
+
+  const manifest: OfficeDocManifest = {
+    version: 1,
+    path: opts.outputPath,
+    type: "presentation",
+    title,
+    subtitle,
+    theme: (opts.theme as OfficeThemeId) || "executive",
+    author: opts.author,
+    slides,
+    updatedAt: Date.now(),
+  };
+  await saveOfficeManifest(manifest);
+
+  return { path: opts.outputPath, slides: slides.length, manifest };
 }
 
-/** Generate formatted .docx document at outputPath with heading hierarchy and body paragraphs. */
+/**
+ * Generate formatted .docx document at outputPath supporting cover pages,
+ * headers/footers with page numbers, callout boxes, tables, and metric summaries.
+ */
 export async function generateDoc(
   opts: GenerateDocOpts,
-): Promise<{ path: string; sections: number }> {
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = await loadDocx();
-  const title = clip(String(opts.title || "Untitled").trim(), MAX_TITLE_LEN);
+): Promise<{ path: string; sections: number; manifest: OfficeDocManifest }> {
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    TextRun,
+    HeadingLevel,
+    AlignmentType,
+    Table,
+    TableRow,
+    TableCell,
+    WidthType,
+    BorderStyle,
+    ShadingType,
+    Header,
+    Footer,
+    PageNumber,
+    ImageRun,
+  } = await loadDocx();
+
+  const title = clip(String(opts.title || "Document").trim(), MAX_TITLE_LEN);
+  const subtitle = opts.subtitle ? clip(String(opts.subtitle).trim(), MAX_TITLE_LEN) : undefined;
   const sections = cleanSections(opts.sections || []);
+  const theme = resolveOfficeTheme(opts.theme);
 
   const children: any[] = [];
 
+  // 1. Cover / Title Header
   children.push(
     new Paragraph({
       heading: HeadingLevel.HEADING_1,
@@ -271,29 +782,47 @@ export async function generateDoc(
         new TextRun({
           text: title,
           bold: true,
-          size: 36, // half-points → 18pt
-          color: TEXT_DARK,
+          size: 44, // 22pt
+          color: theme.primary,
         }),
       ],
-      spacing: { after: 240 },
+      spacing: { before: 240, after: 160 },
     }),
   );
 
+  if (subtitle) {
+    children.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            text: subtitle,
+            italics: true,
+            size: 24, // 12pt
+            color: theme.secondary,
+          }),
+        ],
+        spacing: { after: 240 },
+      }),
+    );
+  }
+
+  // Metadata line
   children.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
       children: [
         new TextRun({
-          text: `Generated by HermOS • ${sections.length} section${sections.length === 1 ? "" : "s"}`,
-          italics: true,
-          color: TEXT_MUTED,
+          text: `Prepared by ${opts.author || "HermOS AI Studio"}${opts.organization ? ` • ${opts.organization}` : ""} • ${new Date().toLocaleDateString()}`,
           size: 20, // 10pt
+          color: theme.textMuted,
         }),
       ],
       spacing: { after: 480 },
     }),
   );
 
+  // 2. Document Sections
   for (const sec of sections) {
     children.push(
       new Paragraph({
@@ -303,34 +832,241 @@ export async function generateDoc(
             text: sec.heading,
             bold: true,
             size: 28, // 14pt
-            color: EMERALD_DARK,
+            color: theme.primary,
           }),
         ],
-        spacing: { before: 320, after: 120 },
+        spacing: { before: 360, after: 120 },
       }),
     );
-    for (const para of sec.paragraphs) {
+
+    if (sec.subheading) {
       children.push(
         new Paragraph({
           children: [
             new TextRun({
-              text: para,
-              size: 22, // 11pt
-              color: TEXT_DARK,
+              text: sec.subheading,
+              italics: true,
+              size: 22,
+              color: theme.textMuted,
             }),
           ],
-          spacing: { after: 160, line: 276 }, // 1.15 line spacing (240 = 1.0)
+          spacing: { after: 120 },
         }),
       );
+    }
+
+    // Callout box
+    if (sec.callout) {
+      children.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: {
+            left: { style: BorderStyle.SINGLE, size: 24, color: theme.primary },
+            top: { style: BorderStyle.NONE },
+            right: { style: BorderStyle.NONE },
+            bottom: { style: BorderStyle.NONE },
+          },
+          rows: [
+            new TableRow({
+              children: [
+                new TableCell({
+                  shading: { type: ShadingType.CLEAR, fill: theme.cardBg },
+                  margins: { top: 140, bottom: 140, left: 200, right: 200 },
+                  children: [
+                    ...(sec.callout.title
+                      ? [
+                          new Paragraph({
+                            children: [
+                              new TextRun({
+                                text: sec.callout.title,
+                                bold: true,
+                                size: 20,
+                                color: theme.primary,
+                              }),
+                            ],
+                            spacing: { after: 60 },
+                          }),
+                        ]
+                      : []),
+                    new Paragraph({
+                      children: [
+                        new TextRun({
+                          text: sec.callout.text,
+                          italics: true,
+                          size: 20,
+                          color: theme.textDark,
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      );
+      children.push(new Paragraph({ spacing: { after: 160 } }));
+    }
+
+    // Paragraphs
+    for (const p of sec.paragraphs || []) {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: p,
+              size: 22, // 11pt
+              color: theme.textDark,
+            }),
+          ],
+          spacing: { after: 140, line: 276 },
+        }),
+      );
+    }
+
+    // Bullets
+    if (sec.bullets && sec.bullets.length > 0) {
+      for (const b of sec.bullets) {
+        children.push(
+          new Paragraph({
+            bullet: { level: 0 },
+            children: [
+              new TextRun({
+                text: b,
+                size: 22,
+                color: theme.textDark,
+              }),
+            ],
+            spacing: { after: 80 },
+          }),
+        );
+      }
+      children.push(new Paragraph({ spacing: { after: 120 } }));
+    }
+
+    // Data Table
+    if (sec.table && sec.table.headers.length > 0) {
+      const tableRows: any[] = [];
+      tableRows.push(
+        new TableRow({
+          children: sec.table.headers.map(
+            (h) =>
+              new TableCell({
+                shading: { type: ShadingType.CLEAR, fill: theme.primary },
+                margins: { top: 100, bottom: 100, left: 140, right: 140 },
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: h, bold: true, color: "FFFFFF", size: 20 })],
+                  }),
+                ],
+              })
+          ),
+        })
+      );
+
+      for (const r of sec.table.rows || []) {
+        tableRows.push(
+          new TableRow({
+            children: r.map(
+              (c) =>
+                new TableCell({
+                  margins: { top: 80, bottom: 80, left: 140, right: 140 },
+                  children: [
+                    new Paragraph({
+                      children: [new TextRun({ text: c, color: theme.textDark, size: 20 })],
+                    }),
+                  ],
+                })
+            ),
+          })
+        );
+      }
+
+      children.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: tableRows,
+        })
+      );
+      children.push(new Paragraph({ spacing: { after: 200 } }));
+    }
+
+    // Embedded Image
+    if (sec.image?.path && existsSync(sec.image.path)) {
+      try {
+        const imgBuffer = readFileSync(sec.image.path);
+        children.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new ImageRun({
+                data: imgBuffer,
+                transformation: { width: 500, height: 300 },
+                type: "png",
+              }),
+            ],
+            spacing: { before: 160, after: sec.image.caption ? 80 : 200 },
+          })
+        );
+        if (sec.image.caption) {
+          children.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: sec.image.caption,
+                  italics: true,
+                  size: 18,
+                  color: theme.textMuted,
+                }),
+              ],
+              spacing: { after: 200 },
+            })
+          );
+        }
+      } catch {
+        /* skip broken image */
+      }
     }
   }
 
   const doc = new Document({
-    creator: "HermOS",
+    creator: opts.author || "HermOS AI Studio",
     title,
-    description: title,
+    description: subtitle || title,
     sections: [
       {
+        headers: {
+          default: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [
+                  new TextRun({
+                    text: `${title} • HermOS Office`,
+                    size: 16,
+                    color: theme.textMuted,
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [
+                  new TextRun({ text: "Page ", size: 16, color: theme.textMuted }),
+                  new TextRun({ children: [PageNumber.CURRENT], size: 16, color: theme.textMuted }),
+                  new TextRun({ text: " of ", size: 16, color: theme.textMuted }),
+                  new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: theme.textMuted }),
+                ],
+              }),
+            ],
+          }),
+        },
         properties: {
           page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
         },
@@ -341,74 +1077,106 @@ export async function generateDoc(
 
   const buffer = await Packer.toBuffer(doc);
   await fs.writeFile(opts.outputPath, buffer);
-  return { path: opts.outputPath, sections: sections.length };
+
+  const manifest: OfficeDocManifest = {
+    version: 1,
+    path: opts.outputPath,
+    type: "document",
+    title,
+    subtitle,
+    theme: (opts.theme as OfficeThemeId) || "executive",
+    author: opts.author,
+    organization: opts.organization,
+    sections,
+    updatedAt: Date.now(),
+  };
+  await saveOfficeManifest(manifest);
+
+  return { path: opts.outputPath, sections: sections.length, manifest };
 }
 
-/** Generate styled .pdf document at outputPath via PDFKit write stream. */
+/**
+ * Generate styled .pdf document at outputPath via PDFKit write stream,
+ * supporting running headers/footers, callout boxes, metric summaries, and tables.
+ */
 export async function generatePdf(
   opts: GeneratePdfOpts,
-): Promise<{ path: string; sections: number }> {
+): Promise<{ path: string; sections: number; manifest: OfficeDocManifest }> {
   const PDFDocument = await loadPDFKit();
-  const title = clip(String(opts.title || "Untitled").trim(), MAX_TITLE_LEN);
+  const title = clip(String(opts.title || "PDF Report").trim(), MAX_TITLE_LEN);
+  const subtitle = opts.subtitle ? clip(String(opts.subtitle).trim(), MAX_TITLE_LEN) : undefined;
   const sections = cleanSections(opts.sections || []);
+  const theme = resolveOfficeTheme(opts.theme);
 
-  return new Promise<{ path: string; sections: number }>((resolve, reject) => {
+  const manifest: OfficeDocManifest = {
+    version: 1,
+    path: opts.outputPath,
+    type: "pdf",
+    title,
+    subtitle,
+    theme: (opts.theme as OfficeThemeId) || "executive",
+    author: opts.author,
+    organization: opts.organization,
+    sections,
+    updatedAt: Date.now(),
+  };
+
+  return new Promise<{ path: string; sections: number; manifest: OfficeDocManifest }>((resolve, reject) => {
     const doc = new PDFDocument({
       info: {
         Title: title,
-        Author: "HermOS",
-        Subject: title,
-        Creator: "HermOS",
+        Author: opts.author || "HermOS AI Studio",
+        Subject: subtitle || title,
+        Creator: "HermOS Office",
       },
       size: "LETTER",
       margins: { top: 72, bottom: 72, left: 72, right: 72 },
-      bufferPages: false,
+      bufferPages: true,
     });
 
     const stream = createWriteStream(opts.outputPath);
     stream.on("error", (err) => {
-      try {
-        doc.destroy();
-      } catch {
-        /* ignore */
-      }
+      try { doc.destroy(); } catch {}
       reject(new Error(`Failed to write PDF: ${err.message}`));
     });
-    stream.on("finish", () => {
-      resolve({ path: opts.outputPath, sections: sections.length });
+    stream.on("finish", async () => {
+      await saveOfficeManifest(manifest);
+      resolve({ path: opts.outputPath, sections: sections.length, manifest });
     });
 
     doc.pipe(stream);
 
-    // Emerald banner rectangle across the top.
-    doc
-      .fillColor(EMERALD)
-      .rect(0, 0, doc.page.width, 120)
-      .fill();
+    const primaryRgb = hexToRgbTuple(theme.primary);
+    const cardBgRgb = hexToRgbTuple(theme.cardBg);
+    const textDarkRgb = hexToRgbTuple(theme.textDark);
+    const textMutedRgb = hexToRgbTuple(theme.textMuted);
+    const borderRgb = hexToRgbTuple(theme.border);
 
-    doc
-      .fillColor("#FFFFFF")
-      .font("Helvetica-Bold")
-      .fontSize(28)
-      .text(title, 72, 50, {
+    // Cover / Header Banner
+    doc.fillColor(primaryRgb).rect(0, 0, doc.page.width, 140).fill();
+
+    doc.fillColor([255, 255, 255]).font("Helvetica-Bold").fontSize(26).text(title, 72, 40, {
+      width: doc.page.width - 144,
+      align: "center",
+    });
+
+    if (subtitle) {
+      doc.fillColor([230, 240, 255]).font("Helvetica").fontSize(13).text(subtitle, 72, 78, {
         width: doc.page.width - 144,
         align: "center",
       });
+    }
 
-    doc
-      .fillColor(TEXT_MUTED)
-      .font("Helvetica-Oblique")
-      .fontSize(12)
-      .text(
-        `Generated by HermOS • ${sections.length} section${sections.length === 1 ? "" : "s"}`,
-        72,
-        160,
-        { width: doc.page.width - 144, align: "center" },
-      );
+    doc.fillColor([200, 220, 245]).font("Helvetica-Oblique").fontSize(10).text(
+      `Prepared by ${opts.author || "HermOS AI Studio"} • ${new Date().toLocaleDateString()}`,
+      72,
+      105,
+      { width: doc.page.width - 144, align: "center" }
+    );
 
-    let y = 220;
-    const pageBottom = doc.page.height - 72; // bottom margin
-    const pageWidth = doc.page.width - 144; // content width (margins both sides)
+    let y = 170;
+    const pageBottom = doc.page.height - 72;
+    const pageWidth = doc.page.width - 144;
 
     const ensureSpace = (needed: number) => {
       if (y + needed > pageBottom) {
@@ -418,47 +1186,113 @@ export async function generatePdf(
     };
 
     for (const sec of sections) {
-      doc
-        .fillColor(EMERALD_DARK)
-        .font("Helvetica-Bold")
-        .fontSize(16);
-      const headingHeight = doc.heightOfString(sec.heading, {
-        width: pageWidth,
-      });
-      ensureSpace(headingHeight + 16);
-      doc
-        .fillColor(EMERALD_DARK)
-        .font("Helvetica-Bold")
-        .fontSize(16)
-        .text(sec.heading, 72, y, { width: pageWidth });
-      y += headingHeight + 10;
+      ensureSpace(40);
 
-      doc
-        .strokeColor(EMERALD)
-        .lineWidth(1)
-        .moveTo(72, y)
-        .lineTo(doc.page.width - 72, y)
-        .stroke();
+      // Heading
+      doc.fillColor(primaryRgb).font("Helvetica-Bold").fontSize(16).text(sec.heading, 72, y, { width: pageWidth });
+      const hHeight = doc.heightOfString(sec.heading, { width: pageWidth });
+      y += hHeight + 6;
+
+      // Subtle underline
+      doc.strokeColor(borderRgb).lineWidth(1).moveTo(72, y).lineTo(doc.page.width - 72, y).stroke();
       y += 12;
 
-      for (const para of sec.paragraphs) {
-        doc
-          .fillColor(TEXT_DARK)
-          .font("Helvetica")
-          .fontSize(11);
-        const paraHeight = doc.heightOfString(para, {
-          width: pageWidth,
-          lineGap: 4,
-        });
-        ensureSpace(paraHeight + 12);
-        doc
-          .fillColor(TEXT_DARK)
-          .font("Helvetica")
-          .fontSize(11)
-          .text(para, 72, y, { width: pageWidth, lineGap: 4 });
-        y += paraHeight + 8;
+      // Subheading
+      if (sec.subheading) {
+        doc.fillColor(textMutedRgb).font("Helvetica-Oblique").fontSize(11).text(sec.subheading, 72, y, { width: pageWidth });
+        y += doc.heightOfString(sec.subheading, { width: pageWidth }) + 8;
       }
-      y += 16; // extra gap between sections
+
+      // Callout box
+      if (sec.callout) {
+        const calloutText = sec.callout.text;
+        const calloutHeight = doc.heightOfString(calloutText, { width: pageWidth - 32 }) + 24;
+        ensureSpace(calloutHeight + 12);
+
+        doc.fillColor(cardBgRgb).rect(72, y, pageWidth, calloutHeight).fill();
+        doc.fillColor(primaryRgb).rect(72, y, 4, calloutHeight).fill();
+
+        doc.fillColor(textDarkRgb).font("Helvetica-Oblique").fontSize(10).text(calloutText, 88, y + 12, {
+          width: pageWidth - 32,
+          lineGap: 3,
+        });
+        y += calloutHeight + 14;
+      }
+
+      // Paragraphs
+      for (const p of sec.paragraphs || []) {
+        const pHeight = doc.heightOfString(p, { width: pageWidth, lineGap: 4 });
+        ensureSpace(pHeight + 8);
+        doc.fillColor(textDarkRgb).font("Helvetica").fontSize(11).text(p, 72, y, { width: pageWidth, lineGap: 4 });
+        y += pHeight + 8;
+      }
+
+      // Bullets
+      if (sec.bullets) {
+        for (const b of sec.bullets) {
+          const bHeight = doc.heightOfString(b, { width: pageWidth - 16, lineGap: 3 });
+          ensureSpace(bHeight + 6);
+          doc.fillColor(primaryRgb).circle(78, y + 6, 2.5).fill();
+          doc.fillColor(textDarkRgb).font("Helvetica").fontSize(10).text(b, 88, y, { width: pageWidth - 16, lineGap: 3 });
+          y += bHeight + 6;
+        }
+        y += 8;
+      }
+
+      // Table
+      if (sec.table && sec.table.headers.length > 0) {
+        ensureSpace(60);
+        const colCount = sec.table.headers.length;
+        const colW = pageWidth / colCount;
+
+        // Table Header
+        doc.fillColor(primaryRgb).rect(72, y, pageWidth, 22).fill();
+        doc.fillColor([255, 255, 255]).font("Helvetica-Bold").fontSize(10);
+        for (let colIdx = 0; colIdx < colCount; colIdx++) {
+          doc.text(sec.table.headers[colIdx], 72 + colIdx * colW + 4, y + 6, { width: colW - 8 });
+        }
+        y += 22;
+
+        // Table Rows
+        doc.font("Helvetica").fontSize(9);
+        for (let rIdx = 0; rIdx < (sec.table.rows || []).length; rIdx++) {
+          ensureSpace(20);
+          const row = sec.table.rows[rIdx];
+          const isEven = rIdx % 2 === 0;
+          doc.fillColor(isEven ? [255, 255, 255] : cardBgRgb).rect(72, y, pageWidth, 18).fill();
+          doc.fillColor(textDarkRgb);
+          for (let colIdx = 0; colIdx < colCount; colIdx++) {
+            doc.text(row[colIdx] || "", 72 + colIdx * colW + 4, y + 4, { width: colW - 8 });
+          }
+          y += 18;
+        }
+        y += 14;
+      }
+
+      // Embedded Image
+      if (sec.image?.path && existsSync(sec.image.path)) {
+        try {
+          ensureSpace(200);
+          doc.image(sec.image.path, 72, y, { width: Math.min(pageWidth, 400), fit: [pageWidth, 240], align: "center" });
+          y += 250;
+        } catch {
+          /* ignore broken image */
+        }
+      }
+
+      y += 14;
+    }
+
+    // Page Numbers on all pages
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc.fillColor(textMutedRgb).font("Helvetica").fontSize(9).text(
+        `HermOS Office Studio  •  Page ${i + 1} of ${range.count}`,
+        72,
+        doc.page.height - 45,
+        { width: pageWidth, align: "right" }
+      );
     }
 
     doc.end();
@@ -498,19 +1332,14 @@ function capText(s: string, max = 50_000): string {
   return s.slice(0, max) + "\n…[content truncated]";
 }
 
-/** Extract text from .docx by parsing word/document.xml in local zip container. */
 async function extractFromDocx(absPath: string): Promise<string> {
   const buf = await fs.readFile(absPath);
-  // Locate the local file header whose name is `word/document.xml`.
   const nameBuf = Buffer.from("word/document.xml", "utf8");
   const idx = buf.indexOf(nameBuf);
   if (idx < 0) return "";
-  // The local file header is at idx - 30 (header is 30 bytes + name + extra).
   const headerStart = idx - 30;
   if (headerStart < 0 || buf.readUInt32LE(headerStart) !== 0x04034b50) return "";
-  // Compression method is at headerStart + 8 (2 bytes, little-endian).
   const compressionMethod = buf.readUInt16LE(headerStart + 8);
-  // Name length at headerStart + 26, extra length at headerStart + 28.
   const nameLen = buf.readUInt16LE(headerStart + 26);
   const extraLen = buf.readUInt16LE(headerStart + 28);
   const dataStart = headerStart + 30 + nameLen + extraLen;
@@ -518,11 +1347,8 @@ async function extractFromDocx(absPath: string): Promise<string> {
 
   let xmlText: string;
   if (compressionMethod === 0) {
-    // Stored (no compression).
     xmlText = buf.slice(dataStart).toString("utf8");
   } else if (compressionMethod === 8) {
-    // Deflate. inflateRaw ignores trailing bytes, so slicing dataStart..end is
-    // safe.
     const { inflateRawSync } = await import("node:zlib");
     try {
       const inflated = inflateRawSync(buf.slice(dataStart));
@@ -534,10 +1360,6 @@ async function extractFromDocx(absPath: string): Promise<string> {
     return "";
   }
 
-  // Walk the XML once with a combined regex that matches EITHER a text run
-  // (<w:t>…</w:t>) OR a paragraph close (</w:p>). We append text or a newline
-  // accordingly. This avoids the lastIndex-bookkeeping bug that two separate
-  // global regexes can introduce.
   const out: string[] = [];
   const tokenRe = /<w:t[^>]*>([\s\S]*?)<\/w:t>|<\/w:p>/g;
   let m: RegExpExecArray | null;
@@ -551,18 +1373,15 @@ async function extractFromDocx(absPath: string): Promise<string> {
   return out.join("");
 }
 
-/** Extract text from .pptx by reading slide XML entries in local zip container. */
 async function extractFromPptx(absPath: string): Promise<string> {
   const buf = await fs.readFile(absPath);
   const parts: string[] = [];
-  const sigBuf = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // "PK\x03\x04"
+  const sigBuf = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
-  // Scan for all local file headers (PK\x03\x04) and inspect their names.
   let cursor = 0;
   while (cursor < buf.length - 4) {
     const sigIdx = buf.indexOf(sigBuf, cursor);
     if (sigIdx < 0) break;
-    // Local file header: PK\x03\x04 + 26 bytes of fields, then name + extra.
     const nameLen = buf.readUInt16LE(sigIdx + 26);
     const extraLen = buf.readUInt16LE(sigIdx + 28);
     const nameStart = sigIdx + 30;
@@ -602,7 +1421,6 @@ async function extractFromPptx(absPath: string): Promise<string> {
   return parts.join("\n\n");
 }
 
-/** Extract text from PDF streams by inflating FlateDecode blocks and parsing text operators. */
 async function extractFromPdf(absPath: string): Promise<string> {
   const buf = await fs.readFile(absPath);
   const blocks: string[] = [];
@@ -623,14 +1441,9 @@ async function extractFromPdf(absPath: string): Promise<string> {
     }
     if (!inflated) continue;
 
-    // Split into BT…ET text blocks. Within each block, concatenate every
-    // text operand (paren-quoted or hex-quoted) directly. Between blocks,
-    // we insert a space.
     const btChunks = inflated.split(/\bET\b/);
     for (const chunk of btChunks) {
       const parts: string[] = [];
-
-      // Paren-quoted literal strings.
       const parenRe = /\(([^()\\]*)\)/g;
       let pm: RegExpExecArray | null;
       while ((pm = parenRe.exec(chunk)) !== null) {
@@ -640,8 +1453,6 @@ async function extractFromPdf(absPath: string): Promise<string> {
         }
       }
 
-      // Hex-quoted strings <...>. PDFKit emits these inside TJ arrays. Each
-      // pair of hex digits is one ASCII byte.
       const hexRe = /<([0-9A-Fa-f\s]+)>/g;
       let hm: RegExpExecArray | null;
       while ((hm = hexRe.exec(chunk)) !== null) {
@@ -674,7 +1485,6 @@ function decodeXmlEntities(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** Decode PDF parenthesis-escaped strings (e.g. `\(test\)` → `(test)`). */
 function decodePdfString(s: string): string {
   return s
     .replace(/\\n/g, "\n")

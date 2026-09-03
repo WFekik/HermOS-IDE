@@ -45,13 +45,25 @@ import {
   generatePdf,
   extractOfficeText,
   resolveOutputPath,
+  readOfficeManifest,
   MAX_SLIDES,
   MAX_SECTIONS,
-  type PptSlide,
-  type DocSection,
-  type PdfSection,
-  type PptTheme,
 } from "@/lib/office/generator";
+import type {
+  PptSlide,
+  DocSection,
+  PdfSection,
+  OfficeThemeId,
+  SlideLayout,
+  SlideCard,
+  SlideColumn,
+  SlideTable,
+  SlideStep,
+  SlideQuote,
+  SlideImage,
+  DocCallout,
+  DocMetric,
+} from "@/lib/office/types";
 import {
   createSubagent,
   getSubagent,
@@ -360,23 +372,103 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "generate_ppt",
     description:
-      "Generate a PowerPoint (.pptx) file. Pass title, slides (title + bullets each), and optional theme ('professional'|'modern'|'minimal'). Max 50 slides.",
+      "Generate an executive, high-fidelity PowerPoint (.pptx) presentation. Supports 8 layouts ('title', 'bullets', 'cards', 'split', 'image_split', 'table', 'timeline', 'quote'), 6 themes ('executive', 'emerald', 'charcoal', 'crimson', 'nordic', 'cyberpunk'), KPI metric cards, comparison columns, tables, roadmaps, images, and notes. Renders natively in the HermOS Office Studio.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string" },
-        title: { type: "string" },
-        theme: { type: "string", enum: ["professional", "modern", "minimal"] },
+        path: { type: "string", description: "Workspace relative output path, e.g. 'pitch.pptx'" },
+        title: { type: "string", description: "Presentation title" },
+        subtitle: { type: "string", description: "Presentation subtitle" },
+        theme: {
+          type: "string",
+          enum: ["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"],
+          description: "Executive color theme palette",
+        },
+        author: { type: "string", description: "Author / presenter name" },
         slides: {
           type: "array",
           items: {
             type: "object",
             properties: {
               title: { type: "string" },
-              bullets: { type: "array", items: { type: "string" } },
-              notes: { type: "string" },
+              subtitle: { type: "string" },
+              layout: {
+                type: "string",
+                enum: ["title", "bullets", "cards", "split", "image_split", "table", "timeline", "quote"],
+                description: "Slide layout variant",
+              },
+              bullets: { type: "array", items: { type: "string" }, description: "Bullet points for bullets/split/image layouts" },
+              cards: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    description: { type: "string" },
+                    value: { type: "string", description: "Large metric number, e.g. '+140%', '$10M'" },
+                    badge: { type: "string", description: "Pill badge, e.g. 'Live', 'Q3 Target'" },
+                  },
+                  required: ["title", "description"],
+                },
+                description: "2-4 highlight cards for 'cards' layout",
+              },
+              columns: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    heading: { type: "string" },
+                    bullets: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["heading", "bullets"],
+                },
+                description: "2 columns for 'split' comparison layout",
+              },
+              table: {
+                type: "object",
+                properties: {
+                  headers: { type: "array", items: { type: "string" } },
+                  rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+                },
+                required: ["headers", "rows"],
+                description: "Data table for 'table' layout",
+              },
+              steps: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    step: { type: "string", description: "Step number e.g. '01'" },
+                    title: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["step", "title", "description"],
+                },
+                description: "Sequential steps for 'timeline' layout",
+              },
+              quote: {
+                type: "object",
+                properties: {
+                  text: { type: "string" },
+                  author: { type: "string" },
+                  role: { type: "string" },
+                },
+                required: ["text"],
+                description: "Impact quotation for 'quote' layout",
+              },
+              image: {
+                type: "object",
+                properties: {
+                  path: { type: "string", description: "Workspace relative image path" },
+                  alt: { type: "string" },
+                  caption: { type: "string" },
+                },
+                required: ["path"],
+                description: "Image for 'image_split' layout",
+              },
+              notes: { type: "string", description: "Speaker notes" },
             },
-            required: ["title", "bullets"],
+            required: ["title"],
           },
         },
       },
@@ -386,21 +478,55 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "generate_doc",
     description:
-      "Generate a Word (.docx) file. Pass title and sections (heading + paragraphs each). Max 50 sections.",
+      "Generate an executive, professional Word (.docx) document. Supports title, subtitle, author, cover header, running headers/footers with page numbers, rich sections with callouts, data tables, metrics, bullet lists, and images across executive themes.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string" },
+        path: { type: "string", description: "Workspace relative output path, e.g. 'report.docx'" },
         title: { type: "string" },
+        subtitle: { type: "string" },
+        author: { type: "string" },
+        organization: { type: "string" },
+        theme: {
+          type: "string",
+          enum: ["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"],
+        },
         sections: {
           type: "array",
           items: {
             type: "object",
             properties: {
               heading: { type: "string" },
+              subheading: { type: "string" },
               paragraphs: { type: "array", items: { type: "string" } },
+              bullets: { type: "array", items: { type: "string" } },
+              callout: {
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["info", "tip", "warning", "quote"] },
+                  title: { type: "string" },
+                  text: { type: "string" },
+                },
+                required: ["text"],
+              },
+              table: {
+                type: "object",
+                properties: {
+                  headers: { type: "array", items: { type: "string" } },
+                  rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+                },
+                required: ["headers", "rows"],
+              },
+              image: {
+                type: "object",
+                properties: {
+                  path: { type: "string" },
+                  caption: { type: "string" },
+                },
+                required: ["path"],
+              },
             },
-            required: ["heading", "paragraphs"],
+            required: ["heading"],
           },
         },
       },
@@ -410,21 +536,55 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "generate_pdf",
     description:
-      "Generate a PDF file. Pass title and sections (heading + paragraphs each). Max 50 sections.",
+      "Generate a styled, printable PDF report. Supports executive cover banners, running headers/footers with page numbers, callout blocks with accent borders, data tables with zebra striping, bullet lists, and images.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string" },
+        path: { type: "string", description: "Workspace relative output path, e.g. 'report.pdf'" },
         title: { type: "string" },
+        subtitle: { type: "string" },
+        author: { type: "string" },
+        organization: { type: "string" },
+        theme: {
+          type: "string",
+          enum: ["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"],
+        },
         sections: {
           type: "array",
           items: {
             type: "object",
             properties: {
               heading: { type: "string" },
+              subheading: { type: "string" },
               paragraphs: { type: "array", items: { type: "string" } },
+              bullets: { type: "array", items: { type: "string" } },
+              callout: {
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["info", "tip", "warning", "quote"] },
+                  title: { type: "string" },
+                  text: { type: "string" },
+                },
+                required: ["text"],
+              },
+              table: {
+                type: "object",
+                properties: {
+                  headers: { type: "array", items: { type: "string" } },
+                  rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+                },
+                required: ["headers", "rows"],
+              },
+              image: {
+                type: "object",
+                properties: {
+                  path: { type: "string" },
+                  caption: { type: "string" },
+                },
+                required: ["path"],
+              },
             },
-            required: ["heading", "paragraphs"],
+            required: ["heading"],
           },
         },
       },
@@ -434,7 +594,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "read_doc",
     description:
-      "Extract plain text from an Office document (.docx, .pptx, .pdf) in the workspace.",
+      "Extract structured content and text from an Office document (.docx, .pptx, .pdf) or its companion manifest in the workspace.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string" } },
@@ -680,28 +840,136 @@ const mcpCallSchema = z.object({
 });
 
 const pptSlideSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  bullets: z.array(z.string().trim().min(1).max(100_000)).max(30).default([]),
+  title: z.string().trim().min(1).max(300),
+  subtitle: z.string().trim().max(300).optional(),
+  layout: z
+    .enum(["title", "bullets", "cards", "split", "image_split", "table", "timeline", "quote"])
+    .optional(),
+  bullets: z.array(z.string().trim().max(100_000)).max(30).default([]),
+  cards: z
+    .array(
+      z.object({
+        title: z.string().trim().min(1).max(120),
+        description: z.string().trim().max(1000),
+        value: z.string().trim().max(50).optional(),
+        badge: z.string().trim().max(50).optional(),
+        icon: z.string().trim().max(50).optional(),
+      })
+    )
+    .max(6)
+    .optional(),
+  columns: z
+    .array(
+      z.object({
+        heading: z.string().trim().min(1).max(120),
+        bullets: z.array(z.string().trim().max(1000)).max(15),
+      })
+    )
+    .max(2)
+    .optional(),
+  table: z
+    .object({
+      headers: z.array(z.string().trim().max(100)).max(10),
+      rows: z.array(z.array(z.string().trim().max(500)).max(10)).max(20),
+    })
+    .optional(),
+  steps: z
+    .array(
+      z.object({
+        step: z.string().trim().max(20),
+        title: z.string().trim().min(1).max(120),
+        description: z.string().trim().max(1000),
+      })
+    )
+    .max(6)
+    .optional(),
+  quote: z
+    .object({
+      text: z.string().trim().min(1).max(2000),
+      author: z.string().trim().max(120).optional(),
+      role: z.string().trim().max(120).optional(),
+    })
+    .optional(),
+  image: z
+    .object({
+      path: z.string().trim().min(1).max(1000),
+      alt: z.string().trim().max(200).optional(),
+      caption: z.string().trim().max(300).optional(),
+      position: z.enum(["left", "right", "hero"]).optional(),
+    })
+    .optional(),
   notes: z.string().trim().max(8000).optional(),
+  accentColor: z.string().trim().max(20).optional(),
 });
+
 const generatePptSchema = z.object({
   path: z.string().trim().min(1).max(100_000),
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(300),
+  subtitle: z.string().trim().max(300).optional(),
+  author: z.string().trim().max(120).optional(),
   slides: z.array(pptSlideSchema).max(MAX_SLIDES),
-  theme: z.enum(["professional", "modern", "minimal"]).optional(),
+  theme: z
+    .enum(["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"])
+    .optional(),
 });
+
 const docSectionSchema = z.object({
-  heading: z.string().trim().min(1).max(200),
-  paragraphs: z.array(z.string().trim().min(1).max(8000)).max(50).default([]),
+  heading: z.string().trim().min(1).max(300),
+  subheading: z.string().trim().max(300).optional(),
+  paragraphs: z.array(z.string().trim().max(10_000)).max(50).default([]),
+  bullets: z.array(z.string().trim().max(2000)).max(30).optional(),
+  callout: z
+    .object({
+      type: z.enum(["info", "tip", "warning", "quote"]).optional(),
+      title: z.string().trim().max(120).optional(),
+      text: z.string().trim().min(1).max(3000),
+    })
+    .optional(),
+  table: z
+    .object({
+      headers: z.array(z.string().trim().max(100)).max(10),
+      rows: z.array(z.array(z.string().trim().max(500)).max(10)).max(25),
+    })
+    .optional(),
+  metrics: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(100),
+        value: z.string().trim().min(1).max(50),
+        change: z.string().trim().max(50).optional(),
+      })
+    )
+    .max(6)
+    .optional(),
+  image: z
+    .object({
+      path: z.string().trim().min(1).max(1000),
+      caption: z.string().trim().max(300).optional(),
+    })
+    .optional(),
 });
+
 const generateDocSchema = z.object({
   path: z.string().trim().min(1).max(100_000),
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(300),
+  subtitle: z.string().trim().max(300).optional(),
+  author: z.string().trim().max(120).optional(),
+  organization: z.string().trim().max(120).optional(),
+  theme: z
+    .enum(["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"])
+    .optional(),
   sections: z.array(docSectionSchema).max(MAX_SECTIONS),
 });
+
 const generatePdfSchema = z.object({
   path: z.string().trim().min(1).max(100_000),
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(300),
+  subtitle: z.string().trim().max(300).optional(),
+  author: z.string().trim().max(120).optional(),
+  organization: z.string().trim().max(120).optional(),
+  theme: z
+    .enum(["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"])
+    .optional(),
   sections: z.array(docSectionSchema).max(MAX_SECTIONS),
 });
 const readDocSchema = z.object({
@@ -2091,16 +2359,12 @@ async function runToolImpl(
         const ws = await resolveWs(ctx.userId, convScope(ctx));
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
-          const slides: PptSlide[] = parsed.data.slides.map((s) => ({
-            title: s.title,
-            bullets: s.bullets,
-            notes: s.notes,
-          }));
-          const theme: PptTheme = parsed.data.theme ?? "professional";
           const r = await generatePpt({
             title: parsed.data.title,
-            slides,
-            theme,
+            subtitle: parsed.data.subtitle,
+            author: parsed.data.author,
+            theme: parsed.data.theme as OfficeThemeId,
+            slides: parsed.data.slides as PptSlide[],
             outputPath,
           });
           return {
@@ -2108,7 +2372,8 @@ async function runToolImpl(
             result: {
               path: parsed.data.path,
               slides: r.slides,
-              theme,
+              theme: r.manifest.theme,
+              manifest: r.manifest,
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2123,13 +2388,13 @@ async function runToolImpl(
         const ws = await resolveWs(ctx.userId, convScope(ctx));
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
-          const sections: DocSection[] = parsed.data.sections.map((s) => ({
-            heading: s.heading,
-            paragraphs: s.paragraphs,
-          }));
           const r = await generateDoc({
             title: parsed.data.title,
-            sections,
+            subtitle: parsed.data.subtitle,
+            author: parsed.data.author,
+            organization: parsed.data.organization,
+            theme: parsed.data.theme as OfficeThemeId,
+            sections: parsed.data.sections as DocSection[],
             outputPath,
           });
           return {
@@ -2137,6 +2402,8 @@ async function runToolImpl(
             result: {
               path: parsed.data.path,
               sections: r.sections,
+              theme: r.manifest.theme,
+              manifest: r.manifest,
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2151,13 +2418,13 @@ async function runToolImpl(
         const ws = await resolveWs(ctx.userId, convScope(ctx));
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
-          const sections: PdfSection[] = parsed.data.sections.map((s) => ({
-            heading: s.heading,
-            paragraphs: s.paragraphs,
-          }));
           const r = await generatePdf({
             title: parsed.data.title,
-            sections,
+            subtitle: parsed.data.subtitle,
+            author: parsed.data.author,
+            organization: parsed.data.organization,
+            theme: parsed.data.theme as OfficeThemeId,
+            sections: parsed.data.sections as DocSection[],
             outputPath,
           });
           return {
@@ -2165,6 +2432,8 @@ async function runToolImpl(
             result: {
               path: parsed.data.path,
               sections: r.sections,
+              theme: r.manifest.theme,
+              manifest: r.manifest,
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2184,7 +2453,7 @@ async function runToolImpl(
           if (!stat || !stat.isFile()) {
             return { ok: false, result: { error: "File not found." } };
           }
-          // No file size cap — let the agent extract text from any document.
+          const manifest = await readOfficeManifest(abs);
           const r = await extractOfficeText(abs);
           return {
             ok: true,
@@ -2192,6 +2461,7 @@ async function runToolImpl(
               path: parsed.data.path,
               type: r.type,
               text: r.text,
+              manifest: manifest ?? undefined,
               size: stat.size,
             },
           };

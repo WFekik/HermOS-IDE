@@ -33,6 +33,12 @@ import {
   DEFAULT_LIGHT_THEME,
   DEFAULT_DARK_THEME,
 } from "@/lib/color-theme";
+import type {
+  OfficeDocManifest,
+  PptSlide,
+  DocSection,
+  OfficeThemeId,
+} from "@/lib/office/types";
 
 const SECURITY_SETTINGS_KEY = "hermos_security_settings_v1";
 
@@ -617,10 +623,15 @@ interface AppState {
   officeGenerating: boolean;
   officeLastPath: string | null;
   officeLastType: "presentation" | "document" | "pdf" | null;
+  activeOfficeDoc: OfficeDocManifest | null;
   setOfficeGenerating: (
     generating: boolean,
     opts?: { path?: string; type?: "presentation" | "document" | "pdf" },
   ) => void;
+  setActiveOfficeDoc: (doc: OfficeDocManifest | null) => void;
+  updateActiveOfficeSlide: (slideIndex: number, patch: Partial<PptSlide>) => void;
+  updateActiveOfficeSection: (sectionIndex: number, patch: Partial<DocSection>) => void;
+  setActiveOfficeTheme: (theme: OfficeThemeId) => void;
 
   /* Editing a sent user message — when set, the composer is in edit mode */
   editingMessageId: string | null;
@@ -1098,6 +1109,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   officeGenerating: false,
   officeLastPath: null,
   officeLastType: null,
+  activeOfficeDoc: null,
 
   /* Bulk-select */
   bulkSelectMode: false,
@@ -1240,6 +1252,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       officeGenerating: false,
       officeLastPath: null,
       officeLastType: null,
+      activeOfficeDoc: null,
       preTurnCheckpointId: null,
       // Clear workspaces and git status
       workspaces: [],
@@ -2767,6 +2780,24 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openFileTab: (path) =>
     set((s) => {
+      // Office documents (.pptx, .docx, .pdf) live exclusively in the Office Studio
+      if (/\.(pptx|docx|pdf)$/i.test(path)) {
+        apiGet<{ ok: boolean; document: { manifest?: OfficeDocManifest } }>(
+          `/api/office/document?path=${encodeURIComponent(path)}`
+        )
+          .then((res) => {
+            if (res.ok && res.document.manifest) {
+              set({ activeOfficeDoc: res.document.manifest, rightPanelTab: "office", rightPanelOpen: true });
+            } else {
+              set({ rightPanelTab: "office", rightPanelOpen: true });
+            }
+          })
+          .catch(() => {
+            set({ rightPanelTab: "office", rightPanelOpen: true });
+          });
+        return { rightPanelTab: "office", rightPanelOpen: true };
+      }
+
       if (s.openFiles.includes(path)) {
         return { activeFileTab: path };
       }
@@ -3206,6 +3237,50 @@ export const useAppStore = create<AppState>((set, get) => ({
       officeLastPath: opts?.path ?? (generating ? null : s.officeLastPath),
       officeLastType: opts?.type ?? (generating ? null : s.officeLastType),
     })),
+
+  setActiveOfficeDoc: (doc) => set({ activeOfficeDoc: doc }),
+
+  updateActiveOfficeSlide: (slideIndex, patch) =>
+    set((s) => {
+      if (!s.activeOfficeDoc || !s.activeOfficeDoc.slides) return {};
+      const slides = [...s.activeOfficeDoc.slides];
+      if (slideIndex < 0 || slideIndex >= slides.length) return {};
+      slides[slideIndex] = { ...slides[slideIndex], ...patch };
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          slides,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
+
+  updateActiveOfficeSection: (sectionIndex, patch) =>
+    set((s) => {
+      if (!s.activeOfficeDoc || !s.activeOfficeDoc.sections) return {};
+      const sections = [...s.activeOfficeDoc.sections];
+      if (sectionIndex < 0 || sectionIndex >= sections.length) return {};
+      sections[sectionIndex] = { ...sections[sectionIndex], ...patch };
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          sections,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
+
+  setActiveOfficeTheme: (theme) =>
+    set((s) => {
+      if (!s.activeOfficeDoc) return {};
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          theme,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
 
   setEditingMessageId: (id) => set({ editingMessageId: id }),
   setComposerMode: (m) => set({ composerMode: m }),

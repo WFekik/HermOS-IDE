@@ -1191,4 +1191,59 @@ describe("useAppStore Unit Test Suite", () => {
       expect(state.questionPromptsByConversation["conv-2"]).toBeUndefined();
     });
   });
+
+  describe("Office Studio Routing & State Management", () => {
+    it("routes office documents (.pptx, .docx, .pdf) exclusively to the Office tab without adding to openFiles", () => {
+      useAppStore.setState({
+        openFiles: ["src/index.ts"],
+        activeFileTab: "src/index.ts",
+        rightPanelTab: "files",
+      });
+
+      useAppStore.getState().openFileTab("presentation.pptx");
+      const state1 = useAppStore.getState();
+      expect(state1.rightPanelTab).toBe("office");
+      expect(state1.openFiles).not.toContain("presentation.pptx");
+      expect(state1.activeFileTab).toBe("src/index.ts");
+
+      useAppStore.getState().openFileTab("docs/summary.docx");
+      const state2 = useAppStore.getState();
+      expect(state2.rightPanelTab).toBe("office");
+      expect(state2.openFiles).not.toContain("docs/summary.docx");
+
+      useAppStore.getState().openFileTab("report.pdf");
+      const state3 = useAppStore.getState();
+      expect(state3.rightPanelTab).toBe("office");
+      expect(state3.openFiles).not.toContain("report.pdf");
+    });
+
+    it("allows updating slide content and theme on activeOfficeDoc", () => {
+      useAppStore.setState({
+        activeOfficeDoc: {
+          version: 1,
+          path: "pitch.pptx",
+          type: "presentation",
+          title: "Pitch Deck",
+          theme: "executive",
+          slides: [
+            { title: "Intro", bullets: ["Point 1"] },
+            { title: "Metrics", bullets: ["99.9% Uptime"] },
+          ],
+          updatedAt: 1000,
+        },
+      });
+
+      useAppStore.getState().updateActiveOfficeSlide(1, {
+        title: "Updated Metrics",
+        bullets: ["99.99% High Availability", "140+ tokens/sec"],
+      });
+
+      const updated = useAppStore.getState().activeOfficeDoc;
+      expect(updated?.slides?.[1].title).toBe("Updated Metrics");
+      expect(updated?.slides?.[1].bullets?.length).toBe(2);
+
+      useAppStore.getState().setActiveOfficeTheme("emerald");
+      expect(useAppStore.getState().activeOfficeDoc?.theme).toBe("emerald");
+    });
+  });
 });
