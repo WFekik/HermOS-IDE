@@ -41,6 +41,9 @@ import {
 } from "@/lib/browser";
 import {
   generatePpt,
+  initPresentation,
+  addPresentationSlide,
+  updatePresentationSlide,
   generateDoc,
   generatePdf,
   extractOfficeText,
@@ -367,6 +370,198 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
         },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "init_presentation",
+    description:
+      "Initialize a new executive PowerPoint (.pptx) presentation deck with title, subtitle, theme, and optional cover slide. Best practice: call this first to outline and start the deck, then use add_presentation_slide to build each slide carefully one-by-one like Kimi/GLM Office.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace relative output path, e.g. 'presentation.pptx'" },
+        title: { type: "string", description: "Presentation title" },
+        subtitle: { type: "string", description: "Presentation subtitle / tagline" },
+        theme: {
+          type: "string",
+          enum: ["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"],
+          description: "Executive color theme palette",
+        },
+        author: { type: "string", description: "Author / presenter name" },
+      },
+      required: ["path", "title"],
+    },
+  },
+  {
+    name: "add_presentation_slide",
+    description:
+      "Add a single, carefully crafted slide to an existing presentation deck (.pptx). Best practice: construct presentations slide-by-slide, choosing the optimal layout ('title', 'bullets', 'cards', 'split', 'image_split', 'table', 'timeline', 'quote') for each topic. The Office Studio in the right panel updates live as each slide is added.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace relative path of the presentation, e.g. 'presentation.pptx'" },
+        slide: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Slide title" },
+            subtitle: { type: "string", description: "Slide subtitle" },
+            layout: {
+              type: "string",
+              enum: ["title", "bullets", "cards", "split", "image_split", "table", "timeline", "quote"],
+              description: "Slide layout variant",
+            },
+            bullets: { type: "array", items: { type: "string" }, description: "Bullet points for bullets/split/image layouts" },
+            cards: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  value: { type: "string", description: "Large metric number, e.g. '+140%', '$10M'" },
+                  badge: { type: "string", description: "Pill badge, e.g. 'Live', 'Q3 Target'" },
+                },
+                required: ["title", "description"],
+              },
+              description: "2-4 highlight cards for 'cards' layout",
+            },
+            columns: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  heading: { type: "string" },
+                  bullets: { type: "array", items: { type: "string" } },
+                },
+                required: ["heading", "bullets"],
+              },
+              description: "2 columns for 'split' comparison layout",
+            },
+            table: {
+              type: "object",
+              properties: {
+                headers: { type: "array", items: { type: "string" } },
+                rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+              },
+              required: ["headers", "rows"],
+              description: "Data table for 'table' layout",
+            },
+            steps: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  step: { type: "string", description: "Step number e.g. '01'" },
+                  title: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["step", "title", "description"],
+              },
+              description: "Sequential steps for 'timeline' layout",
+            },
+            quote: {
+              type: "object",
+              properties: {
+                text: { type: "string" },
+                author: { type: "string" },
+                role: { type: "string" },
+              },
+              required: ["text"],
+              description: "Impact quotation for 'quote' layout",
+            },
+            image: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Workspace relative image path" },
+                alt: { type: "string" },
+                caption: { type: "string" },
+              },
+              required: ["path"],
+              description: "Image for 'image_split' layout",
+            },
+            notes: { type: "string", description: "Speaker notes" },
+          },
+          required: ["title"],
+        },
+      },
+      required: ["path", "slide"],
+    },
+  },
+  {
+    name: "update_presentation_slide",
+    description:
+      "Update or refine an existing slide in a presentation deck by slide index (1-based or 0-based), modifying its layout, cards, bullets, table, or notes. Updates the presentation live in the Office Studio.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace relative path of the presentation, e.g. 'presentation.pptx'" },
+        slideIndex: { type: "number", description: "1-based or 0-based index of the slide to update" },
+        slide: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            subtitle: { type: "string" },
+            layout: {
+              type: "string",
+              enum: ["title", "bullets", "cards", "split", "image_split", "table", "timeline", "quote"],
+            },
+            bullets: { type: "array", items: { type: "string" } },
+            cards: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  value: { type: "string" },
+                  badge: { type: "string" },
+                },
+                required: ["title", "description"],
+              },
+            },
+            columns: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  heading: { type: "string" },
+                  bullets: { type: "array", items: { type: "string" } },
+                },
+                required: ["heading", "bullets"],
+              },
+            },
+            table: {
+              type: "object",
+              properties: {
+                headers: { type: "array", items: { type: "string" } },
+                rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+              },
+            },
+            steps: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  step: { type: "string" },
+                  title: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["step", "title", "description"],
+              },
+            },
+            quote: {
+              type: "object",
+              properties: {
+                text: { type: "string" },
+                author: { type: "string" },
+                role: { type: "string" },
+              },
+            },
+            notes: { type: "string" },
+          },
+        },
+      },
+      required: ["path", "slideIndex", "slide"],
     },
   },
   {
@@ -900,6 +1095,28 @@ const pptSlideSchema = z.object({
     .optional(),
   notes: z.string().trim().max(8000).optional(),
   accentColor: z.string().trim().max(20).optional(),
+});
+
+const initPresentationSchema = z.object({
+  path: z.string().trim().min(1).max(100_000),
+  title: z.string().trim().min(1).max(300),
+  subtitle: z.string().trim().max(300).optional(),
+  author: z.string().trim().max(120).optional(),
+  theme: z
+    .enum(["executive", "emerald", "charcoal", "crimson", "nordic", "cyberpunk", "professional", "modern", "minimal"])
+    .optional(),
+  initialSlide: pptSlideSchema.optional(),
+});
+
+const addPresentationSlideSchema = z.object({
+  path: z.string().trim().min(1).max(100_000),
+  slide: pptSlideSchema,
+});
+
+const updatePresentationSlideSchema = z.object({
+  path: z.string().trim().min(1).max(100_000),
+  slideIndex: z.number().int().min(0).max(MAX_SLIDES),
+  slide: pptSlideSchema.partial(),
 });
 
 const generatePptSchema = z.object({
@@ -1661,6 +1878,9 @@ export function toolLockKey(
     case "multi_edit":
     case "read_doc":
     case "create_artifact":
+    case "init_presentation":
+    case "add_presentation_slide":
+    case "update_presentation_slide":
     case "generate_ppt":
     case "generate_doc":
     case "generate_pdf": {
@@ -2350,6 +2570,88 @@ async function runToolImpl(
               error: `Failed to create skill: ${e?.message || String(e)}`,
             },
           };
+        }
+      }
+      case "init_presentation": {
+        const parsed = initPresentationSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
+        if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
+        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        try {
+          const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
+          const r = await initPresentation({
+            title: parsed.data.title,
+            subtitle: parsed.data.subtitle,
+            author: parsed.data.author,
+            theme: parsed.data.theme as OfficeThemeId,
+            initialSlide: parsed.data.initialSlide as PptSlide | undefined,
+            path: outputPath,
+          });
+          return {
+            ok: true,
+            result: {
+              path: parsed.data.path,
+              slides: r.slides,
+              theme: r.manifest.theme,
+              manifest: r.manifest,
+              message: `Presentation deck initialized with cover slide. Now use add_presentation_slide to build each slide carefully one-by-one.`,
+            },
+          };
+        } catch (e) {
+          return { ok: false, result: { error: e instanceof Error ? e.message : "init_presentation failed" } };
+        }
+      }
+      case "add_presentation_slide": {
+        const parsed = addPresentationSlideSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
+        if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
+        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        try {
+          const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
+          const r = await addPresentationSlide({
+            path: outputPath,
+            slide: parsed.data.slide as PptSlide,
+          });
+          return {
+            ok: true,
+            result: {
+              path: parsed.data.path,
+              slideIndex: r.slideIndex + 1,
+              totalSlides: r.totalSlides,
+              slideTitle: parsed.data.slide.title,
+              layout: parsed.data.slide.layout || "bullets",
+              manifest: r.manifest,
+              message: `Slide ${r.slideIndex + 1} of ${r.totalSlides} ("${parsed.data.slide.title}") created and added to presentation.`,
+            },
+          };
+        } catch (e) {
+          return { ok: false, result: { error: e instanceof Error ? e.message : "add_presentation_slide failed" } };
+        }
+      }
+      case "update_presentation_slide": {
+        const parsed = updatePresentationSlideSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
+        if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
+        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        try {
+          const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
+          const r = await updatePresentationSlide({
+            path: outputPath,
+            slideIndex: parsed.data.slideIndex,
+            slide: parsed.data.slide as Partial<PptSlide>,
+          });
+          return {
+            ok: true,
+            result: {
+              path: parsed.data.path,
+              slideIndex: r.slideIndex + 1,
+              totalSlides: r.totalSlides,
+              manifest: r.manifest,
+              message: `Slide ${r.slideIndex + 1} updated in presentation.`,
+            },
+          };
+        } catch (e) {
+          return { ok: false, result: { error: e instanceof Error ? e.message : "update_presentation_slide failed" } };
         }
       }
       case "generate_ppt": {

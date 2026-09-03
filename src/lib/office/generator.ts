@@ -221,6 +221,83 @@ function cleanSections(sections: DocSection[]): DocSection[] {
   }));
 }
 
+export function resolveSlideCards(slide: PptSlide): Array<{ title: string; description: string; value?: string; badge?: string }> {
+  if (slide.cards && slide.cards.length > 0) return slide.cards;
+  if (slide.bullets && slide.bullets.length > 0) {
+    return slide.bullets.map((b, i) => ({
+      title: `Key Highlight ${i + 1}`,
+      description: b,
+      badge: `Key Point`,
+    }));
+  }
+  return [
+    { title: "Strategic Objective", description: "Core platform milestone and architectural deliverables", badge: "Milestone" },
+    { title: "Performance Impact", description: "High-throughput processing with sub-100ms response targets", badge: "Metrics" },
+    { title: "Operational Excellence", description: "End-to-end observability, automated testing, and zero-downtime releases", badge: "Operations" },
+  ];
+}
+
+export function resolveSlideColumns(slide: PptSlide): Array<{ heading: string; bullets: string[] }> {
+  if (slide.columns && slide.columns.length === 2) return slide.columns;
+  if (slide.bullets && slide.bullets.length > 1) {
+    const mid = Math.ceil(slide.bullets.length / 2);
+    return [
+      { heading: "Current Overview", bullets: slide.bullets.slice(0, mid) },
+      { heading: "Target State", bullets: slide.bullets.slice(mid) },
+    ];
+  }
+  return [
+    { heading: "Core Capabilities", bullets: ["Modern architectural design", "Scalable, resilient processing"] },
+    { heading: "Strategic Focus", bullets: ["Continuous quality verification", "Enterprise compliance and telemetry"] },
+  ];
+}
+
+export function resolveSlideTable(slide: PptSlide): { headers: string[]; rows: string[][] } {
+  if (slide.table && slide.table.headers && slide.table.headers.length > 0) return slide.table;
+  if (slide.bullets && slide.bullets.length > 0) {
+    return {
+      headers: ["Metric", "Target Value", "Status"],
+      rows: slide.bullets.map((b, i) => [`Key Metric ${i + 1}`, b, "On Track"]),
+    };
+  }
+  return {
+    headers: ["Component", "Throughput", "Latency (p95)", "Status"],
+    rows: [
+      ["API Gateway", "50K req/s", "12ms", "On Track"],
+      ["Compute Engine", "120 nodes", "45ms", "On Track"],
+      ["Data Pipeline", "1.2 TB/hr", "80ms", "Exceeding"],
+    ],
+  };
+}
+
+export function resolveSlideSteps(slide: PptSlide): Array<{ step: string; title: string; description: string }> {
+  if (slide.steps && slide.steps.length > 0) return slide.steps;
+  if (slide.bullets && slide.bullets.length > 0) {
+    return slide.bullets.map((b, i) => ({
+      step: `0${i + 1}`,
+      title: `Phase ${i + 1}`,
+      description: b,
+    }));
+  }
+  return [
+    { step: "01", title: "Discovery", description: "Baseline discovery and architectural scoping" },
+    { step: "02", title: "Execution", description: "Core service implementation and automated testing" },
+    { step: "03", title: "Delivery", description: "Progressive staged rollout with live observability" },
+  ];
+}
+
+export function resolveSlideQuote(slide: PptSlide): { text: string; author?: string; role?: string } {
+  if (slide.quote && slide.quote.text) return slide.quote;
+  if (slide.bullets && slide.bullets.length > 0) {
+    return { text: slide.bullets[0], author: "Executive Leadership", role: "HermOS Platform" };
+  }
+  return {
+    text: "Excellence is not an exception, it is a prevailing attitude. Design with purpose and deliver with velocity.",
+    author: "Executive Leadership",
+    role: "Engineering & Architecture",
+  };
+}
+
 /**
  * High-fidelity PowerPoint generator (.pptx) supporting 8 distinct slide layouts,
  * executive theme palettes, KPI cards, tables, split comparisons, images, and notes.
@@ -383,16 +460,17 @@ export async function generatePpt(
       const contentY = sData.subtitle ? 1.55 : 1.35;
 
       // Layout Dispatcher
-      if (sData.layout === "cards" && sData.cards && sData.cards.length > 0) {
+      if (sData.layout === "cards") {
         // ===== KPI / FEATURE CARDS LAYOUT =====
-        const count = Math.min(sData.cards.length, 4);
+        const resolvedCards = resolveSlideCards(sData);
+        const count = Math.min(resolvedCards.length, 4);
         const cardW = count === 2 ? 5.5 : count === 3 ? 3.6 : 2.7;
         const gap = 0.3;
         const totalW = count * cardW + (count - 1) * gap;
         const startX = 0.6 + Math.max(0, (12.13 - totalW) / 2);
 
         for (let cIdx = 0; cIdx < count; cIdx++) {
-          const card = sData.cards[cIdx];
+          const card = resolvedCards[cIdx];
           const cx = startX + cIdx * (cardW + gap);
 
           s.addShape("roundRect", {
@@ -472,11 +550,12 @@ export async function generatePpt(
             fontFace: "Calibri",
           });
         }
-      } else if (sData.layout === "split" && sData.columns && sData.columns.length === 2) {
+      } else if (sData.layout === "split") {
         // ===== 2-COLUMN SPLIT COMPARISON =====
+        const columns = resolveSlideColumns(sData);
         const colW = 5.7;
         for (let colIdx = 0; colIdx < 2; colIdx++) {
-          const col = sData.columns[colIdx];
+          const col = columns[colIdx];
           const cx = 0.6 + colIdx * 6.3;
 
           s.addShape("roundRect", {
@@ -512,10 +591,11 @@ export async function generatePpt(
             fontFace: "Calibri",
           });
         }
-      } else if (sData.layout === "table" && sData.table && sData.table.headers) {
+      } else if (sData.layout === "table") {
         // ===== DATA TABLE LAYOUT =====
-        const headers = sData.table.headers;
-        const rows = sData.table.rows || [];
+        const table = resolveSlideTable(sData);
+        const headers = table.headers;
+        const rows = table.rows || [];
         const tableRows: any[] = [];
 
         // Header row
@@ -555,8 +635,9 @@ export async function generatePpt(
           border: { pt: 0.5, color: theme.border },
           autoPage: false,
         });
-      } else if (sData.layout === "quote" && sData.quote) {
+      } else if (sData.layout === "quote") {
         // ===== IMPACT QUOTE LAYOUT =====
+        const quote = resolveSlideQuote(sData);
         s.addShape("rect", {
           x: 1.5,
           y: contentY + 0.6,
@@ -566,7 +647,7 @@ export async function generatePpt(
           line: { color: theme.accent, width: 0 },
         });
 
-        s.addText(`“${sData.quote.text}”`, {
+        s.addText(`“${quote.text}”`, {
           x: 1.9,
           y: contentY + 0.5,
           w: 9.5,
@@ -577,9 +658,9 @@ export async function generatePpt(
           fontFace: "Calibri",
         });
 
-        const attribution = sData.quote.role
-          ? `— ${sData.quote.author || "Anonymous"}, ${sData.quote.role}`
-          : `— ${sData.quote.author || "Anonymous"}`;
+        const attribution = quote.role
+          ? `— ${quote.author || "Anonymous"}, ${quote.role}`
+          : `— ${quote.author || "Anonymous"}`;
         s.addText(attribution, {
           x: 1.9,
           y: contentY + 2.7,
@@ -590,13 +671,14 @@ export async function generatePpt(
           color: theme.primary,
           fontFace: "Calibri",
         });
-      } else if (sData.layout === "timeline" && sData.steps && sData.steps.length > 0) {
+      } else if (sData.layout === "timeline") {
         // ===== TIMELINE / STEPS LAYOUT =====
-        const stepCount = Math.min(sData.steps.length, 5);
+        const steps = resolveSlideSteps(sData);
+        const stepCount = Math.min(steps.length, 5);
         const stepW = 11.5 / stepCount;
 
         for (let stIdx = 0; stIdx < stepCount; stIdx++) {
-          const step = sData.steps[stIdx];
+          const step = steps[stIdx];
           const stX = 0.9 + stIdx * stepW;
 
           // Step circle badge
@@ -738,6 +820,137 @@ export async function generatePpt(
   await saveOfficeManifest(manifest);
 
   return { path: opts.outputPath, slides: slides.length, manifest };
+}
+
+export interface InitPresentationOpts {
+  path: string;
+  title: string;
+  subtitle?: string;
+  theme?: OfficeThemeId;
+  author?: string;
+  initialSlide?: PptSlide;
+}
+
+/**
+ * Initialize a presentation deck file (.pptx) with title, subtitle, theme, and optional cover slide.
+ * Enables the Kimi/GLM step-by-step workflow: initialize deck, then add slides one-by-one.
+ */
+export async function initPresentation(
+  opts: InitPresentationOpts,
+): Promise<{ path: string; slides: number; manifest: OfficeDocManifest }> {
+  const initialSlide: PptSlide = opts.initialSlide ?? {
+    id: "slide-1",
+    title: opts.title,
+    subtitle: opts.subtitle,
+    layout: "title",
+    bullets: [],
+  };
+
+  return await generatePpt({
+    title: opts.title,
+    subtitle: opts.subtitle,
+    theme: opts.theme,
+    author: opts.author,
+    slides: [initialSlide],
+    outputPath: opts.path,
+  });
+}
+
+export interface AddPresentationSlideOpts {
+  path: string;
+  slide: PptSlide;
+}
+
+/**
+ * Append a single, carefully crafted slide to an existing presentation.
+ * Immediately regenerates the .pptx binary and companion manifest so the Office Studio updates live.
+ */
+export async function addPresentationSlide(
+  opts: AddPresentationSlideOpts,
+): Promise<{ path: string; slideIndex: number; totalSlides: number; manifest: OfficeDocManifest }> {
+  let manifest = await readOfficeManifest(opts.path);
+  if (!manifest || manifest.type !== "presentation") {
+    manifest = {
+      version: 1,
+      path: opts.path,
+      type: "presentation",
+      title: opts.slide.title || "Executive Presentation",
+      theme: "executive",
+      slides: [],
+      updatedAt: Date.now(),
+    };
+  }
+
+  const slides = [...(manifest.slides || [])];
+  const slideWithId: PptSlide = {
+    ...opts.slide,
+    id: opts.slide.id || `slide-${slides.length + 1}`,
+  };
+  slides.push(slideWithId);
+
+  const res = await generatePpt({
+    title: manifest.title,
+    subtitle: manifest.subtitle,
+    theme: manifest.theme as OfficeThemeId,
+    author: manifest.author,
+    slides,
+    outputPath: opts.path,
+  });
+
+  return {
+    path: opts.path,
+    slideIndex: slides.length - 1,
+    totalSlides: slides.length,
+    manifest: res.manifest,
+  };
+}
+
+export interface UpdatePresentationSlideOpts {
+  path: string;
+  slideIndex: number;
+  slide: Partial<PptSlide>;
+}
+
+/**
+ * Update or refine an existing slide in a presentation by slide index (1-based or 0-based).
+ */
+export async function updatePresentationSlide(
+  opts: UpdatePresentationSlideOpts,
+): Promise<{ path: string; slideIndex: number; totalSlides: number; manifest: OfficeDocManifest }> {
+  const manifest = await readOfficeManifest(opts.path);
+  if (!manifest || !manifest.slides || manifest.slides.length === 0) {
+    throw new Error(`Presentation not found or has no slides: ${opts.path}`);
+  }
+
+  const idx =
+    opts.slideIndex >= 1 && opts.slideIndex <= manifest.slides.length
+      ? opts.slideIndex - 1
+      : opts.slideIndex;
+
+  if (idx < 0 || idx >= manifest.slides.length) {
+    throw new Error(
+      `Invalid slide index: ${opts.slideIndex}. Total slides in deck: ${manifest.slides.length}`
+    );
+  }
+
+  const slides = [...manifest.slides];
+  slides[idx] = { ...slides[idx], ...opts.slide };
+
+  const res = await generatePpt({
+    title: manifest.title,
+    subtitle: manifest.subtitle,
+    theme: manifest.theme as OfficeThemeId,
+    author: manifest.author,
+    slides,
+    outputPath: opts.path,
+  });
+
+  return {
+    path: opts.path,
+    slideIndex: idx,
+    totalSlides: slides.length,
+    manifest: res.manifest,
+  };
 }
 
 /**

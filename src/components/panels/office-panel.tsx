@@ -24,7 +24,6 @@ import {
   Clock,
   Image as ImageIcon,
   ChevronDown,
-  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +63,13 @@ import {
   OFFICE_THEMES,
   resolveOfficeTheme,
 } from "@/lib/office/themes";
+import {
+  resolveSlideCards,
+  resolveSlideColumns,
+  resolveSlideTable,
+  resolveSlideSteps,
+  resolveSlideQuote,
+} from "@/lib/office/generator";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -87,6 +93,39 @@ const LAYOUT_ICONS: Record<SlideLayout, React.ElementType> = {
   timeline: Clock,
   quote: QuoteIcon,
 };
+
+function renderStatusCell(cell: string) {
+  const c = cell.trim().toLowerCase();
+  if (c === "on track" || c === "complete" || c === "pass" || c === "healthy") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 border border-emerald-500/30">
+        {cell}
+      </span>
+    );
+  }
+  if (c === "exceeding" || c === "optimal" || c === "high") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-500/15 text-purple-600 border border-purple-500/30">
+        {cell}
+      </span>
+    );
+  }
+  if (c === "near target" || c === "pending" || c === "in progress" || c === "warning") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-600 border border-amber-500/30">
+        {cell}
+      </span>
+    );
+  }
+  if (c === "at risk" || c === "delayed" || c === "failed" || c === "critical") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/15 text-rose-600 border border-rose-500/30">
+        {cell}
+      </span>
+    );
+  }
+  return <span>{cell}</span>;
+}
 
 export function OfficePanel() {
   const activeOfficeDoc = useAppStore((s) => s.activeOfficeDoc);
@@ -276,6 +315,13 @@ export function OfficePanel() {
   const activeSlide: PptSlide | undefined =
     activeOfficeDoc?.slides?.[currentSlideIndex] || activeOfficeDoc?.slides?.[0];
 
+  // Resolved layout content (ensures NEVER a blank white slide)
+  const resolvedCards = activeSlide ? resolveSlideCards(activeSlide) : [];
+  const resolvedColumns = activeSlide ? resolveSlideColumns(activeSlide) : [];
+  const resolvedTable = activeSlide ? resolveSlideTable(activeSlide) : { headers: [], rows: [] };
+  const resolvedSteps = activeSlide ? resolveSlideSteps(activeSlide) : [];
+  const resolvedQuote = activeSlide ? resolveSlideQuote(activeSlide) : { text: "" };
+
   // =========================================================================
   // EMPTY STATE (When no office docs have been generated yet)
   // =========================================================================
@@ -290,20 +336,19 @@ export function OfficePanel() {
             HermOS Office Studio
           </h2>
           <p className="text-xs text-muted-foreground leading-relaxed mb-6">
-            Your AI agent generates executive presentations, Word specifications, and PDF reports.
-            Created documents render natively right here with live 16:9 slide canvases, theme switchers,
-            and interactive visual editing.
+            Your AI agent creates company-grade presentations, Word specifications, and PDF reports
+            slide-by-slide with executive layouts, live theme switchers, and real-time visual inspection.
           </p>
 
           <div className="w-full space-y-2.5 text-left">
             <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
-              Quick Agent Starters:
+              Step-by-Step Agent Starters:
             </div>
 
             <button
               onClick={() => {
                 handleTriggerPrompt(
-                  "Generate an executive 6-slide presentation (presentation.pptx) on our architecture, roadmap, and performance metrics."
+                  "Outline and create an executive 6-slide presentation (presentation.pptx) on our platform architecture, roadmap, and performance metrics. Build it slide-by-slide with tailored layouts (KPI cards, split architecture, metrics table, roadmap timeline, and executive quote)."
                 );
               }}
               className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-left group flex items-start gap-3 cursor-pointer shadow-xs"
@@ -312,9 +357,9 @@ export function OfficePanel() {
                 <Presentation className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">Create a Presentation</div>
+                <div className="text-xs font-semibold text-foreground">Create a Presentation (Slide-by-Slide)</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
-                  "Generate an executive 6-slide deck on our architecture and roadmap"
+                  "Build an executive 6-slide deck carefully slide-by-slide with cards, tables, and roadmaps"
                 </div>
               </div>
             </button>
@@ -363,11 +408,11 @@ export function OfficePanel() {
   }
 
   // =========================================================================
-  // STUDIO INTERFACE (Kimi / GLM Style with Best-Practice UI Components)
+  // STUDIO INTERFACE (Kimi / GLM Style with Company-Grade Aesthetics)
   // =========================================================================
   return (
     <div className="flex flex-col h-full bg-background border-l border-border select-none overflow-hidden">
-      {/* 1. TOP STUDIO BAR — Best Practice Responsive Layout */}
+      {/* 1. TOP STUDIO BAR — Zero Collision, Clear Affordances */}
       <div className="h-10 border-b border-border px-2.5 flex items-center justify-between gap-1.5 shrink-0 bg-card/50 backdrop-blur-sm">
         {/* Left: Document Selector & Type Badge */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
@@ -376,7 +421,7 @@ export function OfficePanel() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 px-2 text-xs font-medium gap-1.5 max-w-[200px] truncate hover:bg-accent/60 shrink-0"
+                className="h-7 px-2 text-xs font-medium gap-1.5 max-w-[220px] truncate hover:bg-accent/60 shrink-0"
               >
                 {activeOfficeDoc?.type === "presentation" ? (
                   <Presentation className="w-3.5 h-3.5 text-brand shrink-0" />
@@ -421,20 +466,21 @@ export function OfficePanel() {
           </Badge>
         </div>
 
-        {/* Right: Studio Controls (Icon Toolbar with Tooltips + Compact Save) */}
+        {/* Right: Studio Controls Toolbar */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* Theme Switcher via Dropdown */}
+          {/* Theme Switcher with Palette Icon and Color Indicator */}
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-md hover:bg-accent/60"
+                    size="sm"
+                    className="h-7 px-1.5 gap-1 rounded-md hover:bg-accent/60 text-muted-foreground hover:text-foreground text-xs"
                   >
+                    <Palette className="w-3.5 h-3.5" />
                     <span
-                      className="w-3.5 h-3.5 rounded-full border border-border/80 shadow-xs"
+                      className="w-2.5 h-2.5 rounded-full border border-border/80 shadow-xs"
                       style={{ backgroundColor: `#${theme.primary}` }}
                     />
                   </Button>
@@ -463,7 +509,7 @@ export function OfficePanel() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Theme: {theme.name}</TooltipContent>
+            <TooltipContent side="bottom">Change Theme: {theme.name}</TooltipContent>
           </Tooltip>
 
           {/* Slideshow Button */}
@@ -535,16 +581,19 @@ export function OfficePanel() {
       </div>
 
       {/* =================================================================== */}
-      {/* 2. PRESENTATION STUDIO (Responsive Canvas & Dynamic Editor) */}
+      {/* 2. PRESENTATION STUDIO (Widescreen 16:9 Canvas & Dynamic Inspector) */}
       {/* =================================================================== */}
       {activeOfficeDoc?.type === "presentation" && (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <div className="flex-1 flex min-h-0 overflow-hidden">
-            {/* Left Slide Filmstrip — No Manual Add Button */}
-            <div className="w-36 border-r border-border bg-card/20 flex flex-col shrink-0 overflow-hidden">
+            {/* Left Slide Filmstrip — Wider w-44 for Legible Titles */}
+            <div className="w-44 border-r border-border bg-card/20 flex flex-col shrink-0 overflow-hidden">
               <div className="p-2 border-b border-border/60 flex items-center justify-between">
                 <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Slides ({activeOfficeDoc.slides?.length || 0})
+                </span>
+                <span className="text-[9px] font-mono text-muted-foreground">
+                  {currentSlideIndex + 1}/{activeOfficeDoc.slides?.length || 1}
                 </span>
               </div>
 
@@ -559,29 +608,28 @@ export function OfficePanel() {
                         key={slide.id || sIdx}
                         onClick={() => setCurrentSlideIndex(sIdx)}
                         className={cn(
-                          "group relative p-2 rounded-md border transition-all cursor-pointer text-left",
+                          "group relative p-2.5 rounded-lg border transition-all cursor-pointer text-left",
                           isActive
                             ? "border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs"
                             : "border-border/60 bg-card/50 hover:bg-accent/40 hover:border-border"
                         )}
                       >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[9px] font-mono text-muted-foreground font-semibold">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-background/80 border text-muted-foreground font-semibold">
                             {sIdx + 1}
                           </span>
-                          <LayoutIcon className="w-3 h-3 text-muted-foreground group-hover:text-brand transition-colors" />
+                          <span className="text-[9px] font-medium text-muted-foreground capitalize flex items-center gap-1">
+                            <LayoutIcon className="w-3 h-3 text-brand/80" />
+                            {slide.layout || "bullets"}
+                          </span>
                         </div>
 
-                        <div className="text-[11px] font-medium text-foreground truncate">
+                        <div className="text-xs font-semibold text-foreground line-clamp-2 leading-snug">
                           {slide.title}
                         </div>
 
-                        <div className="text-[9px] text-muted-foreground capitalize mt-0.5">
-                          {slide.layout || "bullets"}
-                        </div>
-
                         {/* Slide action buttons: duplicate and delete */}
-                        <div className="absolute right-1 top-1 hidden group-hover:flex items-center gap-0.5 bg-card/90 border border-border/80 rounded px-0.5 py-0.5 shadow-xs">
+                        <div className="absolute right-1.5 top-1.5 hidden group-hover:flex items-center gap-0.5 bg-card/95 border border-border/80 rounded px-1 py-0.5 shadow-xs">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -610,11 +658,11 @@ export function OfficePanel() {
               </ScrollArea>
             </div>
 
-            {/* Center: Interactive Slide Canvas (Self-Adapting Height, No Clipped Content) */}
+            {/* Center: Interactive Slide Canvas (Company-Grade 16:9 Aspect, Zero Blank Slides) */}
             <div className="flex-1 flex flex-col bg-accent/15 p-3 md:p-6 overflow-y-auto items-center justify-center min-h-0">
               {activeSlide && (
                 <div
-                  className="w-full max-w-3xl min-h-[280px] rounded-xl border shadow-lg flex flex-col justify-between p-6 relative transition-all duration-200"
+                  className="w-full max-w-3xl min-h-[320px] rounded-xl border shadow-xl flex flex-col justify-between p-6 relative transition-all duration-200"
                   style={{
                     backgroundColor: `#${activeSlide.layout === "title" && theme.isDarkTheme ? theme.primaryDark : theme.bg}`,
                     borderColor: `#${theme.border}`,
@@ -623,39 +671,39 @@ export function OfficePanel() {
                 >
                   {/* Decorative top accent line */}
                   <div
-                    className="absolute top-0 left-0 right-0 h-1 rounded-t-xl"
+                    className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
                     style={{ backgroundColor: `#${theme.primary}` }}
                   />
 
                   {/* Header Area */}
                   {activeSlide.layout === "title" ? (
-                    <div className="flex-1 flex flex-col justify-center py-4">
-                      <div className="flex items-center gap-2 mb-2">
+                    <div className="flex-1 flex flex-col justify-center py-6">
+                      <div className="flex items-center gap-2 mb-3">
                         <span
-                          className="w-1.5 h-6 rounded-full"
+                          className="w-2 h-7 rounded-full"
                           style={{ backgroundColor: `#${theme.accent}` }}
                         />
-                        <span className="text-[10px] uppercase tracking-widest font-mono font-semibold opacity-75">
-                          {activeOfficeDoc.author || "HermOS AI Studio"}
+                        <span className="text-[11px] uppercase tracking-widest font-mono font-semibold opacity-75">
+                          {activeOfficeDoc.author || "HermOS AI Studio"} • Executive Briefing
                         </span>
                       </div>
-                      <h1 className="text-2xl md:text-4xl font-bold tracking-tight mb-2">
+                      <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight mb-2.5">
                         {activeSlide.title}
                       </h1>
                       {activeSlide.subtitle && (
-                        <p className="text-sm md:text-lg opacity-85" style={{ color: `#${theme.secondary}` }}>
+                        <p className="text-sm md:text-lg opacity-85 leading-relaxed" style={{ color: `#${theme.secondary}` }}>
                           {activeSlide.subtitle}
                         </p>
                       )}
                       <div className="mt-6 flex items-center gap-2">
                         <div
-                          className="px-2.5 py-0.5 rounded-full text-[10px] font-medium border"
+                          className="px-3 py-1 rounded-full text-[11px] font-medium border shadow-xs"
                           style={{
                             backgroundColor: `#${theme.cardBg}`,
                             borderColor: `#${theme.border}`,
                           }}
                         >
-                          {activeOfficeDoc.slides?.length || 0} Slides Deck
+                          {activeOfficeDoc.slides?.length || 0} Slides Deck • {theme.name} Palette
                         </div>
                       </div>
                     </div>
@@ -663,31 +711,43 @@ export function OfficePanel() {
                     <>
                       {/* Slide Title & Subtitle */}
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-1.5 h-5 rounded-full shrink-0"
+                              style={{ backgroundColor: `#${theme.primary}` }}
+                            />
+                            <h2 className="text-lg md:text-xl font-bold tracking-tight">
+                              {activeSlide.title}
+                            </h2>
+                          </div>
                           <span
-                            className="w-1 h-4 rounded-full shrink-0"
-                            style={{ backgroundColor: `#${theme.primary}` }}
-                          />
-                          <h2 className="text-lg md:text-xl font-bold tracking-tight">
-                            {activeSlide.title}
-                          </h2>
+                            className="text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded border"
+                            style={{
+                              backgroundColor: `#${theme.cardBg}`,
+                              borderColor: `#${theme.border}`,
+                              color: `#${theme.textMuted}`,
+                            }}
+                          >
+                            {activeSlide.layout || "bullets"}
+                          </span>
                         </div>
                         {activeSlide.subtitle && (
-                          <p className="text-xs pl-3 opacity-75" style={{ color: `#${theme.textMuted}` }}>
+                          <p className="text-xs pl-3.5 opacity-80" style={{ color: `#${theme.textMuted}` }}>
                             {activeSlide.subtitle}
                           </p>
                         )}
                       </div>
 
-                      {/* Layout-Specific Content Area (Adaptive, Scrollable If Overflowing) */}
-                      <div className="flex-1 my-3 flex flex-col justify-center min-h-0 overflow-y-auto max-h-[380px]">
-                        {/* 1. KPI / FEATURE CARDS */}
-                        {activeSlide.layout === "cards" && activeSlide.cards && (
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 my-auto">
-                            {activeSlide.cards.map((c, cIdx) => (
+                      {/* Layout-Specific Content Area (Adaptive, Guaranteed Render) */}
+                      <div className="flex-1 my-3.5 flex flex-col justify-center min-h-0 overflow-y-auto max-h-[360px]">
+                        {/* 1. KPI / FEATURE CARDS LAYOUT */}
+                        {activeSlide.layout === "cards" && (
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 my-auto">
+                            {resolvedCards.map((c, cIdx) => (
                               <div
                                 key={cIdx}
-                                className="p-3 rounded-lg border flex flex-col justify-between"
+                                className="p-3.5 rounded-xl border flex flex-col justify-between shadow-xs transition-all hover:shadow-md"
                                 style={{
                                   backgroundColor: `#${theme.cardBg}`,
                                   borderColor: `#${theme.border}`,
@@ -696,7 +756,7 @@ export function OfficePanel() {
                                 <div>
                                   {c.badge && (
                                     <span
-                                      className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider mb-1.5 border"
+                                      className="inline-block px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider mb-2 border"
                                       style={{
                                         backgroundColor: `#${theme.tagBg}`,
                                         borderColor: `#${theme.accent}`,
@@ -708,17 +768,17 @@ export function OfficePanel() {
                                   )}
                                   {c.value && (
                                     <div
-                                      className="text-xl md:text-2xl font-extrabold tracking-tight mb-0.5"
+                                      className="text-2xl md:text-3xl font-extrabold tracking-tight mb-1"
                                       style={{ color: `#${theme.primary}` }}
                                     >
                                       {c.value}
                                     </div>
                                   )}
-                                  <div className="text-xs font-semibold mb-0.5">
+                                  <div className="text-xs md:text-sm font-bold mb-1">
                                     {c.title}
                                   </div>
                                 </div>
-                                <p className="text-[10px] leading-relaxed opacity-75">
+                                <p className="text-[11px] leading-relaxed opacity-80">
                                   {c.description}
                                 </p>
                               </div>
@@ -726,20 +786,20 @@ export function OfficePanel() {
                           </div>
                         )}
 
-                        {/* 2. SPLIT 2-COLUMN COMPARISON */}
-                        {activeSlide.layout === "split" && activeSlide.columns && (
-                          <div className="grid grid-cols-2 gap-3 my-auto">
-                            {activeSlide.columns.map((col, colIdx) => (
+                        {/* 2. SPLIT 2-COLUMN COMPARISON LAYOUT */}
+                        {activeSlide.layout === "split" && (
+                          <div className="grid grid-cols-2 gap-3.5 my-auto">
+                            {resolvedColumns.map((col, colIdx) => (
                               <div
                                 key={colIdx}
-                                className="p-3 rounded-lg border"
+                                className="p-4 rounded-xl border shadow-xs"
                                 style={{
                                   backgroundColor: `#${theme.cardBg}`,
                                   borderColor: `#${theme.border}`,
                                 }}
                               >
                                 <h3
-                                  className="text-xs font-bold uppercase tracking-wider mb-2 pb-1.5 border-b"
+                                  className="text-xs font-bold uppercase tracking-wider mb-2.5 pb-1.5 border-b"
                                   style={{
                                     color: colIdx === 0 ? `#${theme.primary}` : `#${theme.secondary}`,
                                     borderColor: `#${theme.border}`,
@@ -747,11 +807,11 @@ export function OfficePanel() {
                                 >
                                   {col.heading}
                                 </h3>
-                                <ul className="space-y-1.5">
+                                <ul className="space-y-2">
                                   {col.bullets.map((b, bIdx) => (
-                                    <li key={bIdx} className="text-[11px] flex items-start gap-1.5">
+                                    <li key={bIdx} className="text-[11px] flex items-start gap-2 leading-relaxed">
                                       <span
-                                        className="w-1 h-1 rounded-full mt-1.5 shrink-0"
+                                        className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
                                         style={{ backgroundColor: `#${theme.primary}` }}
                                       />
                                       <span>{b}</span>
@@ -763,24 +823,24 @@ export function OfficePanel() {
                           </div>
                         )}
 
-                        {/* 3. DATA TABLE — Complete Row Rendering */}
-                        {activeSlide.layout === "table" && activeSlide.table && (
+                        {/* 3. DATA TABLE LAYOUT */}
+                        {activeSlide.layout === "table" && (
                           <div
-                            className="rounded-lg border overflow-x-auto my-auto max-h-[260px]"
+                            className="rounded-xl border overflow-x-auto my-auto max-h-[280px] shadow-xs"
                             style={{ borderColor: `#${theme.border}` }}
                           >
                             <table className="w-full text-xs text-left border-collapse">
                               <thead className="sticky top-0 z-10">
                                 <tr style={{ backgroundColor: `#${theme.primary}`, color: "#FFFFFF" }}>
-                                  {activeSlide.table.headers.map((h, hIdx) => (
-                                    <th key={hIdx} className="px-3 py-2 font-semibold whitespace-nowrap">
+                                  {resolvedTable.headers.map((h, hIdx) => (
+                                    <th key={hIdx} className="px-3.5 py-2.5 font-semibold whitespace-nowrap">
                                       {h}
                                     </th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody className="divide-y" style={{ borderColor: `#${theme.border}` }}>
-                                {activeSlide.table.rows.map((row, rIdx) => (
+                                {resolvedTable.rows.map((row, rIdx) => (
                                   <tr
                                     key={rIdx}
                                     style={{
@@ -788,8 +848,8 @@ export function OfficePanel() {
                                     }}
                                   >
                                     {row.map((cell, cIdx) => (
-                                      <td key={cIdx} className="px-3 py-1.5 whitespace-nowrap">
-                                        {cell}
+                                      <td key={cIdx} className="px-3.5 py-2 whitespace-nowrap">
+                                        {renderStatusCell(cell)}
                                       </td>
                                     ))}
                                   </tr>
@@ -799,13 +859,13 @@ export function OfficePanel() {
                           </div>
                         )}
 
-                        {/* 4. TIMELINE / STEPS */}
-                        {activeSlide.layout === "timeline" && activeSlide.steps && (
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 my-auto">
-                            {activeSlide.steps.map((st, stIdx) => (
+                        {/* 4. TIMELINE / ROADMAP STEPS LAYOUT */}
+                        {activeSlide.layout === "timeline" && (
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 my-auto">
+                            {resolvedSteps.map((st, stIdx) => (
                               <div
                                 key={stIdx}
-                                className="p-2.5 rounded-lg border flex flex-col justify-between"
+                                className="p-3 rounded-xl border flex flex-col justify-between shadow-xs"
                                 style={{
                                   backgroundColor: `#${theme.cardBg}`,
                                   borderColor: `#${theme.border}`,
@@ -813,47 +873,50 @@ export function OfficePanel() {
                               >
                                 <div>
                                   <div
-                                    className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-[10px] text-white mb-1.5"
+                                    className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs text-white mb-2 shadow-xs"
                                     style={{ backgroundColor: `#${theme.primary}` }}
                                   >
                                     {st.step}
                                   </div>
-                                  <div className="text-xs font-bold mb-0.5">{st.title}</div>
+                                  <div className="text-xs font-bold mb-1">{st.title}</div>
                                 </div>
-                                <p className="text-[10px] opacity-75 leading-relaxed">{st.description}</p>
+                                <p className="text-[11px] opacity-80 leading-relaxed">{st.description}</p>
                               </div>
                             ))}
                           </div>
                         )}
 
-                        {/* 5. IMPACT QUOTE */}
-                        {activeSlide.layout === "quote" && activeSlide.quote && (
-                          <div className="px-6 py-4 flex items-start gap-3 my-auto">
+                        {/* 5. IMPACT QUOTE LAYOUT */}
+                        {activeSlide.layout === "quote" && (
+                          <div className="px-6 py-5 flex items-start gap-4 my-auto">
                             <QuoteIcon
-                              className="w-8 h-8 shrink-0 opacity-40"
+                              className="w-10 h-10 shrink-0 opacity-30"
                               style={{ color: `#${theme.accent}` }}
                             />
                             <div>
-                              <p className="text-base md:text-xl font-serif italic mb-2 leading-relaxed">
-                                "{activeSlide.quote.text}"
+                              <p className="text-lg md:text-2xl font-serif italic mb-3 leading-relaxed">
+                                "{resolvedQuote.text}"
                               </p>
-                              <div className="text-xs font-semibold" style={{ color: `#${theme.primary}` }}>
-                                — {activeSlide.quote.author || "Anonymous"}
-                                {activeSlide.quote.role && (
-                                  <span className="opacity-70 font-normal">, {activeSlide.quote.role}</span>
+                              <div className="text-xs md:text-sm font-bold" style={{ color: `#${theme.primary}` }}>
+                                — {resolvedQuote.author || "Anonymous"}
+                                {resolvedQuote.role && (
+                                  <span className="opacity-75 font-normal">, {resolvedQuote.role}</span>
                                 )}
                               </div>
                             </div>
                           </div>
                         )}
 
-                        {/* 6. STANDARD BULLETS (Default) */}
+                        {/* 6. STANDARD BULLETS LAYOUT (Default Fallback) */}
                         {(!activeSlide.layout || activeSlide.layout === "bullets") && (
-                          <ul className="space-y-2 pl-1 my-auto">
-                            {activeSlide.bullets?.map((b, bIdx) => (
-                              <li key={bIdx} className="text-xs md:text-sm flex items-start gap-2 leading-relaxed">
+                          <ul className="space-y-2.5 pl-1 my-auto">
+                            {(activeSlide.bullets && activeSlide.bullets.length > 0
+                              ? activeSlide.bullets
+                              : ["Core platform architecture pattern", "High-velocity delivery pipeline", "Continuous quality verification"]
+                            ).map((b, bIdx) => (
+                              <li key={bIdx} className="text-xs md:text-sm flex items-start gap-2.5 leading-relaxed">
                                 <span
-                                  className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                                  className="w-2 h-2 rounded-full mt-1.5 shrink-0 shadow-xs"
                                   style={{ backgroundColor: `#${theme.primary}` }}
                                 />
                                 <span>{b}</span>
@@ -867,10 +930,10 @@ export function OfficePanel() {
 
                   {/* Slide Canvas Footer */}
                   <div
-                    className="pt-2 border-t flex items-center justify-between text-[9px] opacity-70"
+                    className="pt-2.5 border-t flex items-center justify-between text-[10px] opacity-70 font-mono"
                     style={{ borderColor: `#${theme.border}` }}
                   >
-                    <span className="truncate max-w-[200px]">{activeOfficeDoc.title} • HermOS Office Studio</span>
+                    <span className="truncate max-w-[240px]">{activeOfficeDoc.title}</span>
                     <span className="shrink-0">
                       Slide {currentSlideIndex + 1} of {activeOfficeDoc.slides?.length || 1}
                     </span>
@@ -885,11 +948,11 @@ export function OfficePanel() {
                   variant="outline"
                   disabled={currentSlideIndex <= 0}
                   onClick={() => setCurrentSlideIndex((c) => Math.max(0, c - 1))}
-                  className="h-7 px-2 text-xs"
+                  className="h-7 px-2.5 text-xs"
                 >
                   <ChevronLeft className="w-3 h-3 mr-1" /> Prev
                 </Button>
-                <span className="text-xs font-mono text-muted-foreground px-1">
+                <span className="text-xs font-mono text-muted-foreground px-2">
                   {currentSlideIndex + 1} / {activeOfficeDoc.slides?.length || 1}
                 </span>
                 <Button
@@ -897,7 +960,7 @@ export function OfficePanel() {
                   variant="outline"
                   disabled={currentSlideIndex >= (activeOfficeDoc.slides?.length || 1) - 1}
                   onClick={() => setCurrentSlideIndex((c) => Math.min((activeOfficeDoc.slides?.length || 1) - 1, c + 1))}
-                  className="h-7 px-2 text-xs"
+                  className="h-7 px-2.5 text-xs"
                 >
                   Next <ChevronRight className="w-3 h-3 ml-1" />
                 </Button>
@@ -942,7 +1005,7 @@ export function OfficePanel() {
                       updateActiveOfficeSlide(currentSlideIndex, { layout: val as SlideLayout })
                     }
                   >
-                    <SelectTrigger className="h-6 text-[11px] w-[105px] border-border/60">
+                    <SelectTrigger className="h-6 text-[11px] w-[110px] border-border/60">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -989,13 +1052,13 @@ export function OfficePanel() {
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Table Headers (comma-separated)</Label>
                         <Input
-                          value={activeSlide.table?.headers.join(", ") || ""}
+                          value={resolvedTable.headers.join(", ")}
                           onChange={(e) => {
                             const headers = e.target.value.split(",").map((h) => h.trim()).filter(Boolean);
                             updateActiveOfficeSlide(currentSlideIndex, {
                               table: {
                                 headers,
-                                rows: activeSlide.table?.rows || [],
+                                rows: resolvedTable.rows,
                               },
                             });
                           }}
@@ -1006,7 +1069,7 @@ export function OfficePanel() {
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Table Rows (one row per line, comma-separated)</Label>
                         <Textarea
-                          value={activeSlide.table?.rows.map((r) => r.join(", ")).join("\n") || ""}
+                          value={resolvedTable.rows.map((r) => r.join(", ")).join("\n")}
                           onChange={(e) => {
                             const rows = e.target.value
                               .split("\n")
@@ -1014,7 +1077,7 @@ export function OfficePanel() {
                               .map((line) => line.split(",").map((c) => c.trim()));
                             updateActiveOfficeSlide(currentSlideIndex, {
                               table: {
-                                headers: activeSlide.table?.headers || [],
+                                headers: resolvedTable.headers,
                                 rows,
                               },
                             });
@@ -1032,11 +1095,9 @@ export function OfficePanel() {
                     <div>
                       <Label className="text-[10px] text-muted-foreground">KPI Cards (one per line: Title | Value | Badge | Description)</Label>
                       <Textarea
-                        value={
-                          activeSlide.cards
-                            ?.map((c) => `${c.title} | ${c.value || ""} | ${c.badge || ""} | ${c.description}`)
-                            .join("\n") || ""
-                        }
+                        value={resolvedCards
+                          .map((c) => `${c.title} | ${c.value || ""} | ${c.badge || ""} | ${c.description}`)
+                          .join("\n")}
                         onChange={(e) => {
                           const cards = e.target.value
                             .split("\n")
@@ -1053,7 +1114,7 @@ export function OfficePanel() {
                           updateActiveOfficeSlide(currentSlideIndex, { cards });
                         }}
                         rows={2}
-                        className="text-xs mt-0.5 resize-none"
+                        className="text-xs mt-0.5 resize-none font-mono"
                         placeholder="Throughput | 45K req/s | High | Microservices gateway capacity"
                       />
                     </div>
@@ -1065,10 +1126,10 @@ export function OfficePanel() {
                       <div className="sm:col-span-2">
                         <Label className="text-[10px] text-muted-foreground">Quote Text</Label>
                         <Textarea
-                          value={activeSlide.quote?.text || ""}
+                          value={resolvedQuote.text}
                           onChange={(e) =>
                             updateActiveOfficeSlide(currentSlideIndex, {
-                              quote: { ...activeSlide.quote, text: e.target.value },
+                              quote: { ...resolvedQuote, text: e.target.value },
                             })
                           }
                           rows={2}
@@ -1078,10 +1139,10 @@ export function OfficePanel() {
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Author</Label>
                         <Input
-                          value={activeSlide.quote?.author || ""}
+                          value={resolvedQuote.author || ""}
                           onChange={(e) =>
                             updateActiveOfficeSlide(currentSlideIndex, {
-                              quote: { text: activeSlide.quote?.text || "", author: e.target.value, role: activeSlide.quote?.role },
+                              quote: { text: resolvedQuote.text, author: e.target.value, role: resolvedQuote.role },
                             })
                           }
                           className="h-7 text-xs mt-0.5"
@@ -1090,10 +1151,10 @@ export function OfficePanel() {
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Role / Organization</Label>
                         <Input
-                          value={activeSlide.quote?.role || ""}
+                          value={resolvedQuote.role || ""}
                           onChange={(e) =>
                             updateActiveOfficeSlide(currentSlideIndex, {
-                              quote: { text: activeSlide.quote?.text || "", author: activeSlide.quote?.author, role: e.target.value },
+                              quote: { text: resolvedQuote.text, author: resolvedQuote.author, role: e.target.value },
                             })
                           }
                           className="h-7 text-xs mt-0.5"
@@ -1320,7 +1381,7 @@ export function OfficePanel() {
                       )}
                     </div>
                     <div className="flex-1 my-4 flex flex-col justify-center">
-                      {activeSlide.bullets?.map((b, bIdx) => (
+                      {(activeSlide.layout === "cards" ? resolvedCards.map((c) => `${c.title}: ${c.description}`) : activeSlide.bullets || []).map((b, bIdx) => (
                         <div key={bIdx} className="text-base md:text-lg flex items-center gap-2.5 py-1.5">
                           <span
                             className="w-2 h-2 rounded-full shrink-0"

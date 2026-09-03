@@ -132,6 +132,9 @@ export function actionForTool(toolName: string): PermissionAction | null {
       // capability. Defaults to allow like the other subagent actions.
       return "subagent.message";
     case "generate_ppt":
+    case "init_presentation":
+    case "add_presentation_slide":
+    case "update_presentation_slide":
     case "generate_doc":
     case "generate_pdf":
     case "create_artifact":
