@@ -170,8 +170,8 @@ export function SubagentsPanel() {
             {subagents.length}
           </Badge>
           {runningCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-[9px] font-mono font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="inline-flex items-center gap-1 text-[9px] font-mono font-medium px-1.5 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/20">
+              <span className="size-1.5 rounded-full bg-brand animate-pulse" />
               {runningCount} running
             </span>
           )}
@@ -383,17 +383,17 @@ function StatusDot({ name, task }: { name?: string; task?: string }) {
   const isExplore = text.includes("explore") || text.includes("architect") || text.includes("research") || text.includes("review") || text.includes("inspect") || text.includes("read-only") || text.includes("plan");
 
   if (isExplore) {
-    return <Compass className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />;
+    return <Compass className="size-3.5 text-brand shrink-0" />;
   }
-  return <Bot className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />;
+  return <Bot className="size-3.5 text-brand shrink-0" />;
 }
 
 function StatusBadge({ status }: { status: SubagentStatus }) {
   if (status === "running") {
-    return <Loader2 className="size-3.5 text-emerald-500 dark:text-emerald-400 animate-spin shrink-0" />;
+    return <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />;
   }
   if (status === "completed") {
-    return <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-medium">completed</span>;
+    return <span className="text-[10px] font-mono text-brand font-medium">completed</span>;
   }
   if (status === "failed") {
     return <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">failed</span>;

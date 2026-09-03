@@ -34,7 +34,11 @@ import { FILE_OP_TOOLS, computeDiffStats, formatBytes } from "@/lib/tool-ui-shar
 import { sanitizeContent, sanitizeThinkingContent, extractThinkingAndContent } from "@/lib/sanitize-content";
 import type { AttachmentDTO } from "@/lib/types";
 import type { UIMessage } from "@/stores/app-store";
-import { openExternalUrl } from "@/lib/open-external";
+// NOTE: external links are opened via the global interceptor in
+// `src/components/providers.tsx` (`setupGlobalLinkInterceptor`). Do NOT add
+// per-link `onClick -> openExternalUrl` here: it double-fires with the global
+// handler and breaks middle-click / Ctrl-click / context-menu. Keep plain
+// anchors with `target="_blank" rel="noopener noreferrer"`.
 
 /**
  * Memoized sanitize for stable segment contents. `sanitizeContent` is pure
@@ -526,13 +530,7 @@ const markdownComponents: Components = {
       <a
         href={href}
         target="_blank"
-        rel="noreferrer"
-        onClick={(e) => {
-          if (href) {
-            e.preventDefault();
-            void openExternalUrl(href);
-          }
-        }}
+        rel="noopener noreferrer"
         className="text-brand underline-offset-2 hover:underline font-medium cursor-pointer"
       >
         {children}
@@ -1238,9 +1236,9 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
         )}
       >
         {isNoToggle ? null : status === "running" ? (
-          <Loader2 className="size-3.5 animate-spin text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <Loader2 className="size-3.5 animate-spin text-brand shrink-0" />
         ) : status === "done" ? (
-          <CheckCircle2 className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <CheckCircle2 className="size-3.5 text-brand shrink-0" />
         ) : (
           <ChevronRight
             className={cn(
@@ -1251,7 +1249,7 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
         )}
         {isSearch ? (
           <>
-            <Search className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+            <Search className="size-3.5 text-brand shrink-0" />
             <code className="font-mono text-[11px] truncate min-w-0 flex-1 text-foreground">
               {query || tc.name}
             </code>
@@ -1378,14 +1376,14 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
       className={cn(
         "group relative overflow-hidden flex w-full items-center justify-between rounded-lg border border-border/60 bg-card/80 dark:bg-zinc-950/40 px-3 py-2 text-xs cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-accent/20 dark:hover:bg-zinc-900/50 transition-all duration-200 my-2 shadow-2xs hover:shadow-xs",
         status === "failed" && "border-rose-500/30 hover:border-rose-500/50",
-        status === "completed" && "border-emerald-500/20 hover:border-emerald-500/40"
+        status === "completed" && "border-brand/20 hover:border-brand/40"
       )}
     >
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {isExploreOrArchitect ? (
-          <Compass className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" aria-label="Explore / Architect agent" />
+          <Compass className="size-3.5 text-brand shrink-0" aria-label="Explore / Architect agent" />
         ) : (
-          <Bot className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" aria-label="General agent" />
+          <Bot className="size-3.5 text-brand shrink-0" aria-label="General agent" />
         )}
         <span className="font-semibold text-xs text-foreground truncate tracking-tight min-w-0" title={name}>
           {name}
@@ -1394,9 +1392,9 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
 
       <div className="flex items-center gap-2 shrink-0 ml-3">
         {status === "running" ? (
-          <Loader2 className="size-3.5 text-emerald-500 dark:text-emerald-400 animate-spin shrink-0" />
+          <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />
         ) : status === "completed" ? (
-          <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-medium">completed</span>
+          <span className="text-[10px] font-mono text-brand font-medium">completed</span>
         ) : status === "failed" ? (
           <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">failed</span>
         ) : null}
@@ -1548,11 +1546,11 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
         className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         {isRunning ? (
-          <Loader2 className="size-3.5 animate-spin text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <Loader2 className="size-3.5 animate-spin text-brand shrink-0" />
         ) : (
-          <CheckCircle2 className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <CheckCircle2 className="size-3.5 text-brand shrink-0" />
         )}
-        <BatchIcon className={cn("size-3.5 shrink-0", isDirOnly ? "text-amber-500/90 dark:text-amber-400/90" : "text-emerald-500 dark:text-emerald-400")} />
+        <BatchIcon className={cn("size-3.5 shrink-0", isDirOnly ? "text-amber-500/90 dark:text-amber-400/90" : "text-brand")} />
         <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{label}</span>
         {subLabel && (
           <span className="font-mono text-[11px] text-foreground/80 truncate min-w-0 flex-1">

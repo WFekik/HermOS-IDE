@@ -289,7 +289,7 @@ interface TreeNodeProps {
   gitMap: Map<string, GitFileStatus>;
 }
 
-function TreeNode(props: TreeNodeProps) {
+const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
   const {
     node,
     depth,
@@ -532,4 +532,4 @@ function TreeNode(props: TreeNodeProps) {
       )}
     </div>
   );
-}
+});

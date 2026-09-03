@@ -414,15 +414,15 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={cn(
         "inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-mono font-medium tracking-tight uppercase border max-w-[120px] truncate shrink-0 select-none",
-        status === "completed" && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+        status === "completed" && "bg-brand/10 text-brand border-brand/20",
         status === "failed" && "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
         status === "cancelled" && "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
-        status === "running" && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+        status === "running" && "bg-brand/10 text-brand border-brand/20",
         status === "pending" && "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
       )}
     >
       {status === "running" && (
-        <span className="mr-1 size-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+        <span className="mr-1 size-1.5 rounded-full bg-brand animate-pulse shrink-0" />
       )}
       {label}
     </span>

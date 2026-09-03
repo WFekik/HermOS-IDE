@@ -66,7 +66,7 @@ function statusIcon(status: string): React.ElementType {
 function statusClass(status: string): string {
   switch (status) {
     case "completed":
-      return "text-emerald-600 dark:text-emerald-400";
+      return "text-brand";
     case "in_progress":
       return "text-brand";
     default:

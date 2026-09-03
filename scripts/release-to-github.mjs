@@ -151,7 +151,61 @@ for (const file of files) {
 }
 
 /**
+ * Map a Tauri bundle filename to its Tauri updater platform key(s).
+ * Company-grade: arch-aware instead of assigning the same URL to both darwin
+ * archs blindly. Universal binaries satisfy all darwin keys; arch-specific
+ * bundles only satisfy their own arch.
+ * Returns an array (empty = unrecognized, caller skips).
+ */
+function mapAssetToPlatforms(baseName) {
+  const lower = baseName.toLowerCase();
+  // Windows
+  if (lower.endsWith(".exe") || lower.includes("x64-setup") || lower.includes("-setup.exe")) {
+    return ["windows-x86_64", "windows-x86_64-nsis"];
+  }
+  if (lower.endsWith(".msi") || lower.includes("x64_en-us")) {
+    return ["windows-x86_64-msi"];
+  }
+  // macOS — detect arch explicitly
+  const isDarwin =
+    lower.includes("darwin") ||
+    lower.includes(".app.tar.gz") ||
+    lower.includes(".dmg") ||
+    lower.includes("macos");
+  if (isDarwin) {
+    const isArm =
+      lower.includes("aarch64") || lower.includes("arm64") || lower.includes("apple-silicon");
+    const isX64 =
+      lower.includes("x86_64") || lower.includes("x64") || lower.includes("intel");
+    const isUniversal = lower.includes("universal");
+    if (isUniversal) return ["darwin-x86_64", "darwin-aarch64", "darwin-universal"];
+    if (isArm && !isX64) return ["darwin-aarch64"];
+    if (isX64 && !isArm) return ["darwin-x86_64"];
+    // Ambiguous darwin asset (no arch marker): do NOT guess both archs with
+    // possibly-wrong binary. Record as universal only if the bundle itself is
+    // marked universal; otherwise prefer explicit arch assets when present.
+    // Fallback: assign to universal key so updater still finds *something*,
+    // but never overwrite an existing arch-specific entry with an ambiguous one.
+    return ["darwin-universal"];
+  }
+  // Linux
+  if (lower.endsWith(".deb") || lower.endsWith(".appimage") || lower.endsWith(".rpm")) {
+    return ["linux-x86_64"];
+  }
+  return [];
+}
+
+/**
  * Construct and upload/update latest.json with all signed release platforms.
+ * Company-grade hardening:
+ * - Authenticated `.sig` fetch (avoids rate-limit / private-repo failures).
+ * - Arch-aware darwin mapping (no last-wins clobbering of x64 vs arm64).
+ * - `.rpm` support.
+ * - Fails CI loudly when no platforms found (silent broken updater is worse
+ *   than a failed release job).
+ * - Delete-then-upload is inherently non-atomic in the GitHub API; minimize
+ *   the window by preparing content first, and throw on upload failure so the
+ *   missing manifest is visible instead of silently continuing.
  */
 async function updateLatestJson(releaseId) {
   const cleanVersion = TAG.replace(/^v/i, "");
@@ -173,54 +227,73 @@ async function updateLatestJson(releaseId) {
     if (!binaryAsset) continue;
 
     try {
-      const sigRes = await fetch(asset.browser_download_url);
-      if (!sigRes.ok) continue;
+      const sigRes = await fetch(asset.browser_download_url, {
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          Accept: "application/octet-stream",
+          "User-Agent": "hermos-release",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!sigRes.ok) {
+        console.warn(`Skipping ${asset.name}: sig fetch ${sigRes.status}`);
+        continue;
+      }
       const signature = (await sigRes.text()).trim();
+      if (!signature) {
+        console.warn(`Skipping ${asset.name}: empty signature`);
+        continue;
+      }
       const downloadUrl = binaryAsset.browser_download_url;
-      const lower = baseName.toLowerCase();
-
-      if (lower.endsWith(".exe") || lower.includes("x64-setup")) {
-        latest.platforms["windows-x86_64"] = { signature, url: downloadUrl };
-        latest.platforms["windows-x86_64-nsis"] = { signature, url: downloadUrl };
-      } else if (lower.endsWith(".msi") || lower.includes("x64_en-us")) {
-        latest.platforms["windows-x86_64-msi"] = { signature, url: downloadUrl };
-        if (!latest.platforms["windows-x86_64"]) {
-          latest.platforms["windows-x86_64"] = { signature, url: downloadUrl };
+      for (const platform of mapAssetToPlatforms(baseName)) {
+        // Never overwrite an arch-specific entry with an ambiguous universal fallback.
+        if (
+          platform === "darwin-universal" &&
+          (latest.platforms["darwin-x86_64"] || latest.platforms["darwin-aarch64"])
+        ) {
+          continue;
         }
-      }
-      if (lower.includes("darwin") || lower.includes(".app.tar.gz") || lower.includes("universal.dmg")) {
-        latest.platforms["darwin-x86_64"] = { signature, url: downloadUrl };
-        latest.platforms["darwin-aarch64"] = { signature, url: downloadUrl };
-        latest.platforms["darwin-universal"] = { signature, url: downloadUrl };
-      }
-      if (lower.endsWith(".deb") || lower.endsWith(".appimage")) {
-        latest.platforms["linux-x86_64"] = { signature, url: downloadUrl };
+        // Prefer first-seen arch-specific; universal explicitly overwrites both.
+        if (platform === "darwin-universal") {
+          latest.platforms["darwin-x86_64"] ??= { signature, url: downloadUrl };
+          latest.platforms["darwin-aarch64"] ??= { signature, url: downloadUrl };
+        }
+        latest.platforms[platform] ??= { signature, url: downloadUrl };
       }
     } catch (e) {
       console.warn(`Could not read signature for ${asset.name}:`, e.message);
     }
   }
 
-  if (Object.keys(latest.platforms).length > 0) {
-    const existingLatest = assets.find((a) => a.name === "latest.json");
-    if (existingLatest) {
-      await ghJson("DELETE", `/repos/${OWNER}/${REPO}/releases/assets/${existingLatest.id}`);
-      console.log("Replacing existing latest.json in release...");
-    }
+  // Backfill windows-x86_64 from MSI when no NSIS exe was published.
+  if (!latest.platforms["windows-x86_64"] && latest.platforms["windows-x86_64-msi"]) {
+    latest.platforms["windows-x86_64"] = latest.platforms["windows-x86_64-msi"];
+  }
 
-    const latestJsonContent = JSON.stringify(latest, null, 2);
-    const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=latest.json`;
-    const res = await fetch(uploadUrl, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: Buffer.from(latestJsonContent, "utf-8"),
-    });
+  if (Object.keys(latest.platforms).length === 0) {
+    throw new Error(
+      "updateLatestJson: no signed platforms found — refusing to publish an empty updater manifest (would break auto-update).",
+    );
+  }
 
-    if (res.ok) {
-      console.log("[updater] Published auto-updater manifest latest.json to release!");
-    } else {
-      console.error("Failed to upload latest.json:", res.status, await res.text());
-    }
+  const latestJsonContent = JSON.stringify(latest, null, 2);
+  const existingLatest = assets.find((a) => a.name === "latest.json");
+  if (existingLatest) {
+    await ghJson("DELETE", `/repos/${OWNER}/${REPO}/releases/assets/${existingLatest.id}`);
+    console.log("Replacing existing latest.json in release...");
+  }
+
+  const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=latest.json`;
+  const res = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: Buffer.from(latestJsonContent, "utf-8"),
+  });
+
+  if (res.ok) {
+    console.log("[updater] Published auto-updater manifest latest.json to release!");
+  } else {
+    throw new Error(`Failed to upload latest.json: ${res.status} ${await res.text()}`);
   }
 }
 

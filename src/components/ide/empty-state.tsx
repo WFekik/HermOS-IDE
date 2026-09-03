@@ -62,6 +62,7 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
   const hasActiveFile = Boolean(activeFileTab);
   const requestOpenFolderDialog = useAppStore((s) => s.requestOpenFolderDialog);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
+  const conversationWidth = useAppStore((s) => s.conversationWidth);
   const isMac = isMacPlatform();
   const suggestions = SUGGESTIONS;
 
@@ -83,7 +84,10 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="w-full max-w-2xl text-center"
+        className={cn(
+          "w-full text-center",
+          conversationWidth === "wide" ? "max-w-3xl" : conversationWidth === "narrow" ? "max-w-xl" : "max-w-2xl"
+        )}
       >
         <HermOSLogo size={48} className="mx-auto mb-5 opacity-90" />
 

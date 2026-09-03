@@ -357,8 +357,12 @@ export function estimateTokens(text: string, model?: string): number {
   }
 
   if (tokenCache.size >= TOKEN_CACHE_MAX) {
-    const oldestKey = tokenCache.keys().next().value;
-    if (oldestKey !== undefined) tokenCache.delete(oldestKey);
+    const iter = tokenCache.keys();
+    for (let i = 0; i < 100; i++) {
+      const k = iter.next().value;
+      if (k === undefined) break;
+      tokenCache.delete(k);
+    }
   }
   tokenCache.set(cacheKey, count);
   return count;

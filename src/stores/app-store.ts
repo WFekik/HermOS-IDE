@@ -27,6 +27,12 @@ import { isTauri, getWorkspaceRoot } from "@/lib/tauri";
 import { parsePartialJson } from "@/lib/utils";
 import { DEFAULT_CONTEXT_CONFIG, type ContextConfig } from "@/lib/ai/context";
 import { DEFAULT_SECURITY_SETTINGS, type SecuritySettings } from "@/lib/security-types";
+import {
+  type ConversationWidth,
+  type ThemeColorConfig,
+  DEFAULT_LIGHT_THEME,
+  DEFAULT_DARK_THEME,
+} from "@/lib/color-theme";
 
 const SECURITY_SETTINGS_KEY = "hermos_security_settings_v1";
 
@@ -516,6 +522,18 @@ interface AppState {
   setDensity: (d: "comfortable" | "compact") => void;
   setFontSize: (s: number) => void;
 
+  /** Conversation max-width (default | narrow | wide). Persisted to localStorage. */
+  conversationWidth: ConversationWidth;
+  setConversationWidth: (w: ConversationWidth) => void;
+
+  /** Light theme customization config. Persisted to localStorage. */
+  lightThemeConfig: ThemeColorConfig;
+  /** Dark theme customization config. Persisted to localStorage. */
+  darkThemeConfig: ThemeColorConfig;
+  setLightThemeConfig: (cfg: Partial<ThemeColorConfig>) => void;
+  setDarkThemeConfig: (cfg: Partial<ThemeColorConfig>) => void;
+  resetThemeConfig: (mode: "light" | "dark") => void;
+
   /** Enterprise-tunable context retention config. Persisted to localStorage. */
   contextConfig: ContextConfig;
   setContextConfig: (cfg: Partial<ContextConfig>) => void;
@@ -839,6 +857,9 @@ const RECENT_COMMANDS_KEY = "hermos:recent-commands";
 const FILE_WATCH_KEY = "hermos:file-watch-enabled";
 const DENSITY_KEY = "hermos:density";
 const FONT_SIZE_KEY = "hermos:font-size";
+const CONVERSATION_WIDTH_KEY = "hermos:conversation-width";
+const LIGHT_THEME_KEY = "hermos:light-theme";
+const DARK_THEME_KEY = "hermos:dark-theme";
 const CONTEXT_CONFIG_KEY = "hermos:context-config";
 const MAX_RECENT_COMMANDS = 5;
 
@@ -889,6 +910,51 @@ function loadFontSize(): number {
     return 14;
   } catch {
     return 14;
+  }
+}
+
+function loadConversationWidth(): ConversationWidth {
+  if (typeof window === "undefined") return "default";
+  try {
+    const raw = window.localStorage.getItem(CONVERSATION_WIDTH_KEY);
+    if (raw === "narrow" || raw === "wide" || raw === "default") return raw;
+    return "default";
+  } catch {
+    return "default";
+  }
+}
+
+function loadLightThemeConfig(): ThemeColorConfig {
+  if (typeof window === "undefined") return { ...DEFAULT_LIGHT_THEME };
+  try {
+    const raw = window.localStorage.getItem(LIGHT_THEME_KEY);
+    if (!raw) return { ...DEFAULT_LIGHT_THEME };
+    const parsed = JSON.parse(raw);
+    return {
+      preset: typeof parsed.preset === "string" ? parsed.preset : DEFAULT_LIGHT_THEME.preset,
+      background: typeof parsed.background === "string" ? parsed.background : DEFAULT_LIGHT_THEME.background,
+      foreground: typeof parsed.foreground === "string" ? parsed.foreground : DEFAULT_LIGHT_THEME.foreground,
+      accent: typeof parsed.accent === "string" ? parsed.accent : DEFAULT_LIGHT_THEME.accent,
+    };
+  } catch {
+    return { ...DEFAULT_LIGHT_THEME };
+  }
+}
+
+function loadDarkThemeConfig(): ThemeColorConfig {
+  if (typeof window === "undefined") return { ...DEFAULT_DARK_THEME };
+  try {
+    const raw = window.localStorage.getItem(DARK_THEME_KEY);
+    if (!raw) return { ...DEFAULT_DARK_THEME };
+    const parsed = JSON.parse(raw);
+    return {
+      preset: typeof parsed.preset === "string" ? parsed.preset : DEFAULT_DARK_THEME.preset,
+      background: typeof parsed.background === "string" ? parsed.background : DEFAULT_DARK_THEME.background,
+      foreground: typeof parsed.foreground === "string" ? parsed.foreground : DEFAULT_DARK_THEME.foreground,
+      accent: typeof parsed.accent === "string" ? parsed.accent : DEFAULT_DARK_THEME.accent,
+    };
+  } catch {
+    return { ...DEFAULT_DARK_THEME };
   }
 }
 
@@ -990,6 +1056,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   /* Appearance — persisted to localStorage */
   density: loadDensity(),
   fontSize: loadFontSize(),
+  conversationWidth: loadConversationWidth(),
+  lightThemeConfig: loadLightThemeConfig(),
+  darkThemeConfig: loadDarkThemeConfig(),
 
   /* Context governance — persisted to localStorage */
   contextConfig: loadContextConfig(),
@@ -2805,6 +2874,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } catch { /* ignore */ }
     set({ fontSize: s });
+  },
+  setConversationWidth: (w) => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(CONVERSATION_WIDTH_KEY, w);
+      }
+    } catch { /* ignore */ }
+    set({ conversationWidth: w });
+  },
+  setLightThemeConfig: (cfg) => {
+    const next = { ...get().lightThemeConfig, ...cfg };
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LIGHT_THEME_KEY, JSON.stringify(next));
+      }
+    } catch { /* ignore */ }
+    set({ lightThemeConfig: next });
+  },
+  setDarkThemeConfig: (cfg) => {
+    const next = { ...get().darkThemeConfig, ...cfg };
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DARK_THEME_KEY, JSON.stringify(next));
+      }
+    } catch { /* ignore */ }
+    set({ darkThemeConfig: next });
+  },
+  resetThemeConfig: (mode) => {
+    if (mode === "light") {
+      try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(LIGHT_THEME_KEY, JSON.stringify(DEFAULT_LIGHT_THEME));
+        }
+      } catch { /* ignore */ }
+      set({ lightThemeConfig: { ...DEFAULT_LIGHT_THEME } });
+    } else {
+      try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(DARK_THEME_KEY, JSON.stringify(DEFAULT_DARK_THEME));
+        }
+      } catch { /* ignore */ }
+      set({ darkThemeConfig: { ...DEFAULT_DARK_THEME } });
+    }
   },
   setContextConfig: (cfg) => {
     const next = { ...get().contextConfig, ...cfg };

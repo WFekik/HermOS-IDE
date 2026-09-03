@@ -94,38 +94,51 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
       let downloadedBytes = 0;
       let totalBytes = 0;
 
-      await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
-        switch (event.event) {
-          case "Started":
-            totalBytes = event.data?.contentLength || 0;
-            toast.loading(`Downloading HermOS IDE v${update.version}...`, {
-              id: "app-update-progress",
-            });
-            break;
-          case "Progress":
-            downloadedBytes += event.data?.chunkLength || 0;
-            if (totalBytes > 0) {
-              const percent = Math.round((downloadedBytes / totalBytes) * 100);
-              const mb = (downloadedBytes / (1024 * 1024)).toFixed(1);
-              const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
-              toast.loading(`Downloading update v${update.version}: ${percent}% (${mb}/${totalMb} MB)...`, {
+      try {
+        await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
+          switch (event.event) {
+            case "Started":
+              totalBytes = event.data?.contentLength || 0;
+              toast.loading(`Downloading HermOS IDE v${update.version}...`, {
                 id: "app-update-progress",
               });
-            }
-            break;
-          case "Finished":
-            toast.success("Update downloaded! Relaunching HermOS IDE...", {
-              id: "app-update-progress",
-              duration: 4000,
-            });
-            break;
-        }
-      });
+              break;
+            case "Progress":
+              downloadedBytes += event.data?.chunkLength || 0;
+              if (totalBytes > 0) {
+                const percent = Math.round((downloadedBytes / totalBytes) * 100);
+                const mb = (downloadedBytes / (1024 * 1024)).toFixed(1);
+                const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+                toast.loading(`Downloading update v${update.version}: ${percent}% (${mb}/${totalMb} MB)...`, {
+                  id: "app-update-progress",
+                });
+              }
+              break;
+            case "Finished":
+              toast.success("Update downloaded! Relaunching HermOS IDE...", {
+                id: "app-update-progress",
+                duration: 4000,
+              });
+              break;
+          }
+        });
+      } catch (downloadError) {
+        // Company-grade: never leave an indefinite loading spinner. Dismiss the
+        // progress toast and surface the failure before falling through to the
+        // GitHub API fallback / error result below.
+        toast.dismiss("app-update-progress");
+        toast.error("Update download failed. Please try again or download manually.", {
+          duration: 6000,
+        });
+        throw downloadError;
+      }
 
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
       return { status: "downloaded", version: update.version };
     } catch (error) {
+      // Ensure no stale progress toast survives a failed download/check.
+      toast.dismiss("app-update-progress");
       console.info("[updater] Tauri native check failed/timed out, trying GitHub API fallback:", error);
       const fallback = await queryRemoteFallback();
       if (fallback) return fallback;

@@ -48,8 +48,8 @@ import type { AgentMode, AttachmentDTO } from "@/lib/types";
 import { AGENT_MODES, AGENT_MODES_BY_VALUE } from "@/lib/agent-modes";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/tool-ui-shared";
-
 import { isMacPlatform } from "@/lib/platform";
+import { conversationWidthClass } from "@/lib/color-theme";
 
 interface ComposerProps {
   onSend: (text: string, attachmentIds?: string[], attachmentMetas?: AttachmentDTO[]) => void;
@@ -134,6 +134,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
   );
   const isEditMode = targetEditMsg !== null && targetEditMsg !== undefined;
   const hasMessages = useAppStore((s) => s.messages.length > 0);
+  const conversationWidth = useAppStore((s) => s.conversationWidth);
 
   // Auto-clear stale editingMessageId if it no longer exists in current messages
   React.useEffect(() => {
@@ -546,7 +547,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
 
   return (
     <div className="border-t bg-background/80 backdrop-blur-sm">
-      <div className="mx-auto max-w-3xl px-4 py-2">
+      <div className={cn("mx-auto px-4 py-2", conversationWidthClass(conversationWidth))}>
         <TodoCollapsedBanner key={activeConversationId ?? "none"} conversationId={activeConversationId} />
         <AnimatePresence>
           {!hasMessages && !isEditMode && (
@@ -708,7 +709,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                     aria-label="Attach files"
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    <Paperclip className="size-3.5 text-emerald-500 dark:text-emerald-400" />
+                    <Paperclip className="size-3.5 text-brand" />
                   </Button>
 
                   {/* Mention + command helper buttons — mouse affordance for
@@ -772,7 +773,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                       <Button variant="ghost" size="sm" className="h-6.5 px-1.5 gap-1 text-[11px] rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 border-0 font-medium">
                         {(() => {
                           const Icon = AGENT_MODES_BY_VALUE[composerMode].icon;
-                          return <Icon className="size-3.5 text-emerald-500 dark:text-emerald-400" />;
+                          return <Icon className="size-3.5 text-brand" />;
                         })()}
                         <span className="hidden sm:inline font-medium text-foreground">{AGENT_MODES_BY_VALUE[composerMode].label}</span>
                         <ChevronDown className="size-3 text-muted-foreground/60" />
@@ -796,9 +797,9 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                                 isSelected && "bg-accent font-medium text-foreground",
                               )}
                             >
-                              <Icon className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                              <Icon className="size-3.5 text-brand shrink-0" />
                               <span className="font-medium flex-1 truncate">{m.label}</span>
-                              {isSelected && <Check className="size-3 text-emerald-500 shrink-0" />}
+                              {isSelected && <Check className="size-3 text-brand shrink-0" />}
                             </button>
                           );
                         })}
@@ -822,7 +823,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                         aria-label="Enabled tools"
                         title={`${enabledToolsCount} tools enabled`}
                       >
-                        <Wrench className="size-3.5 text-emerald-500 dark:text-emerald-400" />
+                        <Wrench className="size-3.5 text-brand" />
                         <span className="text-[10px] font-mono text-muted-foreground">{enabledToolsCount}</span>
                       </Button>
                     </PopoverTrigger>
@@ -900,7 +901,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                         {hasDraft && !isEditMode && (
                           <Button
                             size="sm"
-                            className="h-7 px-2.5 gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-zinc-950 transition-all text-xs font-medium shrink-0 flex items-center justify-center shadow-2xs"
+                            className="h-7 px-2.5 gap-1.5 rounded-lg bg-brand hover:bg-brand/90 text-brand-foreground transition-all text-xs font-medium shrink-0 flex items-center justify-center shadow-2xs"
                             onClick={() => void submit()}
                             title="Queue message — sent to the agent on its next iteration (the current run keeps going)"
                             aria-label="Queue message for next iteration"
@@ -931,7 +932,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                       >
                         <Button
                           size="sm"
-                          className="size-7 p-0 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-zinc-950 transition-all text-xs font-medium disabled:opacity-30 shrink-0 flex items-center justify-center shadow-2xs"
+                          className="size-7 p-0 rounded-lg bg-brand hover:bg-brand/90 text-brand-foreground transition-all text-xs font-medium disabled:opacity-30 shrink-0 flex items-center justify-center shadow-2xs"
                           onClick={() => void submit()}
                           disabled={!hasDraft || disabled}
                           title={isEditMode ? "Save edit & regenerate" : "Send message"}
@@ -998,7 +999,7 @@ function ThinkingSelector() {
           aria-label="Thinking level"
           title={`Thinking level: ${current.label}`}
         >
-          <Brain className="size-3.5 text-emerald-500 dark:text-emerald-400" />
+          <Brain className="size-3.5 text-brand" />
           <span className="hidden md:inline font-medium text-foreground">{current.label}</span>
           <ChevronDown className="size-3 text-muted-foreground/60" />
         </Button>
@@ -1057,7 +1058,7 @@ function PermissionsButton() {
   };
 
   const modeColor = (mode: string) => {
-    if (mode === "allow") return "text-emerald-500 border-emerald-500/40";
+    if (mode === "allow") return "text-brand border-brand/40";
     if (mode === "deny") return "text-red-500 border-red-500/40";
     return "text-amber-500 border-amber-500/40";
   };
@@ -1085,7 +1086,7 @@ function PermissionsButton() {
           aria-label="Permissions"
           title="Permissions"
         >
-          <Shield className="size-3.5 text-emerald-500 dark:text-emerald-400" />
+          <Shield className="size-3.5 text-brand" />
           <span className="hidden md:inline font-medium text-foreground">Perms</span>
         </Button>
       </PopoverTrigger>

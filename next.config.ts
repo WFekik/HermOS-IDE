@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PROXY_CSP } from "./src/lib/csp";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -8,6 +9,14 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: false },
   reactStrictMode: true,
   distDir: ".next-build",
+  experimental: {
+    optimizePackageImports: [
+      "lucide-react",
+      "framer-motion",
+      "date-fns",
+      "recharts",
+    ],
+  },
   // Prisma ships `turbopackIgnore: true`, so Turbopack would otherwise bundle
   // the client and its dynamic requires would resolve against the BUILD
   // machine's node_modules at runtime (breaking portability and re-reading the
@@ -66,8 +75,13 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply strict IDE CSP to all routes EXCEPT the sandboxed browser proxy
-        source: "/((?!api/browser/proxy).*)",
+        // Strict IDE CSP for all routes. Next.js `headers()` `source` uses
+        // path-to-regexp syntax and does NOT support JS negative lookahead
+        // (e.g. "/((?!api/browser/proxy).*)" never matches as intended).
+        // The proxy route below + the route handler's own
+        // `headers.set("Content-Security-Policy", PROXY_CSP)` override this
+        // for `/api/browser/proxy` (response headers win over config).
+        source: "/:path*",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -122,15 +136,17 @@ const nextConfig: NextConfig = {
       },
       {
         // The headless browser proxy serves third-party HTML in an iframe.
-        // The proxy route handler itself sets the authoritative CSP headers.
+        // The proxy route handler itself sets the authoritative CSP headers
+        // (see src/lib/csp.ts PROXY_CSP); this config entry is defense-in-depth
+        // for error / non-GET paths. Both import the same constant so they
+        // cannot drift.
         source: "/api/browser/proxy",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
           {
             key: "Content-Security-Policy",
-            value:
-              "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
+            value: PROXY_CSP,
           },
         ],
       },

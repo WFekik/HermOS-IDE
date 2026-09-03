@@ -126,6 +126,18 @@ export function isSubpathOrEqual(target: string, base: string): boolean {
   return target.startsWith(bSep);
 }
 
+/**
+ * Cache for `realpath(base)` to avoid a syscall on every file operation.
+ * Company-grade tradeoff note:
+ * - TTL 10s + 200-entry LRU-ish cap bounds memory and keeps the hot path fast.
+ * - Residual TOCTOU: a symlink swap of the workspace root within the TTL
+ *   window could bypass the realpath check. Accepted because (a) the attacker
+ *   would already need local FS write access to the workspace parent, (b) every
+ *   resolved path is still verified with `isSubpathOrEqual` on the logical
+ *   path, and (c) the per-file `realpath(abs)` below is NOT cached, so only
+ *   the base (which rarely changes) is cached. Call `clearRealBaseCache()`
+ *   in tests or after workspace switches.
+ */
 const realBaseCache = new Map<string, { realBase: string | null; expires: number }>();
 const REAL_BASE_TTL_MS = 10_000;
 const MAX_REAL_BASE_CACHE_SIZE = 200;
@@ -134,15 +146,23 @@ function getCachedRealBase(base: string): string | null {
   const now = Date.now();
   const entry = realBaseCache.get(base);
   if (entry && entry.expires > now) {
+    // Refresh LRU order: re-insert so oldest entries are evicted first.
+    realBaseCache.delete(base);
+    realBaseCache.set(base, entry);
     return entry.realBase;
   }
+  if (entry) realBaseCache.delete(base);
 
-  // Evict expired entries or enforce size cap to prevent unbounded growth
+  // Evict expired entries first, then oldest until under cap.
   if (realBaseCache.size >= MAX_REAL_BASE_CACHE_SIZE) {
     for (const [key, val] of realBaseCache.entries()) {
-      if (val.expires <= now || realBaseCache.size >= MAX_REAL_BASE_CACHE_SIZE) {
-        realBaseCache.delete(key);
-      }
+      if (val.expires <= now) realBaseCache.delete(key);
+      if (realBaseCache.size < MAX_REAL_BASE_CACHE_SIZE) break;
+    }
+    while (realBaseCache.size >= MAX_REAL_BASE_CACHE_SIZE) {
+      const oldest = realBaseCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      realBaseCache.delete(oldest);
     }
   }
 
@@ -156,6 +176,11 @@ function getCachedRealBase(base: string): string | null {
   }
   realBaseCache.set(base, { realBase: real, expires: now + REAL_BASE_TTL_MS });
   return real;
+}
+
+/** Test hook / workspace-switch hook: clear the realpath cache. */
+export function clearRealBaseCache(): void {
+  realBaseCache.clear();
 }
 
 const WIN32_ABSOLUTE_OR_UNC_RE = /^[a-zA-Z]:[\\/]|^\\\\[^\\]/;

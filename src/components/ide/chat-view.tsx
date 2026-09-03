@@ -14,11 +14,14 @@ import { apiPost, apiDelete } from "@/lib/api-client";
 import { toast } from "sonner";
 import type { AttachmentDTO, AgentMode, ProviderId } from "@/lib/types";
 import type { UIMessage } from "@/stores/app-store";
+import { cn } from "@/lib/utils";
+import { conversationWidthClass } from "@/lib/color-theme";
 
 export function ChatView() {
   const messages = useAppStore((s) => s.messages);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
-  const conversations = useAppStore((s) => s.conversations);
+  const conversationCount = useAppStore((s) => s.conversations.length);
+  const conversationWidth = useAppStore((s) => s.conversationWidth);
   const composerMode = useAppStore((s) => s.composerMode);
   const selectedProvider = useAppStore((s) => s.selectedProvider);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -262,11 +265,11 @@ export function ChatView() {
   // queue rows were deleted with the conversation, so a re-send would only
   // produce a 404 error toast.
   React.useEffect(() => {
-    const alive = new Set(conversations.map((c) => c.id));
+    const alive = new Set(useAppStore.getState().conversations.map((c) => c.id));
     if (queuedPendingRef.current.some((p) => !alive.has(p.conversationId))) {
       queuedPendingRef.current = queuedPendingRef.current.filter((p) => alive.has(p.conversationId));
     }
-  }, [conversations]);
+  }, [conversationCount]);
 
   const handleSend = React.useCallback(
     async (
@@ -556,7 +559,7 @@ export function ChatView() {
                   className="absolute top-0 left-0 w-full"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
-                  <div className="mx-auto max-w-3xl px-4 py-1.5">
+                  <div className={cn("mx-auto px-4 py-1.5", conversationWidthClass(conversationWidth))}>
                     <MemoizedMessageRow message={m} index={virtualRow.index} />
                   </div>
                 </div>

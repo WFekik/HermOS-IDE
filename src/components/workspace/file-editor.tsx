@@ -1003,7 +1003,7 @@ function HeaderIconButton({
   );
 }
 
-function CodeView({
+const CodeView = React.memo(function CodeView({
   path,
   content,
   lineOffset,
@@ -1095,7 +1095,7 @@ function CodeView({
       </div>
     </div>
   );
-}
+});
 
 const LineNumbers = React.memo(function LineNumbers({
   lineCount,

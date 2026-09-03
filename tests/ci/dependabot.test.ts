@@ -47,7 +47,38 @@ const VALID_INTERVALS = new Set(["daily", "weekly", "monthly"]);
 const VALID_DAYS = new Set(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]);
 
 /**
- * Strict, robust parser for GitHub Dependabot v2 YAML configuration.
+ * Strip a trailing `# comment` from a YAML line without truncating `#`
+ * inside single/double-quoted scalars (e.g. `prefix: "chore#deps"`).
+ * Only treats `#` as a comment when preceded by start-of-line or whitespace
+ * and outside quotes — per YAML spec.
+ */
+function stripYamlComment(rawLine: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < rawLine.length; i++) {
+    const ch = rawLine[i];
+    if (ch === "'" && !inDouble) {
+      // YAML escapes single quote by doubling it ('').
+      if (rawLine[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle) {
+      if (rawLine[i - 1] !== "\\") inDouble = !inDouble;
+    } else if (ch === "#" && !inSingle && !inDouble) {
+      if (i === 0 || /\s/.test(rawLine[i - 1])) return rawLine.slice(0, i);
+    }
+  }
+  return rawLine;
+}
+
+/**
+ * Strict, minimal parser for the subset of Dependabot v2 YAML used here.
+ * Company-grade note: intentionally NOT a general YAML parser. It only
+ * understands the keys asserted below; unknown mapping keys at group level
+ * are treated as group names ONLY when nested under `groups:` (indent >= 6),
+ * so `schedule:` / `commit-message:` / `ignore:` never become phantom groups.
  */
 function parseDependabotYaml(content: string): { version: number; updates: DependabotUpdate[] } {
   const lines = content.split(/\r?\n/);
@@ -56,10 +87,32 @@ function parseDependabotYaml(content: string): { version: number; updates: Depen
   let currentUpdate: Partial<DependabotUpdate> | null = null;
   let currentGroup: string | null = null;
   let currentArrayKey: "labels" | "patterns" | "exclude-patterns" | null = null;
+  let inGroups = false;
+
+  const KNOWN_UPDATE_KEYS = new Set([
+    "directory:",
+    "target-branch:",
+    "versioning-strategy:",
+    "open-pull-requests-limit:",
+    "schedule:",
+    "interval:",
+    "day:",
+    "time:",
+    "timezone:",
+    "labels:",
+    "groups:",
+    "commit-message:",
+    "prefix:",
+    "ignore:",
+    "dependency-name:",
+    "update-types:",
+    "patterns:",
+    "exclude-patterns:",
+    "dependency-type:",
+  ]);
 
   for (const rawLine of lines) {
-    const commentIdx = rawLine.indexOf("#");
-    const line = (commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine).trimEnd();
+    const line = stripYamlComment(rawLine).trimEnd();
     if (!line.trim()) continue;
 
     const indent = line.search(/\S/);
@@ -87,6 +140,7 @@ function parseDependabotYaml(content: string): { version: number; updates: Depen
       };
       currentGroup = null;
       currentArrayKey = null;
+      inGroups = false;
       continue;
     }
 
@@ -95,12 +149,14 @@ function parseDependabotYaml(content: string): { version: number; updates: Depen
     if (trimmed.startsWith("directory:")) {
       currentUpdate.directory = trimmed.replace("directory:", "").trim().replace(/["']/g, "");
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("open-pull-requests-limit:")) {
       currentUpdate["open-pull-requests-limit"] = parseInt(
         trimmed.replace("open-pull-requests-limit:", "").trim(),
         10,
       );
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("prefix:")) {
       if (!currentUpdate["commit-message"]) currentUpdate["commit-message"] = {};
       currentUpdate["commit-message"].prefix = trimmed.replace("prefix:", "").trim().replace(/["']/g, "");
@@ -108,34 +164,33 @@ function parseDependabotYaml(content: string): { version: number; updates: Depen
     } else if (trimmed.startsWith("interval:")) {
       currentUpdate.schedule!.interval = trimmed.replace("interval:", "").trim().replace(/["']/g, "");
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("day:")) {
       currentUpdate.schedule!.day = trimmed.replace("day:", "").trim().replace(/["']/g, "");
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("time:")) {
       currentUpdate.schedule!.time = trimmed.replace("time:", "").trim().replace(/["']/g, "");
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("timezone:")) {
       currentUpdate.schedule!.timezone = trimmed.replace("timezone:", "").trim().replace(/["']/g, "");
       currentArrayKey = null;
+      inGroups = false;
     } else if (trimmed.startsWith("labels:")) {
       currentArrayKey = "labels";
       currentUpdate.labels = [];
+      inGroups = false;
     } else if (trimmed.startsWith("groups:")) {
       currentArrayKey = null;
       currentUpdate.groups = {};
-    } else if (
-      indent >= 4 &&
-      trimmed.endsWith(":") &&
-      !trimmed.startsWith("-") &&
-      !trimmed.startsWith("patterns:") &&
-      !trimmed.startsWith("exclude-patterns:") &&
-      !trimmed.startsWith("dependency-type:") &&
-      !trimmed.startsWith("commit-message:")
-    ) {
-      currentGroup = trimmed.slice(0, -1).trim();
-      if (!currentUpdate.groups) currentUpdate.groups = {};
-      currentUpdate.groups[currentGroup] = {};
+      inGroups = true;
+      currentGroup = null;
+    } else if (trimmed.startsWith("schedule:") || trimmed.startsWith("commit-message:") || trimmed.startsWith("ignore:")) {
+      // Structural keys that must NEVER become phantom groups.
       currentArrayKey = null;
+      currentGroup = null;
+      inGroups = false;
     } else if (trimmed.startsWith("dependency-type:")) {
       if (currentGroup && currentUpdate.groups?.[currentGroup]) {
         currentUpdate.groups[currentGroup]["dependency-type"] = trimmed
@@ -153,6 +208,23 @@ function parseDependabotYaml(content: string): { version: number; updates: Depen
       currentArrayKey = "exclude-patterns";
       if (currentGroup && currentUpdate.groups?.[currentGroup]) {
         currentUpdate.groups[currentGroup]["exclude-patterns"] = [];
+      }
+    } else if (
+      inGroups &&
+      indent >= 6 &&
+      trimmed.endsWith(":") &&
+      !trimmed.startsWith("-")
+    ) {
+      // Group names are the ONLY unknown `key:` nested under `groups:`.
+      // Known keys (patterns, dependency-type, schedule, etc.) are handled by
+      // earlier branches, so reaching here means it must be a group name.
+      const candidate = trimmed.slice(0, -1).trim();
+      const keyWithColon = `${candidate.split(":")[0].trim()}:`;
+      if (!KNOWN_UPDATE_KEYS.has(keyWithColon) && candidate && !candidate.includes(" ")) {
+        currentGroup = candidate;
+        if (!currentUpdate.groups) currentUpdate.groups = {};
+        currentUpdate.groups[currentGroup] = {};
+        currentArrayKey = null;
       }
     } else if (trimmed.startsWith("-")) {
       const itemVal = trimmed.replace(/^[-\s]+/, "").trim().replace(/["']/g, "");
@@ -300,5 +372,38 @@ describe("Dependabot Security & Strict Schema Verification", () => {
     // Validates that CD release mechanism to GitHub is configured
     expect(azureContent).toContain("scripts/release-to-github.mjs");
     expect(fs.existsSync(path.join(rootDir, "scripts", "release-to-github.mjs"))).toBe(true);
+  });
+
+  it("parser creates no phantom groups and preserves # inside quoted values", () => {
+    const content = fs.readFileSync(dependabotPath, "utf8");
+    const parsed = parseDependabotYaml(content);
+
+    // Regression: `schedule:` must never appear as a dependency group.
+    for (const update of parsed.updates) {
+      const groupNames = Object.keys(update.groups ?? {});
+      expect(groupNames).not.toContain("schedule");
+      expect(groupNames).not.toContain("commit-message");
+      expect(groupNames).not.toContain("ignore");
+      expect(groupNames).not.toContain("labels");
+    }
+
+    // Unit-level: # inside quotes is data, not a comment.
+    const synthetic = [
+      "version: 2",
+      "updates:",
+      '  - package-ecosystem: "npm"',
+      '    directory: "/"',
+      "    schedule:",
+      '      interval: "weekly"',
+      "    groups:",
+      "      my-group:",
+      '        dependency-type: "production"',
+      "    commit-message:",
+      '      prefix: "chore#deps"',
+      "",
+    ].join("\n");
+    const syn = parseDependabotYaml(synthetic);
+    expect(syn.updates[0]?.["commit-message"]?.prefix).toBe("chore#deps");
+    expect(Object.keys(syn.updates[0]?.groups ?? {})).toEqual(["my-group"]);
   });
 });

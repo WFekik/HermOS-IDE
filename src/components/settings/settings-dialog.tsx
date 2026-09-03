@@ -18,7 +18,19 @@ import {
   UserCog,
   BarChart3,
   SlidersHorizontal,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-react";
+import {
+  type ConversationWidth,
+  type ThemeColorConfig,
+  type ColorPreset,
+  LIGHT_PRESETS,
+  DARK_PRESETS,
+  isValidHex,
+  normalizeHex,
+} from "@/lib/color-theme";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -204,45 +216,137 @@ function AppearanceTab() {
   const { theme, setTheme } = useTheme();
   const density = useAppStore((s) => s.density);
   const fontSize = useAppStore((s) => s.fontSize);
+  const conversationWidth = useAppStore((s) => s.conversationWidth);
+  const lightThemeConfig = useAppStore((s) => s.lightThemeConfig);
+  const darkThemeConfig = useAppStore((s) => s.darkThemeConfig);
   const setDensity = useAppStore((s) => s.setDensity);
   const setFontSize = useAppStore((s) => s.setFontSize);
-  return (
-    <div className="space-y-5 max-w-md">
-      <div>
-        <h3 className="text-base font-semibold">Appearance</h3>
-        <p className="text-sm text-muted-foreground mt-0.5">Theme, density, and typography.</p>
-      </div>
+  const setConversationWidth = useAppStore((s) => s.setConversationWidth);
+  const setLightThemeConfig = useAppStore((s) => s.setLightThemeConfig);
+  const setDarkThemeConfig = useAppStore((s) => s.setDarkThemeConfig);
+  const resetThemeConfig = useAppStore((s) => s.resetThemeConfig);
 
-      <div>
-        <Label className="text-sm">Theme</Label>
-        <RadioGroup
-          value={theme}
-          onValueChange={(v) => setTheme(v)}
-          className="grid grid-cols-3 gap-2 mt-2"
-        >
-          {(["light", "dark", "system"] as const).map((t) => (
-            <Label
-              key={t}
-              htmlFor={`theme-${t}`}
-              className={cn(
-                "flex flex-col items-center gap-1.5 rounded-md border p-3 cursor-pointer text-xs capitalize hover:bg-accent/50 transition-colors",
-                theme === t && "border-brand bg-brand/[0.05]",
-              )}
-            >
-              <RadioGroupItem id={`theme-${t}`} value={t} className="sr-only" />
-              <ThemeSwatch theme={t} />
-              {t}
-            </Label>
-          ))}
-        </RadioGroup>
+  return (
+    <div className="space-y-6 max-w-lg pb-4">
+      {/* 1. Conversation Width */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-sm font-medium">Conversation Width</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Configure the maximum width of the conversation panel.
+            </p>
+          </div>
+          <ToggleGroup
+            type="single"
+            value={conversationWidth}
+            onValueChange={(v) => {
+              if (v === "default" || v === "narrow" || v === "wide") {
+                setConversationWidth(v);
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="bg-card/50"
+          >
+            <ToggleGroupItem value="default" className="text-xs px-3">
+              Default
+            </ToggleGroupItem>
+            <ToggleGroupItem value="narrow" className="text-xs px-3">
+              Narrow
+            </ToggleGroupItem>
+            <ToggleGroupItem value="wide" className="text-xs px-3">
+              Wide
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </div>
 
       <Separator />
 
+      {/* 2. Appearance / Theme */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Appearance
+        </h4>
+        <div className="flex items-center justify-between rounded-xl border bg-card/40 p-3">
+          <div>
+            <Label className="text-sm font-medium">Theme</Label>
+            <p className="text-xs text-muted-foreground">Active color mode</p>
+          </div>
+          <div className="inline-flex rounded-lg border p-1 bg-muted/40 gap-0.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme("system")}
+              className={cn(
+                "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
+                theme === "system" && "bg-background text-foreground shadow-xs font-medium"
+              )}
+              title="System Theme"
+            >
+              <Monitor className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme("light")}
+              className={cn(
+                "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
+                theme === "light" && "bg-background text-foreground shadow-xs font-medium"
+              )}
+              title="Light Theme"
+            >
+              <Sun className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme("dark")}
+              className={cn(
+                "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
+                theme === "dark" && "bg-background text-foreground shadow-xs font-medium"
+              )}
+              title="Dark Theme"
+            >
+              <Moon className="size-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Light Theme Customization */}
+      <ThemeSection
+        mode="light"
+        config={lightThemeConfig}
+        presets={LIGHT_PRESETS}
+        onChange={setLightThemeConfig}
+        onReset={() => resetThemeConfig("light")}
+      />
+
+      {/* 4. Dark Theme Customization */}
+      <ThemeSection
+        mode="dark"
+        config={darkThemeConfig}
+        presets={DARK_PRESETS}
+        onChange={setDarkThemeConfig}
+        onReset={() => resetThemeConfig("dark")}
+      />
+
+      {/* 5. Live Theme Preview */}
+      <ThemeLivePreview />
+
+      <Separator />
+
+      {/* 6. Density */}
       <DensityRow density={density} setDensity={setDensity} />
 
       <Separator />
 
+      {/* 7. Font Size */}
       <div>
         <Label className="text-sm">Font size</Label>
         <FontSizeSlider fontSize={fontSize} setFontSize={setFontSize} />
@@ -254,17 +358,205 @@ function AppearanceTab() {
   );
 }
 
-function ThemeSwatch({ theme }: { theme: "light" | "dark" | "system" }) {
+function ThemeSection({
+  mode,
+  config,
+  presets,
+  onChange,
+  onReset,
+}: {
+  mode: "light" | "dark";
+  config: ThemeColorConfig;
+  presets: ColorPreset[];
+  onChange: (patch: Partial<ThemeColorConfig>) => void;
+  onReset: () => void;
+}) {
+  const isLight = mode === "light";
+  const title = isLight ? "Light Theme" : "Dark Theme";
+
+  const handlePresetSelect = (presetId: string) => {
+    const found = presets.find((p) => p.id === presetId);
+    if (found) {
+      onChange({
+        preset: found.id,
+        background: found.background,
+        foreground: found.foreground,
+        accent: found.accent,
+      });
+    }
+  };
+
+  const handleColorChange = (key: "background" | "foreground" | "accent", color: string) => {
+    onChange({
+      preset: "custom",
+      [key]: color,
+    });
+  };
+
   return (
-    <div className="size-8 rounded-md border overflow-hidden">
-      {theme === "light" && <div className="size-full bg-white" />}
-      {theme === "dark" && <div className="size-full bg-zinc-900" />}
-      {theme === "system" && (
-        <div className="size-full grid grid-cols-2">
-          <div className="bg-white" />
-          <div className="bg-zinc-900" />
+    <div className="rounded-xl border bg-card/40 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold tracking-wide text-foreground">{title}</h4>
+        {config.preset === "custom" && (
+          <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/30">
+            Custom
+          </Badge>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between py-1">
+        <Label className="text-xs text-foreground/80 font-normal">Preset</Label>
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onReset}
+            className="size-7 p-0 text-muted-foreground hover:text-foreground"
+            title="Reset to preset defaults"
+          >
+            <RotateCcw className="size-3.5" />
+          </Button>
+          <Select value={config.preset} onValueChange={handlePresetSelect}>
+            <SelectTrigger className="h-7 w-40 text-xs">
+              <SelectValue placeholder="Select preset" />
+            </SelectTrigger>
+            <SelectContent>
+              {presets.map((p) => (
+                <SelectItem key={p.id} value={p.id} className="text-xs">
+                  {p.name}
+                </SelectItem>
+              ))}
+              {config.preset === "custom" && (
+                <SelectItem value="custom" className="text-xs">
+                  Custom
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
         </div>
-      )}
+      </div>
+
+      <div className="space-y-1.5 pt-1 border-t border-border/50">
+        <ColorFieldRow
+          label="Background"
+          value={config.background}
+          onChange={(c) => handleColorChange("background", c)}
+        />
+        <ColorFieldRow
+          label="Foreground"
+          value={config.foreground}
+          onChange={(c) => handleColorChange("foreground", c)}
+        />
+        <ColorFieldRow
+          label="Accent"
+          value={config.accent}
+          onChange={(c) => handleColorChange("accent", c)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ColorFieldRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  const [draft, setDraft] = React.useState(value);
+  const colorInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const handleHexChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    setDraft(raw);
+    if (isValidHex(raw)) {
+      onChange(normalizeHex(raw));
+    }
+  };
+
+  const handleNativePicker = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.toUpperCase();
+    setDraft(val);
+    onChange(val);
+  };
+
+  const hexSafe = isValidHex(value) ? normalizeHex(value) : "#10B981";
+
+  return (
+    <div className="flex items-center justify-between py-0.5">
+      <Label className="text-xs text-foreground/80 font-normal">{label}</Label>
+      <div className="flex items-center gap-2">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => colorInputRef.current?.click()}
+            className="size-6 rounded-md border border-border/80 shadow-2xs hover:scale-105 active:scale-95 transition-transform cursor-pointer"
+            style={{ backgroundColor: hexSafe }}
+            title={`Pick ${label} color`}
+          />
+          <input
+            ref={colorInputRef}
+            type="color"
+            value={hexSafe}
+            onChange={handleNativePicker}
+            className="sr-only"
+            tabIndex={-1}
+          />
+        </div>
+        <Input
+          value={draft}
+          onChange={handleHexChange}
+          onBlur={() => {
+            if (isValidHex(draft)) {
+              onChange(normalizeHex(draft));
+            } else {
+              setDraft(value);
+            }
+          }}
+          placeholder="#000000"
+          className="h-7 w-24 px-2 font-mono text-xs uppercase"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ThemeLivePreview() {
+  return (
+    <div className="rounded-xl border p-3.5 bg-card/60 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-foreground">Live Theme Preview</span>
+        <Badge variant="outline" className="text-[10px] h-4 border-brand/40 text-brand">
+          Active Accent
+        </Badge>
+      </div>
+      <div className="rounded-lg border border-border p-3 bg-background space-y-2">
+        <div className="flex items-center gap-2">
+          <Button size="sm" className="h-6 px-2.5 text-[11px] bg-brand text-brand-foreground hover:bg-brand/90 font-medium">
+            Primary Button
+          </Button>
+          <Button size="sm" variant="outline" className="h-6 px-2.5 text-[11px]">
+            Secondary
+          </Button>
+          <span className="text-[11px] text-muted-foreground ml-auto font-mono">
+            var(--brand)
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 font-mono text-[11px] bg-muted/40 p-2 rounded border border-border/40">
+          <span className="text-brand font-semibold">const</span>
+          <span className="text-foreground">ideTheme</span>
+          <span className="text-muted-foreground">=</span>
+          <span className="text-brand">"customized"</span>;
+        </div>
+      </div>
     </div>
   );
 }
@@ -687,14 +979,12 @@ function AboutTab() {
       </div>
 
       <div className="flex flex-col gap-1.5 pt-1">
+        {/* External navigation handled by global link interceptor in providers.tsx.
+            Plain anchors preserve middle-click / Ctrl-click / context-menu. */}
         <a
           href={repoUrl}
           target="_blank"
-          rel="noreferrer"
-          onClick={(e) => {
-            e.preventDefault();
-            void openExternalUrl(repoUrl);
-          }}
+          rel="noopener noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
           <ExternalLink className="size-3.5" /> Source on GitHub
@@ -702,11 +992,7 @@ function AboutTab() {
         <a
           href={`${repoUrl}/releases`}
           target="_blank"
-          rel="noreferrer"
-          onClick={(e) => {
-            e.preventDefault();
-            void openExternalUrl(`${repoUrl}/releases`);
-          }}
+          rel="noopener noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
           <ExternalLink className="size-3.5" /> Release Notes & Changelogs

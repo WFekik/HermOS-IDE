@@ -215,7 +215,7 @@ function CommandOutput({ output }: { output: OutputState }) {
         >
           exit {exitCode}
         </Badge>
-        <span className="text-emerald-500 dark:text-emerald-400 font-bold select-none">$</span>
+        <span className="text-brand font-bold select-none">$</span>
         <span className="break-all text-foreground font-semibold min-w-0 flex-1">{output.command}</span>
       </div>
       {result.blocked && result.reason && (

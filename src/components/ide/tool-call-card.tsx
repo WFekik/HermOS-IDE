@@ -276,7 +276,7 @@ function CommandHeader({ command }: { command: string }) {
     <div className="flex items-start gap-1.5 rounded bg-black/5 dark:bg-black/60 border border-black/10 dark:border-white/5 px-2 py-1.5">
       <TerminalIcon className="size-3.5 text-zinc-500 dark:text-zinc-400 shrink-0 mt-0.5" />
       <code className="font-mono text-[11px] text-foreground whitespace-pre-wrap break-words min-w-0 flex-1">
-        <span className="text-emerald-500 dark:text-emerald-400 font-bold select-none">$ </span>
+        <span className="text-brand font-bold select-none">$ </span>
         {command}
       </code>
       <button
@@ -1538,10 +1538,10 @@ export function parseHttpFetchResult(result: unknown, args?: Record<string, unkn
 
 function ToolStatusIcon({ status }: { status: LiveToolCall["status"] }) {
   if (status === "running") {
-    return <Loader2 className="size-3 animate-spin text-emerald-500 dark:text-emerald-400 shrink-0" />;
+    return <Loader2 className="size-3 animate-spin text-brand shrink-0" />;
   }
   if (status === "done") {
-    return <CheckCircle2 className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />;
+    return <CheckCircle2 className="size-3 text-brand shrink-0" />;
   }
   return <XCircle className="size-3 text-rose-500 shrink-0" />;
 }

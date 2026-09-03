@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/session";
 import { withRateLimit } from "@/lib/rate-limit";
 import { withErrorHandler, apiError } from "@/app/api/_lib/helpers";
 import { checkUrlHost, getSsrfDispatcher } from "@/lib/ssrf";
+import { PROXY_CSP } from "@/lib/csp";
 
 export const dynamic = "force-dynamic";
 
@@ -57,24 +58,35 @@ function escapeHtmlAttr(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Convert a relative or protocol-relative URL to a secure absolute URL */
-function toAbsoluteUrl(raw: string, base: string): string {
+/**
+ * Convert a relative or protocol-relative URL to a secure absolute URL.
+ * Company-grade: case-insensitive scheme check (blocks `JaVaScRiPt:`,
+ * `DATA:` bypasses), blocks executable schemes (`javascript:`, `vbscript:`,
+ * `file:`) by returning a safe fragment instead of re-emitting them, and
+ * preserves `data:`/`blob:`/`#` passthrough for images/media.
+ */
+export function toAbsoluteUrl(raw: string, base: string): string {
   if (!raw || typeof raw !== "string") return "";
   const trimmed = raw.trim();
+  if (!trimmed) return "";
   const lower = trimmed.toLowerCase();
-  // Strip dangerous executable script schemes completely
-  if (lower.startsWith("javascript:") || lower.startsWith("vbscript:")) {
+  // Block executable / local-file schemes completely (case-insensitive).
+  if (
+    lower.startsWith("javascript:") ||
+    lower.startsWith("vbscript:") ||
+    lower.startsWith("file:")
+  ) {
     return "#";
   }
   if (
     lower.startsWith("data:") ||
     lower.startsWith("blob:") ||
-    lower.startsWith("#")
+    trimmed.startsWith("#")
   ) {
     return raw;
   }
   if (trimmed.startsWith("//")) {
-    const proto = base.startsWith("http:") ? "http:" : "https:";
+    const proto = base.toLowerCase().startsWith("http:") ? "http:" : "https:";
     return proto + trimmed;
   }
   try {
@@ -82,6 +94,127 @@ function toAbsoluteUrl(raw: string, base: string): string {
   } catch {
     return raw;
   }
+}
+
+/**
+ * Rewrite a `srcset` attribute value (comma-separated `url [descriptor]` list)
+ * to absolute URLs. Leaves descriptors (`1x`, `400w`) untouched.
+ */
+export function rewriteSrcset(srcset: string, base: string): string {
+  return srcset
+    .split(",")
+    .map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed) return part;
+      const spaceIdx = trimmed.search(/\s/);
+      if (spaceIdx === -1) return toAbsoluteUrl(trimmed, base);
+      const url = trimmed.slice(0, spaceIdx);
+      const descriptor = trimmed.slice(spaceIdx);
+      return `${toAbsoluteUrl(url, base)}${descriptor}`;
+    })
+    .join(", ");
+}
+
+/**
+ * Rewrite CSS `url(...)` references inside inline `style="..."` attributes.
+ * Handles quoted and unquoted forms; leaves `data:`/`blob:` untouched via
+ * `toAbsoluteUrl`.
+ */
+export function rewriteStyleUrls(style: string, base: string): string {
+  return style.replace(
+    /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]+))\s*\)/gi,
+    (match, dq: string | undefined, sq: string | undefined, uq: string | undefined) => {
+      const original = dq ?? sq ?? uq ?? "";
+      const abs = toAbsoluteUrl(original, base);
+      // Preserve original quoting style; escape double quotes for attr safety.
+      const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : "";
+      const safe = abs.replace(/"/g, "&quot;");
+      return `url(${quote}${safe}${quote})`;
+    },
+  );
+}
+
+/**
+ * Rewrite all URL-bearing attributes to absolute URLs so proxied pages keep
+ * working even if the injected `<base>` tag is stripped downstream.
+ * Covers: a/link[href], script/img/source/video/audio/embed/iframe/input/
+ * track[src+srcset], video[poster], object[data], form[action],
+ * button/input[formaction], plus inline style url(...).
+ * - Handles single-, double-quoted AND unquoted attribute values.
+ * - `<base href>` is still injected as the primary mechanism; this rewrite is
+ *   defense-in-depth, so any exotic markup missed here still resolves via base.
+ */
+export function rewriteHtmlUrls(html: string, base: string): string {
+  // 1. url-bearing attributes (quoted or unquoted)
+  const attrPattern =
+    /<(a|link|script|img|source|video|audio|embed|iframe|object|form|input|track|button)\b([^>]*?)\b(href|src|srcset|poster|data|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s"'`>]+)([^>]*?)>/gi;
+  let out = html.replace(
+    attrPattern,
+    (
+      match: string,
+      tag: string,
+      before: string,
+      attrName: string,
+      rawValue: string,
+      after: string,
+    ) => {
+      const first = rawValue[0];
+      const quoted = first === '"' || first === "'";
+      const quote = quoted ? first : '"';
+      const inner = quoted ? rawValue.slice(1, -1) : rawValue;
+      const lowerAttr = attrName.toLowerCase();
+      let rewritten: string;
+      if (lowerAttr === "srcset") {
+        rewritten = rewriteSrcset(inner, base);
+      } else if (
+        lowerAttr === "style" ||
+        // style handled separately below; keep here for completeness
+        false
+      ) {
+        rewritten = inner;
+      } else {
+        rewritten = toAbsoluteUrl(inner, base);
+      }
+      const safe = escapeHtmlAttr(rewritten);
+      return `<${tag}${before}${attrName}=${quote}${safe}${quote}${after}>`;
+    },
+  );
+
+  // 2. inline style="...url(...)..." attributes (quoted only — unquoted style
+  // values cannot contain url() with spaces reliably; base tag covers rest)
+  out = out.replace(
+    /\bstyle\s*=\s*("[^"]*"|'[^']*')/gi,
+    (match: string, quotedValue: string) => {
+      const quote = quotedValue[0];
+      const inner = quotedValue.slice(1, -1);
+      if (!/url\(/i.test(inner)) return match;
+      const rewritten = rewriteStyleUrls(inner, base);
+      // style content is CSS, not a URL — escape only the attr delimiters
+      const safe =
+        quote === '"'
+          ? rewritten.replace(/"/g, "&quot;")
+          : rewritten.replace(/'/g, "&#39;");
+      return `style=${quote}${safe}${quote}`;
+    },
+  );
+
+  return out;
+}
+
+/**
+ * Inject `<base>` + referrer meta without breaking doctype (quirks mode).
+ * Order: after `<head>` if present, else after `<html>` if present, else
+ * after `<!doctype>` if present, else prepend.
+ */
+export function injectBaseTag(html: string, current: string): string {
+  const baseTag = `<base href="${escapeHtmlAttr(current)}"><meta name="referrer" content="no-referrer">`;
+  const headPattern = /(<head\b[^>]*>)/i;
+  if (headPattern.test(html)) return html.replace(headPattern, `$1${baseTag}`);
+  const htmlPattern = /(<html\b[^>]*>)/i;
+  if (htmlPattern.test(html)) return html.replace(htmlPattern, `$1${baseTag}`);
+  const doctypePattern = /(<!doctype\b[^>]*>)/i;
+  if (doctypePattern.test(html)) return html.replace(doctypePattern, `$1${baseTag}`);
+  return `${baseTag}${html}`;
 }
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
@@ -154,34 +287,12 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     const contentType = res.headers.get("content-type") || "text/html; charset=utf-8";
     let body = await readResponseTextWithLimit(res);
 
-    // If HTML, resolve relative subresources and inject base tag and referrer policy
+    // If HTML, resolve relative subresources and inject base tag and referrer policy.
+    // `<base>` is the primary mechanism; `rewriteHtmlUrls` is defense-in-depth
+    // so pages keep working even if base is stripped downstream.
     if (contentType.includes("text/html")) {
-      // 1. Rewrite relative and protocol-relative stylesheet links
-      body = body.replace(/<link\b([^>]*?)href=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, href, suffix) => {
-        const abs = toAbsoluteUrl(href, current);
-        return `<link ${prefix}href=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
-      });
-
-      // 2. Rewrite relative and protocol-relative script sources
-      body = body.replace(/<script\b([^>]*?)src=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, src, suffix) => {
-        const abs = toAbsoluteUrl(src, current);
-        return `<script ${prefix}src=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
-      });
-
-      // 3. Rewrite relative and protocol-relative image sources
-      body = body.replace(/<img\b([^>]*?)src=(["'])(.*?)\2([^>]*?)>/gi, (match, prefix, quote, src, suffix) => {
-        const abs = toAbsoluteUrl(src, current);
-        return `<img ${prefix}src=${quote}${escapeHtmlAttr(abs)}${quote}${suffix}>`;
-      });
-
-      // 4. Inject <base> and <meta name="referrer" content="no-referrer"> tag
-      const baseTag = `<base href="${escapeHtmlAttr(current)}"><meta name="referrer" content="no-referrer">`;
-      const headPattern = /(<head\b[^>]*>)/i;
-      if (headPattern.test(body)) {
-        body = body.replace(headPattern, `$1${baseTag}`);
-      } else {
-        body = `${baseTag}${body}`;
-      }
+      body = rewriteHtmlUrls(body, current);
+      body = injectBaseTag(body, current);
     }
 
     const headers = new Headers();
@@ -190,10 +301,8 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     // render, but the document gets an opaque origin (no allow-same-origin),
     // so attacker-controlled HTML cannot read app cookies or call app APIs
     // same-origin. Permissive subresource CSP allows external CSS, fonts, and images.
-    headers.set(
-      "Content-Security-Policy",
-      "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline' data: blob:; font-src * data: blob:; img-src * data: blob: https: http:; media-src * data: blob: https: http:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;",
-    );
+    // Single source of truth — see src/lib/csp.ts (also used by next.config.ts).
+    headers.set("Content-Security-Policy", PROXY_CSP);
     headers.set("X-Content-Type-Options", "nosniff");
     // Prevent the browser from caching stale proxied pages.
     headers.set("Cache-Control", "no-store");
