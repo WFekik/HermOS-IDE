@@ -42,17 +42,18 @@ async function ghJson(method, urlPath, body) {
 
 function getReleaseBody(tag) {
   if (tag === "v1.0.7" || tag === "1.0.7") {
-    return `### HermOS IDE ${tag} — Office Studio Trust & Confinement Release
+    return `### HermOS IDE ${tag} — Office Studio & Appearance Themes
 
 100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
 
-#### 🛡️ What's New in ${tag}
-- **🖼️ Office Image Embedding Fixed End-to-End**: Workspace-relative image paths (\`images/chart.png\`) now resolve through \`safePath\` confinement via \`workspaceRoot\`. Traversal escapes, absolute system paths, and non-image extensions are dropped safely instead of embedding arbitrary files.
-- **📁 Custom Workspace Root Fix**: \`/api/office/generate\` now passes \`ws.rootDir\` to \`resolveOutputPath\`, so from-folder/desktop workspaces no longer lose documents after restart or cache expiry.
-- **⚡ Document List Performance & Rate Limit**: \`document?action=list\` is rate-limited (30/min) with a capped scan (500 files scanned / 200 returned, newest-first) and symlink-dir skipping, keeping the 8s Office Studio poll O(1).
-- **🎨 Accent Color Validation**: API enforces 6-digit hex (\`400\` on invalid); agent path sanitizes to theme fallback instead of crashing \`pptxgenjs\` with a 500.
-- **🌐 Proxy Hardening**: Neutralizes \`meta refresh → javascript:/vbscript:/file:/data:\`, strips attacker \`<base>\` before injecting the trusted one, and covers SVG \`<image>\` / \`xlink:href\` / \`object codebase\`.
-- **🧹 Dead Code Removal**: Removed unreachable proxy branch, unused office-panel path helpers, and unused office route imports.
+#### 📊 What's New in ${tag}
+- **📊 Native Office Studio (Kimi & GLM Studio)**: Generate executive \`.pptx\` decks, \`.docx\` documents, and styled \`.pdf\` reports right from chat — 8 slide layouts (title, bullets, cards, split, image-split, table, timeline, quote), 6 executive themes (Navy, Emerald, Charcoal, Crimson, Nordic, Cyber Midnight), KPI cards, callouts, metrics, and tables, with companion manifests and a dedicated Studio tab.
+- **🤖 Slide-by-Slide Agent Workflow**: New agent tools — \`init_presentation\`, \`add_presentation_slide\`, \`update_presentation_slide\` — so the agent builds decks carefully one slide at a time with live Studio updates, backed by isomorphic layout resolvers and permission entries.
+- **🎨 Appearance Theme & Color Customization**: Full theming system (hex validation, WCAG contrast, derived surfaces, presets) with a new Appearance section in Settings, applied app-wide via CSS variables and globalized accent tokens across chat, composer, panels, and workspace views.
+- **✨ Office Studio Polish**: Eliminated topbar overlap, full table-data rendering, dynamic inspector, workspace-scoped background polling that never clobbers your selection, and correct document matching across restarts.
+- **🌐 Browser Preview Hardening**: SSRF checks on every redirect hop, sandboxed CSP from a single source of truth, relative-URL rewriting (incl. \`srcset\` and inline styles), 5 MB response cap, and neutralized \`meta-refresh\` / attacker \`<base>\` vectors.
+- **🛡️ Workspace Confinement Fixes**: Office image embedding resolves through \`safePath\` (workspace-relative images work, traversal/absolute-path reads blocked), generation respects custom from-folder workspace roots, and the document list is rate-limited with capped scans for steady polling performance.
+- **⚡ Performance & Reliability**: Package-import optimization, batch cache eviction, cached workspace-root resolution, updater failure toasts (no more stuck spinners), and Dependabot lockstep hardening for SQLite/Tauri stability.
 - **✅ Verified End-to-End**: typecheck clean, eslint clean, 1551 tests passed (90 files), 47 perf tests passed, production build green.
 
 #### 📦 Downloads & Verification
