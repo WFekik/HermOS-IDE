@@ -804,7 +804,13 @@ interface ParsedToolCall {
 
 function tryJson(s: string): Record<string, unknown> | null {
   try {
-    const v = JSON.parse(s);
+    let clean = (s || "").trim();
+    if (clean.startsWith("```json")) {
+      clean = clean.replace(/^```json\s*/, "").replace(/\s*```$/, "").trim();
+    } else if (clean.startsWith("```")) {
+      clean = clean.replace(/^```\s*/, "").replace(/\s*```$/, "").trim();
+    }
+    const v = JSON.parse(clean);
     return v && typeof v === "object" && !Array.isArray(v)
       ? (v as Record<string, unknown>)
       : null;
@@ -4796,8 +4802,22 @@ const thinkInstruction = thinkPlan.kind === "params"
           toolCalls = nativeToolCalls.map((c) => {
             let args: Record<string, unknown> = {};
             try {
-              const parsed = JSON.parse(c.arguments || "{}");
+              const raw = (c.arguments || "").trim();
+              let parsed: any = tryJson(raw);
+              if (!parsed && raw) {
+                try { parsed = JSON.parse(raw); } catch {}
+              }
+              if (typeof parsed === "string") {
+                try { parsed = JSON.parse(parsed); } catch {}
+              }
               if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                if (parsed.input && typeof parsed.input === "object" && !Array.isArray(parsed.input)) {
+                  parsed = parsed.input;
+                } else if (parsed.parameters && typeof parsed.parameters === "object" && !Array.isArray(parsed.parameters)) {
+                  parsed = parsed.parameters;
+                } else if (parsed.arguments && typeof parsed.arguments === "object" && !Array.isArray(parsed.arguments)) {
+                  parsed = parsed.arguments;
+                }
                 args = parsed as Record<string, unknown>;
               }
             } catch {

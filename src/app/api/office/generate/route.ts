@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { withRateLimit } from "@/lib/rate-limit";
-import { getActiveWorkspace, ensureDefaultWorkspace } from "@/lib/workspace";
+import { resolveWorkspace, ensureDefaultWorkspace } from "@/lib/workspace";
 import {
   generatePpt,
   generateDoc,
@@ -79,14 +79,19 @@ const slideSchema = z.object({
       position: z.enum(["left", "right", "hero"]).optional(),
     })
     .optional(),
-  notes: z.string().trim().max(8000).optional(),
-  accentColor: z.string().trim().max(20).optional(),
+  notes: z.string().trim().max(10_000).optional(),
+  accentColor: z
+    .string()
+    .trim()
+    .max(50)
+    .regex(/^#?[0-9a-fA-F]{6}$/, "accentColor must be a 6-digit hex color (e.g. 1E3A8A or #1E3A8A)")
+    .optional(),
 });
 
 const sectionSchema = z.object({
   heading: z.string().trim().min(1).max(300),
   subheading: z.string().trim().max(300).optional(),
-  paragraphs: z.array(z.string().trim().max(10_000)).max(50).default([]),
+  paragraphs: z.array(z.string().trim().max(10_000)).max(30).optional(),
   bullets: z.array(z.string().trim().max(2000)).max(30).optional(),
   callout: z
     .object({
@@ -122,6 +127,7 @@ const sectionSchema = z.object({
 const bodySchema = z
   .object({
     type: z.enum(["ppt", "doc", "pdf"]),
+    workspaceId: z.string().optional(),
     path: z.string().trim().min(1).max(300),
     title: z.string().trim().min(1).max(300),
     subtitle: z.string().trim().max(300).optional(),
@@ -138,8 +144,8 @@ const bodySchema = z
     return Array.isArray(d.sections) && d.sections.length > 0;
   }, "ppt requires non-empty `slides`; doc/pdf require non-empty `sections`");
 
-async function resolveWs(userId: string) {
-  return (await getActiveWorkspace(userId)) ?? (await ensureDefaultWorkspace(userId));
+async function resolveWs(userId: string, workspaceId?: string) {
+  return (await resolveWorkspace(userId, workspaceId)) ?? (await ensureDefaultWorkspace(userId));
 }
 
 export const POST = withErrorHandler(async (req: NextRequest): Promise<Response> => {
@@ -164,10 +170,10 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
   }
   const d = parsed.data;
 
-  const ws = await resolveWs(user.id);
+  const ws = await resolveWs(user.id, d.workspaceId);
   let absPath: string;
   try {
-    absPath = await resolveOutputPath(user.id, ws.name, d.path);
+    absPath = await resolveOutputPath(user.id, ws.name, d.path, ws.rootDir);
   } catch (e) {
     return apiError(e instanceof Error ? e.message : "Invalid output path.", 400);
   }
@@ -181,13 +187,16 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
         slides: (d.slides || []) as PptSlide[],
         theme: d.theme as OfficeThemeId,
         outputPath: absPath,
+        workspaceRoot: ws.rootDir,
       });
       await audit(
         user.id,
         "office_generate",
         JSON.stringify({ type: "ppt", path: d.path, slides: r.slides, theme: r.manifest.theme }),
       );
-      return ok({ ok: true, path: d.path, stats: { slides: r.slides }, manifest: r.manifest });
+      // Return workspace-relative path — generator stores absolute paths internally.
+      const manifest = { ...r.manifest, path: d.path };
+      return ok({ ok: true, path: d.path, stats: { slides: r.slides }, manifest });
     }
     if (d.type === "doc") {
       const r = await generateDoc({
@@ -198,13 +207,15 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
         sections: (d.sections || []) as DocSection[],
         theme: d.theme as OfficeThemeId,
         outputPath: absPath,
+        workspaceRoot: ws.rootDir,
       });
       await audit(
         user.id,
         "office_generate",
         JSON.stringify({ type: "doc", path: d.path, sections: r.sections, theme: r.manifest.theme }),
       );
-      return ok({ ok: true, path: d.path, stats: { sections: r.sections }, manifest: r.manifest });
+      const manifest = { ...r.manifest, path: d.path };
+      return ok({ ok: true, path: d.path, stats: { sections: r.sections }, manifest });
     }
 
     const r = await generatePdf({
@@ -215,13 +226,15 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
       sections: (d.sections || []) as DocSection[],
       theme: d.theme as OfficeThemeId,
       outputPath: absPath,
+      workspaceRoot: ws.rootDir,
     });
     await audit(
       user.id,
       "office_generate",
       JSON.stringify({ type: "pdf", path: d.path, sections: r.sections, theme: r.manifest.theme }),
     );
-    return ok({ ok: true, path: d.path, stats: { sections: r.sections }, manifest: r.manifest });
+    const manifest = { ...r.manifest, path: d.path };
+    return ok({ ok: true, path: d.path, stats: { sections: r.sections }, manifest });
   } catch (e) {
     return apiError(e instanceof Error ? e.message : "Office generation failed.", 500);
   }

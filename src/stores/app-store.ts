@@ -631,6 +631,9 @@ interface AppState {
   setActiveOfficeDoc: (doc: OfficeDocManifest | null) => void;
   updateActiveOfficeSlide: (slideIndex: number, patch: Partial<PptSlide>) => void;
   updateActiveOfficeSection: (sectionIndex: number, patch: Partial<DocSection>) => void;
+  updateActiveOfficeDocMeta: (patch: Partial<OfficeDocManifest>) => void;
+  addActiveOfficeSection: (afterIndex?: number) => void;
+  deleteActiveOfficeSection: (sectionIndex: number) => void;
   setActiveOfficeTheme: (theme: OfficeThemeId) => void;
 
   /* Editing a sent user message — when set, the composer is in edit mode */
@@ -1389,6 +1392,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeFileTab: targetTab,
         gitStatus: null,
         gitStatusError: null,
+        activeOfficeDoc: null,
       }));
       const convs = get().conversations;
       const activeId = get().activeConversationId;
@@ -1481,6 +1485,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           selectedProjectId: s.selectedProjectId === workspaceId ? null : s.selectedProjectId,
           activeFileTabByProject: restTabs,
           openFilesByProject: restFiles,
+          activeOfficeDoc: isActive ? null : s.activeOfficeDoc,
         };
       });
       if (isActive) {
@@ -2782,12 +2787,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       // Office documents (.pptx, .docx, .pdf) live exclusively in the Office Studio
       if (/\.(pptx|docx|pdf)$/i.test(path)) {
+        const wsQuery = s.activeWorkspace?.id ? `&workspaceId=${encodeURIComponent(s.activeWorkspace.id)}` : "";
         apiGet<{ ok: boolean; document: { manifest?: OfficeDocManifest } }>(
-          `/api/office/document?path=${encodeURIComponent(path)}`
+          `/api/office/document?path=${encodeURIComponent(path)}${wsQuery}`
         )
           .then((res) => {
             if (res.ok && res.document.manifest) {
-              set({ activeOfficeDoc: res.document.manifest, rightPanelTab: "office", rightPanelOpen: true });
+              // Normalize to the requested workspace-relative path so the
+              // Office panel's polling doesn't treat it as a foreign doc.
+              const manifest =
+                res.document.manifest.path === path
+                  ? res.document.manifest
+                  : { ...res.document.manifest, path };
+              set({ activeOfficeDoc: manifest, rightPanelTab: "office", rightPanelOpen: true });
             } else {
               set({ rightPanelTab: "office", rightPanelOpen: true });
             }
@@ -3261,6 +3273,53 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sections = [...s.activeOfficeDoc.sections];
       if (sectionIndex < 0 || sectionIndex >= sections.length) return {};
       sections[sectionIndex] = { ...sections[sectionIndex], ...patch };
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          sections,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
+
+  updateActiveOfficeDocMeta: (patch) =>
+    set((s) => {
+      if (!s.activeOfficeDoc) return {};
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          ...patch,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
+
+  addActiveOfficeSection: (afterIndex) =>
+    set((s) => {
+      if (!s.activeOfficeDoc) return {};
+      const sections = [...(s.activeOfficeDoc.sections || [])];
+      const newSec: DocSection = {
+        id: `sec-${Date.now()}`,
+        heading: "New Section",
+        paragraphs: ["Click to write content for this section..."],
+        bullets: [],
+      };
+      const insertAt = typeof afterIndex === "number" ? afterIndex + 1 : sections.length;
+      sections.splice(insertAt, 0, newSec);
+      return {
+        activeOfficeDoc: {
+          ...s.activeOfficeDoc,
+          sections,
+          updatedAt: Date.now(),
+        },
+      };
+    }),
+
+  deleteActiveOfficeSection: (sectionIndex) =>
+    set((s) => {
+      if (!s.activeOfficeDoc || !s.activeOfficeDoc.sections) return {};
+      if (s.activeOfficeDoc.sections.length <= 1) return {};
+      const sections = s.activeOfficeDoc.sections.filter((_, idx) => idx !== sectionIndex);
       return {
         activeOfficeDoc: {
           ...s.activeOfficeDoc,

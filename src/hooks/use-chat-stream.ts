@@ -340,7 +340,15 @@ export function useChatStream(): UseChatStreamReturn {
         store.finishToolCall(evt.toolCallId, evt.result, evt.ok, convId);
         void store.refreshSubagents(convId);
         if (evt.result && typeof evt.result === "object" && "manifest" in (evt.result as any)) {
-          const manifest = (evt.result as any).manifest;
+          const rawManifest = (evt.result as any).manifest;
+          // Prefer the workspace-relative `path` sibling when present so the
+          // Office panel can match the doc across polls (legacy manifests
+          // stored absolute paths).
+          const relPath = (evt.result as any).path;
+          const manifest =
+            rawManifest && typeof relPath === "string" && rawManifest.path !== relPath
+              ? { ...rawManifest, path: relPath }
+              : rawManifest;
           store.setActiveOfficeDoc(manifest);
           store.setRightPanelTab("office");
           store.setRightPanelOpen(true);

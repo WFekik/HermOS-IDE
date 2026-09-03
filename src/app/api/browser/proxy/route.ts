@@ -138,8 +138,8 @@ export function rewriteStyleUrls(style: string, base: string): string {
  * Rewrite all URL-bearing attributes to absolute URLs so proxied pages keep
  * working even if the injected `<base>` tag is stripped downstream.
  * Covers: a/link[href], script/img/source/video/audio/embed/iframe/input/
- * track[src+srcset], video[poster], object[data], form[action],
- * button/input[formaction], plus inline style url(...).
+ * track[src+srcset], video[poster], object[data+codebase], image[href],
+ * form[action], button/input[formaction], plus inline style url(...).
  * - Handles single-, double-quoted AND unquoted attribute values.
  * - `<base href>` is still injected as the primary mechanism; this rewrite is
  *   defense-in-depth, so any exotic markup missed here still resolves via base.
@@ -147,7 +147,7 @@ export function rewriteStyleUrls(style: string, base: string): string {
 export function rewriteHtmlUrls(html: string, base: string): string {
   // 1. url-bearing attributes (quoted or unquoted)
   const attrPattern =
-    /<(a|link|script|img|source|video|audio|embed|iframe|object|form|input|track|button)\b([^>]*?)\b(href|src|srcset|poster|data|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s"'`>]+)([^>]*?)>/gi;
+    /<(a|link|script|img|image|source|video|audio|embed|iframe|object|form|input|track|button)\b([^>]*?)\b(href|xlink:href|src|srcset|poster|data|codebase|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s"'`>]+)([^>]*?)>/gi;
   let out = html.replace(
     attrPattern,
     (
@@ -163,18 +163,10 @@ export function rewriteHtmlUrls(html: string, base: string): string {
       const quote = quoted ? first : '"';
       const inner = quoted ? rawValue.slice(1, -1) : rawValue;
       const lowerAttr = attrName.toLowerCase();
-      let rewritten: string;
-      if (lowerAttr === "srcset") {
-        rewritten = rewriteSrcset(inner, base);
-      } else if (
-        lowerAttr === "style" ||
-        // style handled separately below; keep here for completeness
-        false
-      ) {
-        rewritten = inner;
-      } else {
-        rewritten = toAbsoluteUrl(inner, base);
-      }
+      // srcset needs descriptor-aware rewriting; all other URL attrs
+      // (incl. xlink:href) resolve via toAbsoluteUrl.
+      const rewritten: string =
+        lowerAttr === "srcset" ? rewriteSrcset(inner, base) : toAbsoluteUrl(inner, base);
       const safe = escapeHtmlAttr(rewritten);
       return `<${tag}${before}${attrName}=${quote}${safe}${quote}${after}>`;
     },
@@ -198,6 +190,36 @@ export function rewriteHtmlUrls(html: string, base: string): string {
     },
   );
 
+  // 3. Neutralize <meta http-equiv="refresh" content="0;url=javascript:...">
+  // Sandbox opaque origin contains most impact, but a javascript: refresh URL
+  // would still execute in the proxied context — rewrite executable/data targets to #.
+  out = out.replace(
+    /<meta\b[^>]*http-equiv\s*=\s*("[^"]*"|'[^']*'|[^\s"'`>]+)[^>]*>/gi,
+    (tag: string) => {
+      if (!/refresh/i.test(tag)) return tag;
+      const contentMatch = tag.match(/\bcontent\s*=\s*("[^"]*"|'[^']*'|[^\s"'`>]+)/i);
+      if (!contentMatch) return tag;
+      const rawContent = contentMatch[1];
+      const quote = rawContent[0] === '"' || rawContent[0] === "'" ? rawContent[0] : '"';
+      const inner = quote === '"' && rawContent[0] === '"' ? rawContent.slice(1, -1) : quote === "'" && rawContent[0] === "'" ? rawContent.slice(1, -1) : rawContent;
+      const urlMatch = inner.match(/url\s*=\s*(.+)/i);
+      if (!urlMatch) return tag;
+      const target = urlMatch[1].trim().replace(/^["']|["';\s]+$/g, "");
+      const lower = target.toLowerCase();
+      if (
+        lower.startsWith("javascript:") ||
+        lower.startsWith("vbscript:") ||
+        lower.startsWith("file:") ||
+        lower.startsWith("data:")
+      ) {
+        const safeContent = inner.replace(/url\s*=\s*.+/i, "url=#");
+        const safeAttr = `${quote}${escapeHtmlAttr(safeContent)}${quote}`;
+        return tag.replace(contentMatch[1], safeAttr);
+      }
+      return tag;
+    },
+  );
+
   return out;
 }
 
@@ -205,16 +227,18 @@ export function rewriteHtmlUrls(html: string, base: string): string {
  * Inject `<base>` + referrer meta without breaking doctype (quirks mode).
  * Order: after `<head>` if present, else after `<html>` if present, else
  * after `<!doctype>` if present, else prepend.
+ * Strips attacker-controlled `<base>` tags first so only our trusted base remains.
  */
 export function injectBaseTag(html: string, current: string): string {
+  const sanitized = html.replace(/<base\b[^>]*>/gi, "");
   const baseTag = `<base href="${escapeHtmlAttr(current)}"><meta name="referrer" content="no-referrer">`;
   const headPattern = /(<head\b[^>]*>)/i;
-  if (headPattern.test(html)) return html.replace(headPattern, `$1${baseTag}`);
+  if (headPattern.test(sanitized)) return sanitized.replace(headPattern, `$1${baseTag}`);
   const htmlPattern = /(<html\b[^>]*>)/i;
-  if (htmlPattern.test(html)) return html.replace(htmlPattern, `$1${baseTag}`);
+  if (htmlPattern.test(sanitized)) return sanitized.replace(htmlPattern, `$1${baseTag}`);
   const doctypePattern = /(<!doctype\b[^>]*>)/i;
-  if (doctypePattern.test(html)) return html.replace(doctypePattern, `$1${baseTag}`);
-  return `${baseTag}${html}`;
+  if (doctypePattern.test(sanitized)) return sanitized.replace(doctypePattern, `$1${baseTag}`);
+  return `${baseTag}${sanitized}`;
 }
 
 export const GET = withErrorHandler(async (req: NextRequest) => {

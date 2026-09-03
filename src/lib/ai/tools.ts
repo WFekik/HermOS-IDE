@@ -1094,7 +1094,9 @@ const pptSlideSchema = z.object({
     })
     .optional(),
   notes: z.string().trim().max(8000).optional(),
-  accentColor: z.string().trim().max(20).optional(),
+  // Lenient vs /api/office/generate (strict 6-digit hex → 400): agent calls
+  // sanitize via sanitizeAccentColor() → theme fallback, never 500.
+  accentColor: z.string().trim().max(50).optional(),
 });
 
 const initPresentationSchema = z.object({
@@ -2586,6 +2588,7 @@ async function runToolImpl(
             theme: parsed.data.theme as OfficeThemeId,
             initialSlide: parsed.data.initialSlide as PptSlide | undefined,
             path: outputPath,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2593,7 +2596,7 @@ async function runToolImpl(
               path: parsed.data.path,
               slides: r.slides,
               theme: r.manifest.theme,
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               message: `Presentation deck initialized with cover slide. Now use add_presentation_slide to build each slide carefully one-by-one.`,
             },
           };
@@ -2611,6 +2614,7 @@ async function runToolImpl(
           const r = await addPresentationSlide({
             path: outputPath,
             slide: parsed.data.slide as PptSlide,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2620,7 +2624,7 @@ async function runToolImpl(
               totalSlides: r.totalSlides,
               slideTitle: parsed.data.slide.title,
               layout: parsed.data.slide.layout || "bullets",
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               message: `Slide ${r.slideIndex + 1} of ${r.totalSlides} ("${parsed.data.slide.title}") created and added to presentation.`,
             },
           };
@@ -2639,6 +2643,7 @@ async function runToolImpl(
             path: outputPath,
             slideIndex: parsed.data.slideIndex,
             slide: parsed.data.slide as Partial<PptSlide>,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2646,7 +2651,7 @@ async function runToolImpl(
               path: parsed.data.path,
               slideIndex: r.slideIndex + 1,
               totalSlides: r.totalSlides,
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               message: `Slide ${r.slideIndex + 1} updated in presentation.`,
             },
           };
@@ -2668,6 +2673,7 @@ async function runToolImpl(
             theme: parsed.data.theme as OfficeThemeId,
             slides: parsed.data.slides as PptSlide[],
             outputPath,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2675,7 +2681,7 @@ async function runToolImpl(
               path: parsed.data.path,
               slides: r.slides,
               theme: r.manifest.theme,
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2698,6 +2704,7 @@ async function runToolImpl(
             theme: parsed.data.theme as OfficeThemeId,
             sections: parsed.data.sections as DocSection[],
             outputPath,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2705,7 +2712,7 @@ async function runToolImpl(
               path: parsed.data.path,
               sections: r.sections,
               theme: r.manifest.theme,
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2728,6 +2735,7 @@ async function runToolImpl(
             theme: parsed.data.theme as OfficeThemeId,
             sections: parsed.data.sections as DocSection[],
             outputPath,
+            workspaceRoot: ws.rootDir,
           });
           return {
             ok: true,
@@ -2735,7 +2743,7 @@ async function runToolImpl(
               path: parsed.data.path,
               sections: r.sections,
               theme: r.manifest.theme,
-              manifest: r.manifest,
+              manifest: { ...r.manifest, path: parsed.data.path },
               bytes: (await fs.stat(outputPath).catch(() => ({ size: 0 }))).size,
             },
           };
@@ -2755,7 +2763,8 @@ async function runToolImpl(
           if (!stat || !stat.isFile()) {
             return { ok: false, result: { error: "File not found." } };
           }
-          const manifest = await readOfficeManifest(abs);
+          const rawManifest = await readOfficeManifest(abs);
+          const manifest = rawManifest ? { ...rawManifest, path: parsed.data.path } : rawManifest;
           const r = await extractOfficeText(abs);
           return {
             ok: true,
