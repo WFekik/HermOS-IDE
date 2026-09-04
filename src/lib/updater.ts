@@ -21,6 +21,23 @@ export function isTauriDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+const RELEASE_REPO = "https://github.com/WFekik/HermOS-IDE";
+
+/** Manual-install fallback URL for a given version (used when auto-install can't finish). */
+export function releaseTagUrl(version: string): string {
+  const v = String(version || "").trim().replace(/^v/, "");
+  return `${RELEASE_REPO}/releases/tag/v${v}`;
+}
+
+function openReleaseTag(version: string): void {
+  const url = releaseTagUrl(version);
+  import("@/lib/open-external").then(({ openExternalUrl }) => {
+    openExternalUrl(url);
+  }).catch(() => {
+    window.open(url, "_blank", "noopener");
+  });
+}
+
 /**
  * Checks for updates across desktop and web environments.
  * In desktop mode: checks Tauri updater plugin and installs update if confirmed.
@@ -123,18 +140,45 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
           }
         });
       } catch (downloadError) {
-        // Company-grade: never leave an indefinite loading spinner. Dismiss the
-        // progress toast and surface the failure before falling through to the
-        // GitHub API fallback / error result below.
+        // Company-grade: never leave an indefinite loading spinner, and never
+        // strand the user with a 6s toast they might miss — pin a manual
+        // fallback so a failed auto-install is always recoverable in one click.
         toast.dismiss("app-update-progress");
-        toast.error("Update download failed. Please try again or download manually.", {
-          duration: 6000,
+        toast.error("Update download failed.", {
+          id: "app-update-failed",
+          duration: 60000,
+          description: "Check your connection and retry — or install manually from the release page.",
+          action: {
+            label: "Install manually",
+            onClick: () => openReleaseTag(update.version),
+          },
         });
         throw downloadError;
       }
 
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+      // The installer runs as part of downloadAndInstall; relaunch only moves
+      // us into the new version. If relaunch throws, the previous code fell
+      // into the outer catch which surfaced NOTHING visible — the app just sat
+      // on the old version. Pin a restart prompt instead.
+      try {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } catch (relaunchError) {
+        console.warn("[updater] relaunch failed after staged update:", relaunchError);
+        toast.warning("Update downloaded — restart to finish install.", {
+          id: "app-update-restart",
+          duration: Infinity,
+          description: "The new version is staged. Restart the app to apply it.",
+          action: {
+            label: "Restart now",
+            onClick: () => {
+              import("@tauri-apps/plugin-process").then(({ relaunch }) => relaunch()).catch(() => {
+                openReleaseTag(update.version);
+              });
+            },
+          },
+        });
+      }
       return { status: "downloaded", version: update.version };
     } catch (error) {
       // Ensure no stale progress toast survives a failed download/check.
