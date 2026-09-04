@@ -51,8 +51,7 @@
       "nsis": {
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
-        "compression": "lzma",
-        "installerHooks": "installer-hooks.nsh"
+        "compression": "lzma"
       },
       "wix": null
     }
