@@ -71,6 +71,21 @@ fn find_node_in_dir(dir: &Path) -> Option<PathBuf> {
   candidates.into_iter().next()
 }
 
+/// Tauri command: stop the managed Node sidecar (if running) so files under
+/// the install dir are not locked — e.g. right before an updater install
+/// replaces them. Best-effort: always Ok, failures are only logged.
+#[tauri::command]
+fn stop_node_sidecar(app: tauri::AppHandle) -> Result<bool, String> {
+  if let Some(state) = app.try_state::<NodeProcess>() {
+    if let Some(mut child) = state.0.lock().unwrap().take() {
+      log::info!("Stopping Node server (pid {}) for update", child.id());
+      kill_node_child(&mut child);
+      return Ok(true);
+    }
+  }
+  Ok(false)
+}
+
 /// Tauri command: Open a native folder picker and return the selected path.
 #[tauri::command]
 fn pick_folder(app: tauri::AppHandle) -> Result<String, String> {
@@ -350,7 +365,7 @@ pub fn run() {
         .build(),
     )
     .manage(NodeProcess(Mutex::new(None)))
-    .invoke_handler(tauri::generate_handler![pick_folder]);
+    .invoke_handler(tauri::generate_handler![pick_folder, stop_node_sidecar]);
 
   let app = builder
     .setup(move |app| {

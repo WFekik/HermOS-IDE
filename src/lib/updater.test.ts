@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { checkForUpdates } from './updater';
+import {
+  checkForUpdates,
+  recordPendingUpdate,
+  readPendingUpdate,
+  clearPendingUpdate,
+  releaseTagUrl,
+} from './updater';
 
 describe('updater', () => {
   beforeEach(() => {
@@ -56,6 +62,38 @@ describe('updater', () => {
       }
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('pending-update record (verify-on-launch)', () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it('builds a tag URL with normalized version', () => {
+      expect(releaseTagUrl('1.0.7')).toBe(
+        'https://github.com/WFekik/HermOS-IDE/releases/tag/v1.0.7',
+      );
+      expect(releaseTagUrl('v1.0.7')).toBe(
+        'https://github.com/WFekik/HermOS-IDE/releases/tag/v1.0.7',
+      );
+    });
+
+    it('round-trips a pending record and clears it', () => {
+      expect(readPendingUpdate()).toBeNull();
+      recordPendingUpdate('1.0.6', '1.0.7');
+      const pending = readPendingUpdate();
+      expect(pending).toMatchObject({ from: '1.0.6', to: '1.0.7' });
+      expect(typeof pending?.at).toBe('number');
+      clearPendingUpdate();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('rejects same-version and corrupted records', () => {
+      recordPendingUpdate('1.0.7', '1.0.7');
+      expect(readPendingUpdate()).toBeNull();
+      localStorage.setItem('hermos:pending-update', 'not-json{{{');
+      expect(readPendingUpdate()).toBeNull();
     });
   });
 });

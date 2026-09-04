@@ -40,7 +40,38 @@ export function Providers({ children }: { children: React.ReactNode }) {
     let updaterTimeout: ReturnType<typeof setTimeout> | undefined;
 
     import("@/lib/updater")
-      .then(({ checkForUpdates }) => {
+      .then(({ checkForUpdates, consumeStaleUpdate, clearPendingUpdate, releaseTagUrl }) => {
+        // Verify-on-launch: if a previous update was staged but we are still
+        // on the old version, the installer did not apply — say so loudly
+        // with retry + manual fallback instead of failing silently again.
+        try {
+          const stale = consumeStaleUpdate();
+          if (stale) {
+            import("@/lib/open-external").then(({ openExternalUrl }) => {
+              toast.warning(`Update to v${stale.to} didn't apply.`, {
+                id: "app-update-stale",
+                duration: Infinity,
+                description: "The installer was blocked or interrupted. Retry, or install manually.",
+                action: {
+                  label: "Retry update",
+                  onClick: () => {
+                    clearPendingUpdate();
+                    checkForUpdates(true);
+                  },
+                },
+                cancel: {
+                  label: "Install manually",
+                  onClick: () => {
+                    clearPendingUpdate();
+                    openExternalUrl(releaseTagUrl(stale.to));
+                  },
+                },
+              });
+            }).catch(() => {});
+          }
+        } catch {
+          /* boot notice is best-effort */
+        }
         updaterTimeout = setTimeout(() => {
           checkForUpdates(false).then((result) => {
             if (result.status === "available") {

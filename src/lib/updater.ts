@@ -38,6 +38,85 @@ function openReleaseTag(version: string): void {
   });
 }
 
+const PENDING_UPDATE_KEY = "hermos:pending-update";
+
+export interface PendingUpdate {
+  from: string;
+  to: string;
+  at: number;
+}
+
+/**
+ * Persist an update across the install step. On Windows the updater plugin
+ * terminates the process to run the installer, so code after `install()`
+ * never runs there — this record is the only way to know on next boot
+ * whether the install actually applied (verify-on-launch pattern).
+ */
+export function recordPendingUpdate(from: string, to: string): void {
+  try {
+    localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify({ from, to, at: Date.now() }));
+  } catch {
+    /* storage unavailable — boot check simply won't fire */
+  }
+}
+
+export function readPendingUpdate(): PendingUpdate | null {
+  try {
+    const raw = localStorage.getItem(PENDING_UPDATE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<PendingUpdate>;
+    if (typeof p.from === "string" && typeof p.to === "string" && p.from !== p.to) {
+      return { from: p.from, to: p.to, at: typeof p.at === "number" ? p.at : 0 };
+    }
+  } catch {
+    /* corrupted record — treat as none */
+  }
+  return null;
+}
+
+export function clearPendingUpdate(): void {
+  try {
+    localStorage.removeItem(PENDING_UPDATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Boot check: call once at startup. Returns the pending record when an update
+ * was staged but we are STILL on the old version (install did not apply).
+ * Clears the record once the new version is running. Returns null otherwise.
+ */
+export function consumeStaleUpdate(): PendingUpdate | null {
+  const pending = readPendingUpdate();
+  if (!pending) return null;
+  let current = "";
+  try {
+    current = getAppVersion();
+  } catch {
+    return null;
+  }
+  if (current === pending.to) {
+    clearPendingUpdate();
+    return null;
+  }
+  if (current === pending.from) return pending;
+  // Unknown version (dev/rollback) — drop the stale record.
+  clearPendingUpdate();
+  return null;
+}
+
+/** Best-effort stop of our own Node sidecar so the installer can replace install-dir files. */
+async function stopSidecarForUpdate(): Promise<void> {
+  if (!isTauriDesktop()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("stop_node_sidecar");
+  } catch (e) {
+    console.warn("[updater] stop_node_sidecar failed (continuing anyway):", e);
+  }
+}
+
 /**
  * Checks for updates across desktop and web environments.
  * In desktop mode: checks Tauri updater plugin and installs update if confirmed.
@@ -111,8 +190,12 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
       let downloadedBytes = 0;
       let totalBytes = 0;
 
+      // NOTE: split download/install on purpose. The UI (and these toasts) is
+      // served by our own Node sidecar, which holds locks on install-dir
+      // files — NSIS cannot replace a running executable, so the sidecar must
+      // die after the download and before install().
       try {
-        await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
+        await update.download((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
           switch (event.event) {
             case "Started":
               totalBytes = event.data?.contentLength || 0;
@@ -132,9 +215,8 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
               }
               break;
             case "Finished":
-              toast.success("Update downloaded! Relaunching HermOS IDE...", {
+              toast.loading("Download complete. Installing update...", {
                 id: "app-update-progress",
-                duration: 4000,
               });
               break;
           }
@@ -156,6 +238,29 @@ export async function checkForUpdates(autoInstall = false): Promise<UpdateCheckR
         throw downloadError;
       }
 
+      // Point of no return on Windows: install() spawns the installer and the
+      // process self-terminates, so NOTHING below runs there. Record first so
+      // the next boot can verify the install actually applied.
+      recordPendingUpdate(currentVersion, update.version);
+      await stopSidecarForUpdate();
+
+      try {
+        await update.install();
+      } catch (installError) {
+        toast.dismiss("app-update-progress");
+        toast.error("Update install failed.", {
+          id: "app-update-failed",
+          duration: 60000,
+          description: "The download is fine — the installer could not apply it. Retry, or install manually.",
+          action: {
+            label: "Install manually",
+            onClick: () => openReleaseTag(update.version),
+          },
+        });
+        throw installError;
+      }
+
+      // macOS/Linux path only — on Windows the process is already gone here.
       // The installer runs as part of downloadAndInstall; relaunch only moves
       // us into the new version. If relaunch throws, the previous code fell
       // into the outer catch which surfaced NOTHING visible — the app just sat
