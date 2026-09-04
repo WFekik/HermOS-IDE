@@ -150,6 +150,10 @@ function updateHermosWebsite(newVersion) {
   let content = fs.readFileSync(WEBSITE_PATH, "utf-8");
   content = content.replace(/"softwareVersion":\s*"[^"]+"/g, `"softwareVersion": "${newVersion}"`);
   content = content.replace(/version:\s*"[^"]+"/g, `version: "${newVersion}"`);
+  // Versioned installer filenames baked into static download hrefs
+  // (e.g. HermOS.IDE_1.0.6_x64-setup.exe) — otherwise the site keeps
+  // pointing at the previous release's assets after a bump.
+  content = content.replace(/HermOS\.IDE_\d+\.\d+\.\d+_/g, `HermOS.IDE_${newVersion}_`);
   fs.writeFileSync(WEBSITE_PATH, content, "utf-8");
 }
 
