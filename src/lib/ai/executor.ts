@@ -5662,32 +5662,9 @@ const thinkInstruction = thinkPlan.kind === "params"
           emit({ type: "tool_call_end", toolCallId: entry.toolCallId });
         };
 
-        const CONCURRENT_READ_TOOLS = new Set([
-          "read_file",
-          "read_doc",
-          "list_directory",
-          "glob",
-          "grep",
-          "web_search",
-          "http_fetch",
-          "todo_read",
-          "get_subagent",
-        ]);
-
-        const pendingReads: ToolBatchEntry[] = [];
-        const flushPendingReads = async () => {
-          if (pendingReads.length === 0) return;
-          const toRun = pendingReads.splice(0, pendingReads.length);
-          if (toRun.length === 1) {
-            await executeSingleEntry(toRun[0]);
-          } else {
-            await Promise.all(toRun.map((entry) => executeSingleEntry(entry)));
-          }
-        };
-
-        // Interleaved: evaluate permission → execute → emit for each tool.
-        // Contiguous runs of allowed read-only tools execute concurrently via
-        // Promise.all to maximize agent speed, while mutating/prompted tools run sequentially.
+        // Evaluate permission → execute → emit for each tool strictly ONE BY ONE.
+        // No batching or concurrency: each tool card appears, executes, and resolves
+        // completely before moving to the next tool.
         for (let i = 0; i < toolCalls.length; i++) {
           const tc = toolCalls[i];
           const toolCallId = `${assistantMsg.id}-tc-${batchStartLen + i + 1}`;
@@ -5744,8 +5721,6 @@ const thinkInstruction = thinkPlan.kind === "params"
               /* ignore audit failures */
             }
           } else if (permissionMode === "ask") {
-            // Flush any pending reads before prompting the user
-            await flushPendingReads();
             const target = buildPermissionTarget(tc.toolName, action, tc.args);
             const { id: approvalId, promise: approvalPromise } =
               createPendingApproval({
@@ -5809,14 +5784,9 @@ const thinkInstruction = thinkPlan.kind === "params"
 
           batch.push(entry);
 
-          if (entry.allowed && CONCURRENT_READ_TOOLS.has(entry.toolName)) {
-            pendingReads.push(entry);
-          } else {
-            await flushPendingReads();
-            await executeSingleEntry(entry);
-          }
+          // Immediately execute this tool one by one — no batching
+          await executeSingleEntry(entry);
         }
-        await flushPendingReads();
 
         for (const entry of batch) {
           const { toolCallId, toolName, args } = entry;
@@ -5841,8 +5811,9 @@ const thinkInstruction = thinkPlan.kind === "params"
               toolCallId,
             });
 
-            try {
-              await db.toolExecution.create({
+            // Persist tool execution record asynchronously without blocking agent loop
+            db.toolExecution
+              .create({
                 data: {
                   conversationId: conversation.id,
                   toolName,
@@ -5851,10 +5822,10 @@ const thinkInstruction = thinkPlan.kind === "params"
                   status: result.ok ? "success" : "error",
                   durationMs,
                 },
+              })
+              .catch(() => {
+                /* ignore persist errors */
               });
-            } catch {
-              /* ignore persist errors */
-            }
 
             // Build and persist full tool result into conversation history for subsequent iterations.
             let resultContent: string;
