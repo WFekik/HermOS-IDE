@@ -1474,7 +1474,7 @@ async function disableDeadModel(
   }
 }
 
-async function* streamOpenAICompatible(
+export async function* streamOpenAICompatible(
   baseUrl: string,
   apiKey: string,
   model: string,
@@ -1874,6 +1874,10 @@ async function* streamOpenAICompatible(
   let finishReason: string | undefined;
   // Measured usage reported by the provider (last usage object seen wins).
   let openaiUsage: MeasuredUsage | undefined;
+  // Track accumulated deltas for Responses API output and reasoning items so
+  // trailing `*.done` frames with complete item text don't duplicate already-streamed text.
+  const accumulatedResponsesOutputText = new Map<string, string>();
+  const accumulatedResponsesReasoningText = new Map<string, string>();
 
   const READ_TIMEOUT_MS = 300_000;
 
@@ -2008,22 +2012,46 @@ async function* streamOpenAICompatible(
           continue;
         }
         if (json.type === "response.reasoning_text.delta" && typeof json.delta === "string") {
+          const key = `${json.output_index ?? ""}:${json.item_id ?? ""}`;
+          accumulatedResponsesReasoningText.set(
+            key,
+            (accumulatedResponsesReasoningText.get(key) ?? "") + json.delta,
+          );
           yield { type: "thinking", text: json.delta };
           continue;
         }
         if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+          const key = `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`;
+          accumulatedResponsesOutputText.set(
+            key,
+            (accumulatedResponsesOutputText.get(key) ?? "") + json.delta,
+          );
           yield { type: "content", text: json.delta };
           continue;
         }
         // Collapsed-stream gateways may emit only `*.done` frames with the full
-        // text (no preceding `.delta`). Yield those so content is not lost.
+        // text (no preceding `.delta`). If deltas were already streamed, only
+        // yield any unstreamed trailing remainder to prevent duplicate text before tool calls.
         if (json.type === "response.output_text.done") {
           const text =
             (typeof json.text === "string" && json.text) ||
             (typeof json.delta === "string" && json.delta) ||
             (typeof json.output_text === "string" && json.output_text) ||
             "";
-          if (text) yield { type: "content", text };
+          const key = `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`;
+          const streamed = accumulatedResponsesOutputText.get(key) ?? "";
+          if (text) {
+            if (streamed && text.startsWith(streamed)) {
+              const remainder = text.slice(streamed.length);
+              if (remainder) {
+                accumulatedResponsesOutputText.set(key, text);
+                yield { type: "content", text: remainder };
+              }
+            } else if (!streamed) {
+              accumulatedResponsesOutputText.set(key, text);
+              yield { type: "content", text };
+            }
+          }
           continue;
         }
         if (json.type === "response.reasoning_text.done") {
@@ -2031,7 +2059,20 @@ async function* streamOpenAICompatible(
             (typeof json.text === "string" && json.text) ||
             (typeof json.delta === "string" && json.delta) ||
             "";
-          if (text) yield { type: "thinking", text };
+          const key = `${json.output_index ?? ""}:${json.item_id ?? ""}`;
+          const streamed = accumulatedResponsesReasoningText.get(key) ?? "";
+          if (text) {
+            if (streamed && text.startsWith(streamed)) {
+              const remainder = text.slice(streamed.length);
+              if (remainder) {
+                accumulatedResponsesReasoningText.set(key, text);
+                yield { type: "thinking", text: remainder };
+              }
+            } else if (!streamed) {
+              accumulatedResponsesReasoningText.set(key, text);
+              yield { type: "thinking", text };
+            }
+          }
           continue;
         }
         if (json.type === "response.output_item.done" && json.item?.type === "function_call" && json.item?.name) {

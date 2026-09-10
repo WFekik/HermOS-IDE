@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildCompletionIntegrityNudge } from "@/lib/ai/executor";
+import { describe, it, expect, vi } from "vitest";
+import { buildCompletionIntegrityNudge, streamOpenAICompatible } from "@/lib/ai/executor";
 import type { ToolCall } from "@/lib/types";
 
 function call(partial: Partial<ToolCall>): ToolCall {
@@ -85,5 +85,84 @@ describe("buildCompletionIntegrityNudge", () => {
   it("is deterministic for the same input", () => {
     const calls = [failedCall("c1", "run_command", "src/a.ts")];
     expect(buildCompletionIntegrityNudge(calls)).toBe(buildCompletionIntegrityNudge(calls));
+  });
+});
+
+describe("streamOpenAICompatible - Responses API deduplication", () => {
+  it("does not duplicate text when both response.output_text.delta and response.output_text.done arrive", async () => {
+    const sseChunks = [
+      'data: {"type":"response.output_text.delta","output_index":0,"delta":"Hey — quick tour of what I can do."}\n\n',
+      'data: {"type":"response.output_text.done","output_index":0,"text":"Hey — quick tour of what I can do."}\n\n',
+      'data: [DONE]\n\n',
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of sseChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+
+    try {
+      const chunks: Array<{ type: string; text?: string }> = [];
+      for await (const chunk of streamOpenAICompatible(
+        "https://opencode.ai/zen/v1",
+        "test-key",
+        "muse-spark-1.3-contributor-free",
+        [{ role: "user", content: "hi" }],
+      )) {
+        chunks.push(chunk as any);
+      }
+
+      const contentChunks = chunks.filter((c) => c.type === "content");
+      const fullText = contentChunks.map((c) => c.text).join("");
+      expect(fullText).toBe("Hey — quick tour of what I can do.");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("still yields full text on response.output_text.done when no deltas were emitted (collapsed gateway)", async () => {
+    const sseChunks = [
+      'data: {"type":"response.output_text.done","output_index":0,"text":"Collapsed full text greeting."}\n\n',
+      'data: [DONE]\n\n',
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of sseChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+
+    try {
+      const chunks: Array<{ type: string; text?: string }> = [];
+      for await (const chunk of streamOpenAICompatible(
+        "https://opencode.ai/zen/v1",
+        "test-key",
+        "muse-spark-1.3-contributor-free",
+        [{ role: "user", content: "hi" }],
+      )) {
+        chunks.push(chunk as any);
+      }
+
+      const contentChunks = chunks.filter((c) => c.type === "content");
+      const fullText = contentChunks.map((c) => c.text).join("");
+      expect(fullText).toBe("Collapsed full text greeting.");
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
