@@ -8,6 +8,7 @@ import type { ProviderId } from "@/lib/types";
 import { checkUrlHost } from "@/lib/ssrf";
 import { normalizeThinkingLevel, parseModelReasoningCapabilities } from "@/lib/reasoning";
 import type { ModelReasoningCapabilities } from "@/lib/reasoning";
+import { buildProviderHeaders, resolveModelsUrl } from "@/lib/ai/provider-payloads";
 
 interface ModelCapabilities {
   id: string;
@@ -99,7 +100,10 @@ export async function refreshProviderModels(
 
   try {
     const isAnthropic = provider === "anthropic";
-    const url = baseUrl.replace(/\/$/, "") + "/models";
+    const url = isAnthropic
+      ? baseUrl.replace(/\/$/, "") + "/models"
+      : resolveModelsUrl(baseUrl);
+    if (!url) return null;
     // SSRF: The provider base URL is user-editable and this auto-refresh runs from
     // the server, so it must go through the same SSRF policy as every other
     // outbound fetch. We validate pre-fetch and re-validate post-redirect
@@ -112,13 +116,19 @@ export async function refreshProviderModels(
     // by checkUrlHost now failing closed on DNS errors and by post-fetch IP
     // re-verification (see ssrf.ts).
     if (await checkUrlHost(url)) return null;
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (isAnthropic) {
-      headers["x-api-key"] = apiKey;
-      headers["anthropic-version"] = "2023-06-01";
-    } else {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
+    const headers: Record<string, string> = isAnthropic
+      ? {
+          Accept: "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        }
+      : buildProviderHeaders({
+          providerId: provider,
+          baseUrl,
+          apiKey,
+          acceptStream: false,
+          includeContentType: false,
+        });
 
     const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return null;

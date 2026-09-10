@@ -44,6 +44,17 @@ import {
   configureRequestBody,
   parseSseReasoningChunk,
   sanitizeRejectedReasoningParams,
+  buildProviderHeaders,
+  refreshRequestId,
+  getBodyMaxTokens,
+  setBodyMaxTokens,
+  isResponsesRequired,
+  isZenProvider,
+  markResponsesRequired,
+  clearResponsesRequired,
+  buildResponsesRequestBody,
+  resolveProviderUrls,
+  ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
 } from "@/lib/ai/provider-payloads";
 import {
@@ -444,6 +455,7 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
               maxTokens,
               session.provider,
               tl,
+              sessionId,
             )) {
               if (chunk.type === "tool_calls") toolCalls = chunk.calls ?? [];
               else if (chunk.type === "content") {
@@ -1162,8 +1174,11 @@ async function* streamOpenAICompatible(
   maxTokens?: number,
   providerId?: string,
   thinkingLevel?: string,
+  sessionId?: string,
 ): AsyncGenerator<StreamChunk> {
-  const url = `${baseUrl}/chat/completions`;
+  const useResponses = isResponsesRequired(providerId, baseUrl, model);
+  const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+  let url = useResponses ? responsesUrl : completionsUrl;
   const resolvedMaxTokens = maxTokens ?? undefined;
   const plan = resolveReasoningPlan({
     providerId: providerId ?? "",
@@ -1171,34 +1186,88 @@ async function* streamOpenAICompatible(
     maxTokens,
     modelRejectsReasoning: modelRejectsReasoning(baseUrl, model),
   });
-  const body: Record<string, unknown> = { model, messages, stream: true };
-  configureRequestBody({
-    providerId,
-    model,
-    body,
-    reasoningParams: plan?.kind === "params" ? plan.params : undefined,
-    maxTokens: resolvedMaxTokens,
-    tools,
-  });
+  const reasoningParams = plan?.kind === "params" ? plan.params : undefined;
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/event-stream",
-  };
-  if (apiKey && apiKey !== "not-needed") headers.Authorization = `Bearer ${apiKey}`;
+  let body: Record<string, unknown>;
+  if (useResponses) {
+    body = buildResponsesRequestBody({
+      model,
+      messages,
+      tools,
+      maxTokens: resolvedMaxTokens,
+      stream: true,
+      providerId,
+      reasoningParams,
+    });
+  } else {
+    body = { model, messages, stream: true };
+    configureRequestBody({
+      providerId,
+      model,
+      body,
+      reasoningParams,
+      maxTokens: resolvedMaxTokens,
+      tools,
+    });
+  }
+
+  const headers = buildProviderHeaders({
+    providerId,
+    baseUrl,
+    apiKey,
+    sessionId,
+    acceptStream: true,
+  });
+  const freshHeaders = () => refreshRequestId({ ...headers });
 
   let resp = await fetchWithTimeout(url, {
     method: "POST",
-    headers,
+    headers: freshHeaders(),
     cache: "no-store",
     body: JSON.stringify(body),
   });
+
+  // OpenCode Zen hybrid failover (both directions) — see executor.ts.
+  // Post-failover `body`/`url` reassigned so retries below use active protocol.
+  const isZen = isZenProvider(providerId, baseUrl);
+  if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+    markResponsesRequired(baseUrl, model);
+    const fallbackBody = buildResponsesRequestBody({
+      model,
+      messages,
+      tools,
+      maxTokens: resolvedMaxTokens,
+      stream: true,
+      providerId,
+      reasoningParams,
+    });
+    resp = await fetchWithTimeout(responsesUrl, {
+      method: "POST",
+      headers: freshHeaders(),
+      cache: "no-store",
+      body: JSON.stringify(fallbackBody),
+    });
+    body = fallbackBody;
+    url = responsesUrl;
+  } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+    clearResponsesRequired(baseUrl, model);
+    const chatBody: Record<string, unknown> = { model, messages, stream: true };
+    configureRequestBody({ providerId, model, body: chatBody, reasoningParams, maxTokens: resolvedMaxTokens, tools });
+    resp = await fetchWithTimeout(completionsUrl, {
+      method: "POST",
+      headers: freshHeaders(),
+      cache: "no-store",
+      body: JSON.stringify(chatBody),
+    });
+    body = chatBody;
+    url = completionsUrl;
+  }
 
   if ((resp.status === 400 || resp.status === 405 || resp.status === 422) && (body.reasoning_effort || body.reasoning || body.thinkingConfig)) {
     sanitizeRejectedReasoningParams(body);
     resp = await fetchWithTimeout(url, {
       method: "POST",
-      headers,
+      headers: freshHeaders(),
       body: JSON.stringify(body),
     });
   }
@@ -1208,7 +1277,7 @@ async function* streamOpenAICompatible(
     delete body.tool_choice;
     resp = await fetchWithTimeout(url, {
       method: "POST",
-      headers,
+      headers: freshHeaders(),
       body: JSON.stringify(body),
     });
   }
@@ -1219,7 +1288,7 @@ async function* streamOpenAICompatible(
     const isOpenRouter = url.includes("openrouter.ai") || providerId === "openrouter";
     const isGroq = plan?.scheme === "groq_effort" || providerId === "groq" || url.includes("api.groq.com");
     let capped: number | null = null;
-    const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : 4096;
+    const currentMax = getBodyMaxTokens(body) ?? 4096;
 
     if (isOpenRouter || isGroq) {
       if (isOpenRouter && (resp.status === 402 || resp.status === 400)) {
@@ -1259,10 +1328,10 @@ async function* streamOpenAICompatible(
       console.warn(
         `[subagent] Provider 400: prompt + output exceeds context window (${limit}), capping max_tokens to ${capped}`,
       );
-      body.max_tokens = capped;
+      setBodyMaxTokens(body, capped);
       resp = await fetchWithTimeout(url, {
         method: "POST",
-        headers,
+        headers: freshHeaders(),
         body: JSON.stringify(body),
       });
       if (!resp.ok) text = await resp.text().catch(() => "");
@@ -1270,10 +1339,10 @@ async function* streamOpenAICompatible(
       console.warn(
         `[subagent] ${isOpenRouter ? "OpenRouter" : "Groq"} ${resp.status}: capping max_tokens to ${capped}`,
       );
-      body.max_tokens = capped;
+      setBodyMaxTokens(body, capped);
       resp = await fetchWithTimeout(url, {
         method: "POST",
-        headers,
+        headers: freshHeaders(),
         body: JSON.stringify(body),
       });
       if (!resp.ok) text = await resp.text().catch(() => "");
@@ -1356,6 +1425,109 @@ async function* streamOpenAICompatibleFromResponse(
         if (typeof json.error?.status === "number") err.status = json.error.status;
         if (err.status === undefined) err.statuslessUpstream = true;
         throw err;
+      }
+      // Responses API event handling (e.g. OpenCode Zen Muse Spark /responses)
+      if (typeof json.type === "string" && json.type.startsWith("response.")) {
+        if (json.type === "response.failed") {
+          throw new Error(`Provider error: ${extractUpstreamError(json.error ?? json.response?.error)}`);
+        }
+        if (json.type === "response.completed") {
+          finishReason = "stop";
+          continue;
+        }
+        if (json.type === "response.output_item.added" && json.item?.type === "function_call") {
+          sawToolCalls = true;
+          const key = typeof json.output_index === "number" ? json.output_index : acc.size;
+          acc.set(key, {
+            id: json.item.call_id ?? json.item.id ?? "",
+            name: json.item.name ?? "",
+            args: json.item.arguments ?? "",
+          });
+          continue;
+        }
+        if (json.type === "response.function_call_arguments.delta") {
+          sawToolCalls = true;
+          let target: { id: string; name: string; args: string } | undefined;
+          if (typeof json.output_index === "number") target = acc.get(json.output_index);
+          if (!target && json.item_id) {
+            for (const item of acc.values()) {
+              if (item.id === json.item_id) { target = item; break; }
+            }
+          }
+          if (!target) {
+            const key = typeof json.output_index === "number" ? json.output_index : acc.size;
+            target = { id: json.item_id ?? "", name: "", args: "" };
+            acc.set(key, target);
+          }
+          if (json.delta) target.args += json.delta;
+          continue;
+        }
+        if (json.type === "response.function_call_arguments.done") {
+          sawToolCalls = true;
+          let target: { id: string; name: string; args: string } | undefined;
+          if (typeof json.output_index === "number") target = acc.get(json.output_index);
+          if (!target && json.item_id) {
+            for (const item of acc.values()) {
+              if (item.id === json.item_id) { target = item; break; }
+            }
+          }
+          if (target) {
+            if (json.arguments) target.args = json.arguments;
+            if (json.name) target.name = json.name;
+          }
+          continue;
+        }
+        if (json.type === "response.reasoning_text.delta" && typeof json.delta === "string") {
+          yield { type: "thinking", text: json.delta };
+          continue;
+        }
+        if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+          yield { type: "content", text: json.delta };
+          continue;
+        }
+        // Collapsed-stream gateways may emit only `*.done` frames with the full
+        // text (no preceding `.delta`). Yield those so content is not lost.
+        if (json.type === "response.output_text.done") {
+          const text =
+            (typeof json.text === "string" && json.text) ||
+            (typeof json.delta === "string" && json.delta) ||
+            (typeof json.output_text === "string" && json.output_text) ||
+            "";
+          if (text) yield { type: "content", text };
+          continue;
+        }
+        if (json.type === "response.reasoning_text.done") {
+          const text =
+            (typeof json.text === "string" && json.text) ||
+            (typeof json.delta === "string" && json.delta) ||
+            "";
+          if (text) yield { type: "thinking", text };
+          continue;
+        }
+        if (json.type === "response.output_item.done" && json.item?.type === "function_call" && json.item?.name) {
+          sawToolCalls = true;
+          const key = typeof json.output_index === "number" ? json.output_index : acc.size;
+          const existing = acc.get(key);
+          const args =
+            typeof json.item.arguments === "string"
+              ? json.item.arguments
+              : typeof json.arguments === "string"
+                ? json.arguments
+                : JSON.stringify(json.item.arguments ?? json.arguments ?? {});
+          if (!existing) {
+            acc.set(key, {
+              id: json.item.call_id ?? json.item.id ?? json.item_id ?? "",
+              name: json.item.name ?? json.name ?? "",
+              args,
+            });
+          } else {
+            if (!existing.name && json.item.name) existing.name = json.item.name;
+            if ((!existing.args || existing.args.length === 0) && args) existing.args = args;
+            if (!existing.id && (json.item.call_id ?? json.item.id)) existing.id = json.item.call_id ?? json.item.id ?? existing.id;
+          }
+          continue;
+        }
+        continue;
       }
       const finishReasonFrame = json?.choices?.[0]?.finish_reason;
       if (typeof finishReasonFrame === "string") finishReason = finishReasonFrame;

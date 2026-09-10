@@ -487,36 +487,91 @@ export function parseNonStreamingResponse(body: string): { content?: string; thi
     throw err;
   }
   try {
-    const choice = json?.choices?.[0];
-    if (!choice?.message) return null;
     const result: { content?: string; thinking?: string; toolCalls?: ParsedToolCall[] } = {};
 
-    const message = choice.message;
-    const reasoning = (message.reasoning_content ?? message.reasoning ?? message.thinking ?? message.reasoning_text) as string | undefined;
-    if (reasoning) {
-      result.thinking = reasoning.trim();
-    }
+    // 1. OpenAI-compatible choices format
+    const choice = json?.choices?.[0];
+    if (choice?.message) {
+      const message = choice.message;
+      const reasoning = (message.reasoning_content ?? message.reasoning ?? message.thinking ?? message.reasoning_text) as string | undefined;
+      if (reasoning) {
+        result.thinking = reasoning.trim();
+      }
 
-    if (message.content) {
-      const clean = cleanContent(message.content);
-      if (clean) {
-        if (!reasoning || clean.trim() !== reasoning.trim()) {
-          result.content = clean;
+      if (message.content) {
+        const clean = cleanContent(message.content);
+        if (clean) {
+          if (!reasoning || clean.trim() !== reasoning.trim()) {
+            result.content = clean;
+          }
         }
       }
+
+      if (choice.message.tool_calls?.length) {
+        const calls = choice.message.tool_calls
+          .filter((tc: any) => tc?.function?.name?.trim())
+          .map((tc: any) => ({
+            id: tc.id ?? "",
+            name: tc.function.name,
+            arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}),
+          }));
+        if (calls.length > 0) result.toolCalls = calls;
+      }
+      return Object.keys(result).length > 0 ? result : null;
     }
 
-    if (choice.message.tool_calls?.length) {
-      const calls = choice.message.tool_calls
-        .filter((tc: any) => tc?.function?.name?.trim())
-        .map((tc: any) => ({
-          id: tc.id ?? "",
-          name: tc.function.name,
-          arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}),
-        }));
-      if (calls.length > 0) result.toolCalls = calls;
+    // 2. Responses API format (e.g. OpenCode Zen Muse Spark /v1/responses)
+    if (Array.isArray(json?.output) && json.output.length > 0) {
+      for (const item of json.output) {
+        if (item.type === "message") {
+          if (typeof item.content === "string") {
+            const clean = cleanContent(item.content);
+            if (clean) {
+              result.content = result.content ? `${result.content}\n${clean}` : clean;
+            }
+          } else if (Array.isArray(item.content)) {
+            for (const part of item.content) {
+              if (part.type === "output_text" && typeof part.text === "string") {
+                const clean = cleanContent(part.text);
+                if (clean) {
+                  result.content = result.content ? `${result.content}\n${clean}` : clean;
+                }
+              }
+            }
+          }
+        } else if (item.type === "function_call" && item.name) {
+          if (!result.toolCalls) result.toolCalls = [];
+          result.toolCalls.push({
+            id: item.call_id ?? item.id ?? "",
+            name: item.name,
+            arguments:
+              typeof item.arguments === "string"
+                ? item.arguments
+                : JSON.stringify(item.arguments ?? {}),
+          });
+        } else if (item.type === "reasoning") {
+          // Responses reasoning items vary by gateway: `content` (string),
+          // `summary: [{text}]`, or `text`. Accept all instead of dropping.
+          const summaryText = Array.isArray((item as any).summary)
+            ? (item as any).summary
+                .map((s: any) => (typeof s === "string" ? s : typeof s?.text === "string" ? s.text : ""))
+                .filter(Boolean)
+                .join("\n")
+            : "";
+          const rawThinking =
+            (typeof (item as any).content === "string" && (item as any).content) ||
+            summaryText ||
+            (typeof (item as any).text === "string" && (item as any).text) ||
+            "";
+          if (rawThinking.trim()) {
+            result.thinking = (result.thinking ? `${result.thinking}\n` : "") + rawThinking.trim();
+          }
+        }
+      }
+      return Object.keys(result).length > 0 ? result : null;
     }
-    return Object.keys(result).length > 0 ? result : null;
+
+    return null;
   } catch {
     return null;
   }

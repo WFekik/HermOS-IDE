@@ -79,6 +79,18 @@ import {
   extractAnthropicUsage,
   isStreamOptionsRejected,
   markStreamOptionsRejected,
+  buildProviderHeaders,
+  refreshRequestId,
+  getBodyMaxTokens,
+  setBodyMaxTokens,
+  isResponsesRequired,
+  isZenProvider,
+  markResponsesRequired,
+  clearResponsesRequired,
+  buildResponsesRequestBody,
+  resolveProviderUrls,
+  resolveModelsUrl,
+  ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
   type MeasuredUsage,
 } from "@/lib/ai/provider-payloads";
@@ -1473,59 +1485,123 @@ async function* streamOpenAICompatible(
   tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }>,
   maxTokens?: number,
   providerId?: string,
+  sessionId?: string,
 ): AsyncGenerator<StreamChunk> {
-  const url = baseUrl.replace(/\/$/, "") + "/chat/completions";
+  const useResponses = isResponsesRequired(providerId, baseUrl, model);
+  const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+  let url = useResponses ? responsesUrl : completionsUrl;
 
   const isOpenRouter = providerId === "openrouter" || url.includes("openrouter.ai");
   // Error-envelope matching below is format-specific, so recognize the real
   // gateway endpoint too — a Groq API key can be wired through a custom base
   // URL, and providerId alone would miss the recovery/retry path.
   const isGroq = plan?.scheme === "groq_effort" || providerId === "groq" || url.includes("api.groq.com");
+  const reasoningParams = plan?.kind === "params" ? plan.params : undefined;
+  const extraBody = plan?.kind === "params" ? plan.extraBody : undefined;
 
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-  };
-  if (temperature !== undefined) body.temperature = temperature;
-  // max_tokens is the output limit. Use the model catalog's per-model value
-  // when available. If the caller provides an explicit value (from provider API
-  // metadata), use it. Otherwise omit the field entirely — the provider enforces
-  // its own per-model limit and will not return an empty response.
-  configureRequestBody({
+  let body: Record<string, unknown>;
+  if (useResponses) {
+    body = buildResponsesRequestBody({
+      model,
+      messages,
+      tools,
+      maxTokens,
+      temperature,
+      stream: true,
+      providerId,
+      reasoningParams,
+      extraBody,
+    });
+  } else {
+    body = {
+      model,
+      messages,
+      stream: true,
+    };
+    if (temperature !== undefined) body.temperature = temperature;
+    configureRequestBody({
+      providerId,
+      model,
+      body,
+      reasoningParams,
+      extraBody,
+      maxTokens,
+      tools,
+    });
+
+    if (!isStreamOptionsRejected(baseUrl) && (providerId === "openai" || providerId === "openrouter")) {
+      body.stream_options = { include_usage: true };
+    }
+  }
+
+  const defaultHeaders = buildProviderHeaders({
     providerId,
-    model,
-    body,
-    reasoningParams: plan?.kind === "params" ? plan.params : undefined,
-    extraBody: plan?.kind === "params" ? plan.extraBody : undefined,
-    maxTokens,
-    tools,
+    baseUrl,
+    apiKey,
+    sessionId,
+    acceptStream: true,
   });
-
-  // Ask OpenAI-compatible providers to include a final `usage` object in the
-  // stream (documented `stream_options` parameter). Not all gateways support
-  // it: when a gateway has previously 400'd on the flag we SKIP it entirely
-  // (no repeated full-request retry → no per-message latency) and usage simply
-  // falls back to "not reported".
-  if (!isStreamOptionsRejected(baseUrl) && (providerId === "openai" || providerId === "openrouter")) {
-    body.stream_options = { include_usage: true };
-  }
-
-  const defaultHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/event-stream",
-  };
-  if (apiKey && apiKey !== "not-needed") {
-    defaultHeaders.Authorization = `Bearer ${apiKey}`;
-  }
+  // Each HTTP POST mints a fresh x-opencode-request id (Zen observability);
+  // reusing the same headers object would duplicate request ids across retries.
+  const freshHeaders = () => refreshRequestId({ ...defaultHeaders });
 
   let resp = await safeProviderFetch(url, {
     method: "POST",
-    headers: defaultHeaders,
+    headers: freshHeaders(),
     cache: "no-store",
     body: JSON.stringify(body),
     signal,
   });
+
+  // OpenCode Zen hybrid failover (both directions): endpoint mismatches surface
+  // as 400/404/405/422 depending on gateway version (500 excluded to avoid
+  // double-billing on transient outages). Forward (chat -> responses)
+  // memorizes the model; reverse (responses -> chat) clears a stale memo or a
+  // brittle model-name match so the request still succeeds.
+  // Post-failover `body`/`url` are reassigned so every retry ladder below
+  // operates on the active protocol, not the stale original.
+  const isZen = isZenProvider(providerId, baseUrl);
+  if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+    console.warn(`[executor] ${model} returned ${resp.status} on ${url}, attempting failover to /responses protocol`);
+    markResponsesRequired(baseUrl, model);
+    const fallbackBody = buildResponsesRequestBody({
+      model,
+      messages,
+      tools,
+      maxTokens,
+      temperature,
+      stream: true,
+      providerId,
+      reasoningParams,
+      extraBody,
+    });
+    body = fallbackBody;
+    url = responsesUrl;
+    resp = await safeProviderFetch(url, {
+      method: "POST",
+      headers: freshHeaders(),
+      cache: "no-store",
+      body: JSON.stringify(body),
+      signal,
+    });
+  } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+    // Reverse failover: a hardcoded muse/spark match or stale memo hit a gateway
+    // that actually serves this model via /chat/completions. Clear the memo and retry once.
+    console.warn(`[executor] ${model} returned ${resp.status} on ${url}, falling back to /chat/completions`);
+    clearResponsesRequired(baseUrl, model);
+    const chatBody: Record<string, unknown> = { model, messages, stream: true };
+    if (temperature !== undefined) chatBody.temperature = temperature;
+    configureRequestBody({ providerId, model, body: chatBody, reasoningParams, extraBody, maxTokens, tools });
+    body = chatBody;
+    url = completionsUrl;
+    resp = await safeProviderFetch(url, {
+      method: "POST",
+      headers: freshHeaders(),
+      cache: "no-store",
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
 
   // Automatic retry fallback if the provider endpoint rejected reasoning parameters with 400/405/422.
   // The STRIP is a safety net for every scheme; the LEARNING is gated on the
@@ -1536,7 +1612,7 @@ async function* streamOpenAICompatible(
     sanitizeRejectedReasoningParams(body);
     resp = await safeProviderFetch(url, {
       method: "POST",
-      headers: defaultHeaders,
+      headers: freshHeaders(),
       cache: "no-store",
       body: JSON.stringify(body),
       signal,
@@ -1556,7 +1632,7 @@ async function* streamOpenAICompatible(
     markStreamOptionsRejected(baseUrl);
     resp = await safeProviderFetch(url, {
       method: "POST",
-      headers: defaultHeaders,
+      headers: freshHeaders(),
       cache: "no-store",
       body: JSON.stringify(body),
       signal,
@@ -1574,18 +1650,15 @@ async function* streamOpenAICompatible(
 
         if (limitMatch) {
           const limit = parseInt(limitMatch[1], 10);
-          const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : 4096;
+          const currentMax = getBodyMaxTokens(body) ?? 4096;
           const capped = Math.min(currentMax, limit);
           console.warn(
             `[executor] OpenRouter 402: max_tokens exceeds account limit ${limit}, retrying with ${capped}`
           );
-          body.max_tokens = capped;
+          setBodyMaxTokens(body, capped);
           resp = await safeProviderFetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers: freshHeaders(),
             body: JSON.stringify(body),
             signal,
           });
@@ -1599,18 +1672,15 @@ async function* streamOpenAICompatible(
           const promptTokens = parseInt(promptLimitMatch[1], 10);
           const limit = parseInt(promptLimitMatch[2], 10);
           const allowedOutput = Math.max(1, limit - promptTokens);
-          const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : allowedOutput;
+          const currentMax = getBodyMaxTokens(body) ?? allowedOutput;
           const capped = Math.min(currentMax, allowedOutput);
           console.warn(
             `[executor] OpenRouter 402: prompt tokens ${promptTokens} exceeds account limit ${limit}, capping max_tokens to ${capped}`
           );
-          body.max_tokens = capped;
+          setBodyMaxTokens(body, capped);
           resp = await safeProviderFetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers: freshHeaders(),
             body: JSON.stringify(body),
             signal,
           });
@@ -1626,18 +1696,15 @@ async function* streamOpenAICompatible(
           const toolInput = contextLimitMatch[4] ? parseInt(contextLimitMatch[4], 10) : 0;
           const totalInput = textInput + toolInput;
           const allowedOutput = Math.max(1, limit - totalInput);
-          const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : allowedOutput;
+          const currentMax = getBodyMaxTokens(body) ?? allowedOutput;
           const capped = Math.min(currentMax, allowedOutput);
           console.warn(
             `[executor] OpenRouter 400: prompt + output exceeds context window, capping max_tokens to ${capped}`
           );
-          body.max_tokens = capped;
+          setBodyMaxTokens(body, capped);
           resp = await safeProviderFetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers: freshHeaders(),
             body: JSON.stringify(body),
             signal,
           });
@@ -1659,10 +1726,7 @@ async function* streamOpenAICompatible(
         if (tpm.isTpmError) {
           resp = await safeProviderFetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers: freshHeaders(),
             body: JSON.stringify(body),
             signal,
           });
@@ -1676,18 +1740,15 @@ async function* streamOpenAICompatible(
           const limit = parseInt(groqLimitMatch[1], 10);
           const promptTokens = parseInt(groqLimitMatch[3], 10);
           const allowedOutput = Math.max(1, limit - promptTokens);
-          const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : allowedOutput;
+          const currentMax = getBodyMaxTokens(body) ?? allowedOutput;
           const capped = Math.min(currentMax, allowedOutput);
           console.warn(
             `[executor] Groq 400/413: prompt tokens ${promptTokens} exceeds context limit ${limit}, capping max_tokens to ${capped}`
           );
-          body.max_tokens = capped;
+          setBodyMaxTokens(body, capped);
           resp = await safeProviderFetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers: freshHeaders(),
             body: JSON.stringify(body),
             signal,
           });
@@ -1706,18 +1767,15 @@ async function* streamOpenAICompatible(
       const limit = parseInt(standardContextMatch[1], 10);
       const promptTokens = parseInt(standardContextMatch[3], 10);
       const allowedOutput = Math.max(1, limit - promptTokens);
-      const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : allowedOutput;
+      const currentMax = getBodyMaxTokens(body) ?? allowedOutput;
       const capped = Math.min(currentMax, allowedOutput);
       console.warn(
         `[executor] Provider 400: prompt + output exceeds context window (${limit}), capping max_tokens to ${capped}`,
       );
-      body.max_tokens = capped;
+      setBodyMaxTokens(body, capped);
       resp = await safeProviderFetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: freshHeaders(),
         body: JSON.stringify(body),
         signal,
       });
@@ -1731,10 +1789,7 @@ async function* streamOpenAICompatible(
     delete body.tool_choice;
     resp = await safeProviderFetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: freshHeaders(),
       body: JSON.stringify(body),
       signal,
     });
@@ -1896,6 +1951,113 @@ async function* streamOpenAICompatible(
         // cannot distinguish a parameter rejection from a genuine outage.
         if (err.status === undefined) err.statuslessUpstream = true;
         throw err;
+      }
+      // Responses API event handling (e.g. OpenCode Zen Muse Spark /responses)
+      if (typeof json.type === "string" && json.type.startsWith("response.")) {
+        if (json.type === "response.failed") {
+          throw new Error(`Provider error: ${extractUpstreamError(json.error ?? json.response?.error)}`);
+        }
+        if (json.type === "response.completed") {
+          finishReason = "stop";
+          if (json.response?.usage) {
+            const usage = extractOpenAIUsage(json.response.usage);
+            if (usage) openaiUsage = usage;
+          }
+          continue;
+        }
+        if (json.type === "response.output_item.added" && json.item?.type === "function_call") {
+          sawToolCalls = true;
+          const key = typeof json.output_index === "number" ? json.output_index : toolCallAccumulator.size;
+          toolCallAccumulator.set(key, {
+            id: json.item.call_id ?? json.item.id ?? "",
+            name: json.item.name ?? "",
+            args: json.item.arguments ?? "",
+          });
+          continue;
+        }
+        if (json.type === "response.function_call_arguments.delta") {
+          sawToolCalls = true;
+          let target: { id: string; name: string; args: string; thought_signature?: string; thoughtSignature?: string } | undefined;
+          if (typeof json.output_index === "number") target = toolCallAccumulator.get(json.output_index);
+          if (!target && json.item_id) {
+            for (const item of toolCallAccumulator.values()) {
+              if (item.id === json.item_id) { target = item; break; }
+            }
+          }
+          if (!target) {
+            const key = typeof json.output_index === "number" ? json.output_index : toolCallAccumulator.size;
+            target = { id: json.item_id ?? "", name: "", args: "" };
+            toolCallAccumulator.set(key, target);
+          }
+          if (json.delta) target.args += json.delta;
+          continue;
+        }
+        if (json.type === "response.function_call_arguments.done") {
+          sawToolCalls = true;
+          let target: { id: string; name: string; args: string; thought_signature?: string; thoughtSignature?: string } | undefined;
+          if (typeof json.output_index === "number") target = toolCallAccumulator.get(json.output_index);
+          if (!target && json.item_id) {
+            for (const item of toolCallAccumulator.values()) {
+              if (item.id === json.item_id) { target = item; break; }
+            }
+          }
+          if (target) {
+            if (json.arguments) target.args = json.arguments;
+            if (json.name) target.name = json.name;
+          }
+          continue;
+        }
+        if (json.type === "response.reasoning_text.delta" && typeof json.delta === "string") {
+          yield { type: "thinking", text: json.delta };
+          continue;
+        }
+        if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+          yield { type: "content", text: json.delta };
+          continue;
+        }
+        // Collapsed-stream gateways may emit only `*.done` frames with the full
+        // text (no preceding `.delta`). Yield those so content is not lost.
+        if (json.type === "response.output_text.done") {
+          const text =
+            (typeof json.text === "string" && json.text) ||
+            (typeof json.delta === "string" && json.delta) ||
+            (typeof json.output_text === "string" && json.output_text) ||
+            "";
+          if (text) yield { type: "content", text };
+          continue;
+        }
+        if (json.type === "response.reasoning_text.done") {
+          const text =
+            (typeof json.text === "string" && json.text) ||
+            (typeof json.delta === "string" && json.delta) ||
+            "";
+          if (text) yield { type: "thinking", text };
+          continue;
+        }
+        if (json.type === "response.output_item.done" && json.item?.type === "function_call" && json.item?.name) {
+          sawToolCalls = true;
+          const key = typeof json.output_index === "number" ? json.output_index : toolCallAccumulator.size;
+          const existing = toolCallAccumulator.get(key);
+          const args =
+            typeof json.item.arguments === "string"
+              ? json.item.arguments
+              : typeof json.arguments === "string"
+                ? json.arguments
+                : JSON.stringify(json.item.arguments ?? json.arguments ?? {});
+          if (!existing) {
+            toolCallAccumulator.set(key, {
+              id: json.item.call_id ?? json.item.id ?? json.item_id ?? "",
+              name: json.item.name ?? json.name ?? "",
+              args,
+            });
+          } else {
+            if (!existing.name && json.item.name) existing.name = json.item.name;
+            if ((!existing.args || existing.args.length === 0) && args) existing.args = args;
+            if (!existing.id && (json.item.call_id ?? json.item.id)) existing.id = json.item.call_id ?? json.item.id ?? existing.id;
+          }
+          continue;
+        }
+        continue;
       }
       const finishReasonFrame = json?.choices?.[0]?.finish_reason;
       if (typeof finishReasonFrame === "string") finishReason = finishReasonFrame;
@@ -3026,23 +3188,88 @@ async function summarizeTranscript(opts: {
       const baseUrl = pkRow?.baseUrl ?? PROVIDERS[provider as keyof typeof PROVIDERS]?.baseUrl ?? "";
       if (apiKey !== null && baseUrl) {
         const reg = await peekModelInRegistry(model, provider, { core: true });
-        const body: Record<string, unknown> = {
-          model,
-          stream: false,
-          messages: [
-            { role: "system", content: "You are a context-compression assistant. Produce structured summaries." },
-            { role: "user", content: prompt },
-          ],
-        };
-        if (reg?.maxOutput) body.max_tokens = reg.maxOutput;
-        const resp = await safeProviderFetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        const useResponses = isResponsesRequired(provider, baseUrl, model);
+        const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+        const url = useResponses ? responsesUrl : completionsUrl;
+        const body: Record<string, unknown> = useResponses
+          ? buildResponsesRequestBody({
+              model,
+              stream: false,
+              messages: [
+                { role: "system", content: "You are a context-compression assistant. Produce structured summaries." },
+                { role: "user", content: prompt },
+              ],
+              maxTokens: reg?.maxOutput,
+              providerId: provider,
+            })
+          : {
+              model,
+              stream: false,
+              messages: [
+                { role: "system", content: "You are a context-compression assistant. Produce structured summaries." },
+                { role: "user", content: prompt },
+              ],
+              ...(reg?.maxOutput ? { max_tokens: reg.maxOutput } : {}),
+            };
+        const summarizeHeaders = () =>
+          refreshRequestId({
+            ...buildProviderHeaders({
+              providerId: provider,
+              baseUrl,
+              apiKey: apiKey !== "not-needed" ? apiKey : undefined,
+              // Stable per-user affinity for one-shot summarize (not random per call).
+              sessionId: `summarize-${userId}`,
+              acceptStream: false,
+            }),
+          });
+        let resp = await safeProviderFetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...(apiKey !== "not-needed" ? { Authorization: `Bearer ${apiKey}` } : {}) },
+          headers: summarizeHeaders(),
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(120000),
         });
-        if (resp.ok) { const j = await resp.json() as any; summaryText = j?.choices?.[0]?.message?.content ?? ""; }
-        else { console.warn(`[summarize] request failed: ${resp.status} ${resp.statusText} — ${(await resp.text()).slice(0, 300)}`); }
+        const isZenSumm = isZenProvider(provider, baseUrl);
+        if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZenSumm) {
+          markResponsesRequired(baseUrl, model);
+          resp = await safeProviderFetch(responsesUrl, {
+            method: "POST",
+            headers: summarizeHeaders(),
+            body: JSON.stringify(buildResponsesRequestBody({
+              model,
+              stream: false,
+              messages: [
+                { role: "system", content: "You are a context-compression assistant. Produce structured summaries." },
+                { role: "user", content: prompt },
+              ],
+              maxTokens: reg?.maxOutput,
+              providerId: provider,
+            })),
+            signal: AbortSignal.timeout(120000),
+          });
+        } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZenSumm) {
+          clearResponsesRequired(baseUrl, model);
+          resp = await safeProviderFetch(completionsUrl, {
+            method: "POST",
+            headers: summarizeHeaders(),
+            body: JSON.stringify({
+              model,
+              stream: false,
+              messages: [
+                { role: "system", content: "You are a context-compression assistant. Produce structured summaries." },
+                { role: "user", content: prompt },
+              ],
+              ...(reg?.maxOutput ? { max_tokens: reg.maxOutput } : {}),
+            }),
+            signal: AbortSignal.timeout(120000),
+          });
+        }
+        if (resp.ok) {
+          const fullBody = await resp.text();
+          const parsed = parseNonStreamingResponse(fullBody);
+          summaryText = parsed?.content ?? "";
+        } else {
+          console.warn(`[summarize] request failed: ${resp.status} ${resp.statusText} — ${(await resp.text()).slice(0, 300)}`);
+        }
       }
     }
   } catch { /* silent — heuristic fallback below */ }
@@ -4395,6 +4622,7 @@ const thinkInstruction = thinkPlan.kind === "params"
                 openaiTools,
                 maxTokens,
                 req.provider,
+                conversation.id,
               )) {
                 if (chunk.type === "tools_rejected") {
                   toolsRejected = true;
@@ -6035,12 +6263,18 @@ export async function testProvider(
     }
 
     // 1. Try GET /models first for OpenAI-compatible providers
+    // Note: sessionId intentionally omitted — stateless connectivity probe,
+    // ephemeral random session is fine (see buildProviderHeaders docs).
     try {
-      const modelsResp = await safeProviderFetch(baseUrl + "/models", {
+      const headers = buildProviderHeaders({
+        providerId: provider,
+        baseUrl,
+        apiKey,
+        acceptStream: false,
+      });
+      const modelsResp = await safeProviderFetch(resolveModelsUrl(baseUrl), {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers,
       });
       if (modelsResp.ok) {
         return { ok: true, latencyMs: Date.now() - t0 };
@@ -6071,18 +6305,59 @@ export async function testProvider(
 
     let lastError = "";
     for (const testM of candidates) {
-      const resp = await safeProviderFetch(baseUrl + "/chat/completions", {
+      const headers = buildProviderHeaders({
+        providerId: provider,
+        baseUrl,
+        apiKey,
+        acceptStream: false,
+      });
+      const freshTestHeaders = () => refreshRequestId({ ...headers });
+      const useResponses = isResponsesRequired(provider, baseUrl, testM);
+      const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+      const testUrl = useResponses ? responsesUrl : completionsUrl;
+      const testBody = useResponses
+        ? buildResponsesRequestBody({
+            model: testM,
+            messages: [{ role: "user", content: "ping" }],
+            maxTokens: 4,
+            stream: false,
+            providerId: provider,
+          })
+        : {
+            model: testM,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 4,
+          };
+      let resp = await safeProviderFetch(testUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
+        headers: freshTestHeaders(),
+        body: JSON.stringify(testBody),
+      });
+      const isZen = isZenProvider(provider, baseUrl);
+      if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+        markResponsesRequired(baseUrl, testM);
+        const fallbackUrl = resolveProviderUrls(baseUrl).responsesUrl;
+        const fallbackBody = buildResponsesRequestBody({
           model: testM,
           messages: [{ role: "user", content: "ping" }],
-          max_tokens: 4,
-        }),
-      });
+          maxTokens: 4,
+          stream: false,
+          providerId: provider,
+        });
+        resp = await safeProviderFetch(fallbackUrl, {
+          method: "POST",
+          headers: freshTestHeaders(),
+          body: JSON.stringify(fallbackBody),
+        });
+      } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(resp.status) && isZen) {
+        clearResponsesRequired(baseUrl, testM);
+        const fallbackUrl = resolveProviderUrls(baseUrl).completionsUrl;
+        resp = await safeProviderFetch(fallbackUrl, {
+          method: "POST",
+          headers: freshTestHeaders(),
+          body: JSON.stringify({ model: testM, messages: [{ role: "user", content: "ping" }], max_tokens: 4 }),
+        });
+      }
       if (resp.ok) {
         return { ok: true, latencyMs: Date.now() - t0 };
       }

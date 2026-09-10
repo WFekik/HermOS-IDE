@@ -857,6 +857,10 @@ interface AppState {
 const DEFAULT_SYSTEM_PROMPT =
   "You are HermOS, a highly realistic, strict, and powerful agentic IDE assistant. Be concise, precise, and correct. Avoid hallucinations, mock/placeholder code, stubs, and AI slop. Use modern stacks (Next.js, React, Vite, Node.js) for building new projects instead of basic HTML/JS/CSS. If the user makes incorrect assumptions, point them out and offer honest, correct paths forward.";
 
+// Single source lives in @/lib/font (server-safe); re-exported here for compat.
+export { DEFAULT_FONT_SIZE, FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_KEY } from "@/lib/font";
+import { DEFAULT_FONT_SIZE, FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_KEY } from "@/lib/font";
+
 /** Maximum open editor tabs before LRU eviction. */
 const MAX_OPEN_TABS = 10;
 
@@ -870,7 +874,6 @@ const MAX_SEGMENT_CHARS = 500_000;
 const RECENT_COMMANDS_KEY = "hermos:recent-commands";
 const FILE_WATCH_KEY = "hermos:file-watch-enabled";
 const DENSITY_KEY = "hermos:density";
-const FONT_SIZE_KEY = "hermos:font-size";
 const CONVERSATION_WIDTH_KEY = "hermos:conversation-width";
 const LIGHT_THEME_KEY = "hermos:light-theme";
 const DARK_THEME_KEY = "hermos:dark-theme";
@@ -915,15 +918,15 @@ function loadDensity(): "comfortable" | "compact" {
 }
 
 function loadFontSize(): number {
-  if (typeof window === "undefined") return 14;
+  if (typeof window === "undefined") return DEFAULT_FONT_SIZE;
   try {
     const raw = window.localStorage.getItem(FONT_SIZE_KEY);
-    if (raw === null) return 14;
+    if (raw === null) return DEFAULT_FONT_SIZE;
     const n = parseInt(raw, 10);
-    if (n >= 12 && n <= 18) return n;
-    return 14;
+    if (n >= FONT_SIZE_MIN && n <= FONT_SIZE_MAX) return n;
+    return DEFAULT_FONT_SIZE;
   } catch {
-    return 14;
+    return DEFAULT_FONT_SIZE;
   }
 }
 

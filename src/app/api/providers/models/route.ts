@@ -21,6 +21,7 @@ import type { ModelReasoningCapabilities } from "@/lib/reasoning";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId } from "@/lib/types";
+import { buildProviderHeaders, resolveModelsUrl } from "@/lib/ai/provider-payloads";
 
 export const dynamic = "force-dynamic";
 
@@ -198,16 +199,20 @@ async function fetchProviderModels(
       }
     }
     // OpenAI-compatible (openrouter, openai, groq, mistral, together, custom, puter, nvidia, zen)
-    const url = baseUrl.replace(/\/$/, "") + "/models";
+    const url = resolveModelsUrl(baseUrl);
+    if (!url) return { ok: true, models: [] };
     await assertUrlAllowed(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
       const resp = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json",
-        },
+        headers: buildProviderHeaders({
+          providerId: provider,
+          baseUrl,
+          apiKey,
+          acceptStream: false,
+          includeContentType: false,
+        }),
         signal: controller.signal,
       });
       // SSRF per-hop re-validation: re-check final URL after any redirects.

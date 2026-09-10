@@ -3,6 +3,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { Providers } from "@/components/providers";
+import { DEFAULT_FONT_SIZE, FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_KEY } from "@/lib/font";
 
 export const metadata: Metadata = {
   title: "HermOS IDE",
@@ -33,7 +34,7 @@ export default function RootLayout({
       <body className="antialiased bg-background text-foreground">
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem("theme")||"system";var r=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;var root=document.documentElement;root.classList.remove("light","dark");root.classList.add(r);root.style.colorScheme=r;}catch(e){}`,
+            __html: `try{var t=localStorage.getItem("theme")||"system";var r=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;var root=document.documentElement;root.classList.remove("light","dark");root.classList.add(r);root.style.colorScheme=r;var fs=localStorage.getItem(${JSON.stringify(FONT_SIZE_KEY)});var n=fs?parseInt(fs,10):${DEFAULT_FONT_SIZE};root.style.fontSize=(!isNaN(n)&&n>=${FONT_SIZE_MIN}&&n<=${FONT_SIZE_MAX}?n:${DEFAULT_FONT_SIZE})+"px";}catch(e){}`,
           }}
         />
         <Providers>

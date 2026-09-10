@@ -6,6 +6,18 @@ import { PROVIDERS } from "@/lib/ai/providers";
 import { decrypt } from "@/lib/encryption";
 import type { ProviderId } from "@/lib/types";
 import {
+  buildProviderHeaders,
+  refreshRequestId,
+  isResponsesRequired,
+  isZenProvider,
+  markResponsesRequired,
+  clearResponsesRequired,
+  buildResponsesRequestBody,
+  resolveProviderUrls,
+  ZEN_PROTOCOL_FAILOVER_STATUSES,
+} from "@/lib/ai/provider-payloads";
+import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
+import {
   withErrorHandler,
   notFound,
   ok,
@@ -14,31 +26,86 @@ import { assertUrlAllowed, checkUrlHost } from "@/lib/ssrf";
 
 export const dynamic = "force-dynamic";
 
-async function generateTitle(baseUrl: string, apiKey: string, model: string, preview: string): Promise<string> {
-  const url = baseUrl.replace(/\/+$/, "") + "/chat/completions";
+async function generateTitle(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  preview: string,
+  providerId?: string,
+  sessionId?: string,
+): Promise<string> {
+  const useResponses = isResponsesRequired(providerId, baseUrl, model);
+  const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+  const url = useResponses ? responsesUrl : completionsUrl;
   await assertUrlAllowed(url);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+
+  const messages = [
+    {
+      role: "system",
+      content: "You are a title generator. Generate a short, descriptive title (3 to 5 words) for the conversation topic. Output ONLY the title text. Do NOT include preambles, meta-commentary, or quotes.",
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: "You are a title generator. Generate a short, descriptive title (3 to 5 words) for the conversation topic. Output ONLY the title text. Do NOT include preambles, meta-commentary, or quotes.",
-        },
-        {
-          role: "user",
-          content: `Messages:\n${preview}`,
-        },
-      ],
-      max_tokens: 20,
-      temperature: 0.3,
-    }),
+    {
+      role: "user",
+      content: `Messages:\n${preview}`,
+    },
+  ];
+
+  const headers = buildProviderHeaders({
+    providerId,
+    baseUrl,
+    apiKey,
+    // Stable per-conversation affinity (not random per request).
+    sessionId,
+    acceptStream: false,
   });
+  const freshHeaders = () => refreshRequestId({ ...headers });
+
+  const body = useResponses
+    ? buildResponsesRequestBody({
+        model,
+        messages,
+        maxTokens: 20,
+        temperature: 0.3,
+        stream: false,
+      })
+    : {
+        model,
+        messages,
+        max_tokens: 20,
+        temperature: 0.3,
+      };
+
+  let res = await fetch(url, {
+    method: "POST",
+    headers: freshHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  const isZen = isZenProvider(providerId, baseUrl);
+  if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
+    markResponsesRequired(baseUrl, model);
+    const fallbackUrl = resolveProviderUrls(baseUrl).responsesUrl;
+    const fallbackBody = buildResponsesRequestBody({
+      model,
+      messages,
+      maxTokens: 20,
+      temperature: 0.3,
+      stream: false,
+    });
+    res = await fetch(fallbackUrl, {
+      method: "POST",
+      headers: freshHeaders(),
+      body: JSON.stringify(fallbackBody),
+    });
+  } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
+    clearResponsesRequired(baseUrl, model);
+    const fallbackUrl = resolveProviderUrls(baseUrl).completionsUrl;
+    res = await fetch(fallbackUrl, {
+      method: "POST",
+      headers: freshHeaders(),
+      body: JSON.stringify({ model, messages, max_tokens: 20, temperature: 0.3 }),
+    });
+  }
 
   if (res.redirected) {
     const reason = await checkUrlHost(res.url);
@@ -51,8 +118,9 @@ async function generateTitle(baseUrl: string, apiKey: string, model: string, pre
     throw err;
   }
 
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  let raw = (data?.choices?.[0]?.message?.content ?? "New conversation").trim();
+  const fullBody = await res.text();
+  const parsed = parseNonStreamingResponse(fullBody);
+  let raw = (parsed?.content ?? "New conversation").trim();
 
   // Clean preambles like "The user wants a concise title...", "Title:", quotes
   raw = raw.replace(/^(the user wants|the user asks|conversation title|title)[:\s]*/i, "");
@@ -115,7 +183,7 @@ export const POST = withErrorHandler(
 
     let title: string;
     try {
-      title = await generateTitle(baseUrl, apiKey, model, preview);
+      title = await generateTitle(baseUrl, apiKey, model, preview, providerId, id);
     } catch (err) {
       console.warn("[generate-title] Failed to generate title:", err instanceof Error ? err.message : err);
       return ok({ title: conv.title, failed: true });

@@ -475,3 +475,64 @@ describe("Empirical Stress-Test: Browser Tool Return Value Structures", () => {
     }
   });
 });
+
+describe("File tool parameter aliases and resilient validation", () => {
+  it("provides actionable error message when write_file is called with empty args", async () => {
+    const res = await runTool("write_file", {});
+    expect(res.ok).toBe(false);
+    const err = (res.result as { error: string }).error;
+    expect(err).toContain('Missing "path" argument');
+    expect(err).toContain('Missing "content" argument');
+  });
+
+  it("provides actionable error message when read_file is called with empty args", async () => {
+    const res = await runTool("read_file", {});
+    expect(res.ok).toBe(false);
+    const err = (res.result as { error: string }).error;
+    expect(err).toContain('Missing "path" argument');
+  });
+
+  it("provides actionable error message when edit_file is called with empty args", async () => {
+    const res = await runTool("edit_file", {});
+    expect(res.ok).toBe(false);
+    const err = (res.result as { error: string }).error;
+    expect(err).toContain('Missing "path" argument');
+    expect(err).toContain('Missing "find" argument');
+  });
+
+  it("successfully parses parameter aliases for write_file, read_file, and edit_file", async () => {
+    // write_file with filePath and code
+    const resWriteAlias1 = await runTool("write_file", { filePath: "src/main.ts", code: "console.log('hi')" });
+    expect((resWriteAlias1.result as { error: string }).error).toBe("No user context.");
+
+    // write_file with targetFile and data
+    const resWriteAlias2 = await runTool("write_file", { targetFile: "src/main.ts", data: "console.log('hi')" });
+    expect((resWriteAlias2.result as { error: string }).error).toBe("No user context.");
+
+    // read_file with targetFile
+    const resReadAlias = await runTool("read_file", { targetFile: "src/main.ts" });
+    expect((resReadAlias.result as { error: string }).error).toBe("No user context.");
+
+    // edit_file with filePath, TargetContent, and ReplacementContent
+    const resEditAlias = await runTool("edit_file", {
+      filePath: "src/main.ts",
+      TargetContent: "old",
+      ReplacementContent: "new",
+    });
+    expect((resEditAlias.result as { error: string }).error).toBe("No user context.");
+
+    // multi_edit with filePath and TargetContent
+    const resMultiEditAlias = await runTool("multi_edit", {
+      filePath: "src/main.ts",
+      edits: [{ TargetContent: "old", ReplacementContent: "new" }],
+    });
+    expect((resMultiEditAlias.result as { error: string }).error).toBe("No user context.");
+
+    // create_artifact with targetFile and CodeContent
+    const resArtifactAlias = await runTool("create_artifact", {
+      targetFile: "doc.md",
+      CodeContent: "# Title",
+    });
+    expect((resArtifactAlias.result as { error: string }).error).toBe("No user context.");
+  });
+});

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   PROVIDERS,
   listProviders,
@@ -13,6 +13,13 @@ import { extractCapabilities, extractPricing } from "@/lib/provider-fetch";
 import { getModelRate } from "@/lib/provider-models";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import { lookupContextWindow } from "@/lib/model-context-windows";
+import {
+  buildProviderHeaders,
+  isResponsesRequired,
+  markResponsesRequired,
+  clearResponsesRequired,
+  buildResponsesRequestBody,
+} from "./provider-payloads";
 
 describe("Provider Catalog", () => {
   describe("Provider & Model Single Source of Truth Constants", () => {
@@ -203,6 +210,183 @@ describe("Provider Catalog", () => {
       expect(lookupContextWindow("my-custom-model-128k")).toBe(128000);
       expect(lookupContextWindow("llama-3-70b-32k")).toBe(32000);
       expect(lookupContextWindow("unknown-model")).toBeUndefined();
+    });
+  });
+
+  describe("buildProviderHeaders (OpenCode Zen & Gateway Headers)", () => {
+    it("should build standard headers for standard providers", () => {
+      const headers = buildProviderHeaders({
+        providerId: "openai",
+        apiKey: "sk-test",
+        acceptStream: true,
+      });
+      expect(headers["Content-Type"]).toBe("application/json");
+      expect(headers["Accept"]).toBe("application/json, text/event-stream");
+      expect(headers["Authorization"]).toBe("Bearer sk-test");
+      expect(headers["x-opencode-session"]).toBeUndefined();
+      expect(headers["X-Session-ID"]).toBeUndefined();
+    });
+
+    it("should omit Authorization header when apiKey is 'not-needed' or omitted", () => {
+      const headers = buildProviderHeaders({
+        providerId: "puter",
+        apiKey: "not-needed",
+      });
+      expect(headers["Authorization"]).toBeUndefined();
+    });
+
+    it("should inject OpenCode session and client emulation headers when providerId is 'zen'", () => {
+      const headers = buildProviderHeaders({
+        providerId: "zen",
+        apiKey: "opencode-key-123",
+        sessionId: "ses_custom_123",
+      });
+      expect(headers["Authorization"]).toBe("Bearer opencode-key-123");
+      expect(headers["x-opencode-session"]).toBe("ses_custom_123");
+      expect(headers["X-Session-ID"]).toBe("ses_custom_123");
+      expect(headers["x-opencode-client"]).toBe("cli");
+      expect(headers["x-opencode-request"]).toMatch(/^req_/);
+      expect(headers["User-Agent"]).toBe("opencode/1.3.15");
+    });
+
+    it("should inject OpenCode headers when baseUrl points to opencode.ai even if providerId is custom", () => {
+      const headers = buildProviderHeaders({
+        baseUrl: "https://opencode.ai/zen/v1",
+        apiKey: "opencode-key-456",
+      });
+      expect(headers["Authorization"]).toBe("Bearer opencode-key-456");
+      expect(headers["x-opencode-session"]).toMatch(/^ses_/);
+      expect(headers["X-Session-ID"]).toMatch(/^ses_/);
+      expect(headers["x-opencode-client"]).toBe("cli");
+      expect(headers["x-opencode-request"]).toMatch(/^req_/);
+      expect(headers["User-Agent"]).toBe("opencode/1.3.15");
+    });
+
+    it("should ensure sessionId is prefixed with ses_ when provided without prefix", () => {
+      const headers = buildProviderHeaders({
+        providerId: "zen",
+        apiKey: "opencode-key-789",
+        sessionId: "conv-raw-uuid-1234",
+      });
+      expect(headers["x-opencode-session"]).toBe("ses_conv-raw-uuid-1234");
+      expect(headers["X-Session-ID"]).toBe("ses_conv-raw-uuid-1234");
+    });
+  });
+
+  describe("Responses Protocol Helpers (/v1/responses)", () => {
+    afterEach(() => {
+      // Global memo isolation: learned entries must not leak across tests.
+      clearResponsesRequired("https://custom.zen.gateway/v1", "custom-model");
+      clearResponsesRequired("https://custom.zen.gateway/v1", "reverse-model");
+    });
+
+    it("should identify models requiring /responses protocol on Zen provider", () => {
+      expect(isResponsesRequired("zen", undefined, "muse-spark-1.3-contributor-free")).toBe(true);
+      expect(isResponsesRequired("zen", undefined, "muse-pro")).toBe(true);
+      expect(isResponsesRequired("zen", undefined, "spark-lite")).toBe(true);
+      expect(isResponsesRequired("custom", "https://opencode.ai/zen/v1", "muse-spark-1.3-contributor-free")).toBe(true);
+
+      // Other models should use /chat/completions by default
+      expect(isResponsesRequired("zen", undefined, "big-pickle")).toBe(false);
+      expect(isResponsesRequired("zen", undefined, "nvidia-nemotron-70b")).toBe(false);
+      expect(isResponsesRequired("openai", "https://api.openai.com/v1", "gpt-4o")).toBe(false);
+    });
+
+    it("should dynamically memorize models marked as requiring responses", () => {
+      expect(isResponsesRequired("custom", "https://custom.zen.gateway/v1", "custom-model")).toBe(false);
+      markResponsesRequired("https://custom.zen.gateway/v1", "custom-model");
+      expect(isResponsesRequired("custom", "https://custom.zen.gateway/v1", "custom-model")).toBe(true);
+    });
+
+    it("should clear memoized responses requirement via reverse failover path", () => {
+      const base = "https://custom.zen.gateway/v1";
+      expect(isResponsesRequired("custom", base, "reverse-model")).toBe(false);
+      markResponsesRequired(base, "reverse-model");
+      expect(isResponsesRequired("custom", base, "reverse-model")).toBe(true);
+      clearResponsesRequired(base, "reverse-model");
+      expect(isResponsesRequired("custom", base, "reverse-model")).toBe(false);
+    });
+
+    it("should build proper /responses request payload with flattened tools and converted messages", () => {
+      const messages = [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "What's the weather in Tokyo?" },
+        {
+          role: "assistant",
+          content: "Let me check.",
+          tool_calls: [
+            {
+              id: "call_abc123",
+              type: "function",
+              function: {
+                name: "get_weather",
+                arguments: JSON.stringify({ city: "Tokyo" }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_abc123",
+          content: "Sunny, 20°C",
+        },
+      ];
+
+      const tools = [
+        {
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get current weather in city",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+          },
+        },
+      ];
+
+      const body = buildResponsesRequestBody({
+        model: "muse-spark-1.3-contributor-free",
+        messages,
+        tools,
+        maxTokens: 1024,
+        temperature: 0.7,
+        stream: true,
+      });
+
+      expect(body.model).toBe("muse-spark-1.3-contributor-free");
+      expect(body.stream).toBe(true);
+      expect(body.temperature).toBe(0.7);
+      expect(body.max_output_tokens).toBe(1024);
+
+      // Verify input array conversion
+      const input = body.input as any[];
+      expect(input).toHaveLength(5);
+      expect(input[0]).toEqual({ role: "system", content: "You are a helpful assistant." });
+      expect(input[1]).toEqual({ role: "user", content: "What's the weather in Tokyo?" });
+      expect(input[2]).toEqual({ role: "assistant", content: "Let me check." });
+      expect(input[3]).toEqual({
+        type: "function_call",
+        call_id: "call_abc123",
+        name: "get_weather",
+        arguments: '{"city":"Tokyo"}',
+      });
+      expect(input[4]).toEqual({
+        type: "function_call_output",
+        call_id: "call_abc123",
+        output: "Sunny, 20°C",
+      });
+
+      // Verify flattened tools
+      const flatTools = body.tools as any[];
+      expect(flatTools).toHaveLength(1);
+      expect(flatTools[0].type).toBe("function");
+      expect(flatTools[0].name).toBe("get_weather");
+      expect(flatTools[0].description).toBe("Get current weather in city");
+      expect(flatTools[0].parameters).toBeDefined();
+      expect(flatTools[0].function).toBeUndefined(); // ensure unnested
     });
   });
 });

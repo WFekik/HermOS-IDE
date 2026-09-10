@@ -988,22 +988,149 @@ const MAX_HTTP_BYTES = 2_000_000;
 const MAX_HTTP_TEXT = 8000;
 const MAX_REDIRECTS = 10;
 
-const readFileSchema = z.object({
-  path: z.string().trim().min(1).max(100_000),
-  offset: z.number().int().nonnegative().optional(),
-  limit: z.number().int().positive().optional(),
-});
-const writeFileSchema = z.object({
-  path: z.string().trim().min(1).max(100_000),
-  content: z.string().max(100_000_000),
-});
-const editFileSchema = z.object({
-  path: z.string().trim().min(1).max(100_000),
-  find: z.string().min(1).max(100_000_000),
-  replace: z.string().max(100_000_000),
-  replaceAll: z.boolean().optional(),
-});
-const listDirSchema = z.object({ path: z.string().trim().max(100_000).optional().default(".") });
+/**
+ * Coerce model-provided file content to a string without data loss.
+ * Objects/arrays are JSON-stringified (never `String(obj)` → "[object Object]");
+ * numbers/booleans use String(); null/undefined stay undefined for validation.
+ */
+function coerceFileContent(raw: unknown): string | undefined {
+  if (typeof raw === "string") return raw;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "object") {
+    try {
+      return JSON.stringify(raw, null, 2);
+    } catch {
+      return String(raw);
+    }
+  }
+  return String(raw);
+}
+
+const readFileSchema = z
+  .object({
+    path: z.string().trim().max(100_000).optional(),
+    filePath: z.string().trim().max(100_000).optional(),
+    file_path: z.string().trim().max(100_000).optional(),
+    file: z.string().trim().max(100_000).optional(),
+    filename: z.string().trim().max(100_000).optional(),
+    targetFile: z.string().trim().max(100_000).optional(),
+    TargetFile: z.string().trim().max(100_000).optional(),
+    offset: z.number().int().nonnegative().optional(),
+    limit: z.number().int().positive().optional(),
+  })
+  .transform((data) => ({
+    ...data,
+    path: data.path || data.filePath || data.file_path || data.file || data.filename || data.targetFile || data.TargetFile || "",
+  }))
+  .refine((data) => data.path.length > 0, {
+    path: ["path"],
+    message: 'Missing "path" argument. Please specify the workspace-relative path of the file to read.',
+  });
+
+const writeFileSchema = z
+  .object({
+    path: z.string().trim().max(100_000).optional(),
+    filePath: z.string().trim().max(100_000).optional(),
+    file_path: z.string().trim().max(100_000).optional(),
+    file: z.string().trim().max(100_000).optional(),
+    filename: z.string().trim().max(100_000).optional(),
+    targetFile: z.string().trim().max(100_000).optional(),
+    TargetFile: z.string().trim().max(100_000).optional(),
+    // Accept unknown then coerce: models often emit numbers/booleans/objects
+    // for content. z.string() would reject before the transform runs (dead
+    // coerce). Size is enforced after coercion via the content-length refine.
+    content: z.unknown().optional(),
+    contents: z.unknown().optional(),
+    text: z.unknown().optional(),
+    data: z.unknown().optional(),
+    code: z.unknown().optional(),
+    file_content: z.unknown().optional(),
+    CodeContent: z.unknown().optional(),
+  })
+  .transform((data) => {
+    const rawContent = data.content ?? data.contents ?? data.text ?? data.data ?? data.code ?? data.file_content ?? data.CodeContent;
+    return {
+      path: (data.path || data.filePath || data.file_path || data.file || data.filename || data.targetFile || data.TargetFile || "").trim(),
+      content: coerceFileContent(rawContent),
+      hasContent: rawContent !== undefined && rawContent !== null,
+    };
+  })
+  .refine((data) => data.path.length > 0, {
+    path: ["path"],
+    message: 'Missing "path" argument. Please specify the path of the file to write.',
+  })
+  .refine((data) => data.hasContent, {
+    path: ["content"],
+    message: 'Missing "content" argument. Please provide the text content to write into the file.',
+  })
+  .refine((data) => (data.content?.length ?? 0) <= 100_000_000, {
+    path: ["content"],
+    message: "Content exceeds maximum size of 100,000,000 characters.",
+  })
+  .transform((data) => ({
+    path: data.path,
+    content: data.content ?? "",
+  }));
+
+const editFileSchema = z
+  .object({
+    path: z.string().trim().max(100_000).optional(),
+    filePath: z.string().trim().max(100_000).optional(),
+    file_path: z.string().trim().max(100_000).optional(),
+    file: z.string().trim().max(100_000).optional(),
+    filename: z.string().trim().max(100_000).optional(),
+    targetFile: z.string().trim().max(100_000).optional(),
+    TargetFile: z.string().trim().max(100_000).optional(),
+    find: z.string().max(100_000_000).optional(),
+    old_string: z.string().max(100_000_000).optional(),
+    oldText: z.string().max(100_000_000).optional(),
+    search: z.string().max(100_000_000).optional(),
+    TargetContent: z.string().max(100_000_000).optional(),
+    // Replace accepts unknown then coerces (object/number/boolean → string)
+    // so structured model output writes JSON instead of failing zod.
+    replace: z.unknown().optional(),
+    new_string: z.unknown().optional(),
+    newText: z.unknown().optional(),
+    replacement: z.unknown().optional(),
+    ReplacementContent: z.unknown().optional(),
+    replaceAll: z.boolean().optional(),
+    all: z.boolean().optional(),
+    AllowMultiple: z.boolean().optional(),
+  })
+  .transform((data) => {
+    const replaceRaw = data.replace ?? data.new_string ?? data.newText ?? data.replacement ?? data.ReplacementContent;
+    const coercedReplace = coerceFileContent(replaceRaw);
+    return {
+      path: data.path || data.filePath || data.file_path || data.file || data.filename || data.targetFile || data.TargetFile || "",
+      find: data.find ?? data.old_string ?? data.oldText ?? data.search ?? data.TargetContent ?? "",
+      replace: coercedReplace ?? "",
+      hasReplace: replaceRaw !== undefined,
+      replaceAll: data.replaceAll ?? data.all ?? data.AllowMultiple,
+    };
+  })
+  .refine((data) => data.path.length > 0, {
+    path: ["path"],
+    message: 'Missing "path" argument. Please specify the path of the file to edit.',
+  })
+  .refine((data) => data.find.length > 0, {
+    path: ["find"],
+    message: 'Missing "find" argument. Please specify the exact string to find and replace.',
+  })
+  .refine((data) => data.hasReplace, {
+    path: ["replace"],
+    message: 'Missing "replace" argument. Please provide the replacement text (pass an empty string explicitly to delete).',
+  });
+const listDirSchema = z
+  .object({
+    path: z.string().trim().max(100_000).optional(),
+    dir: z.string().trim().max(100_000).optional(),
+    directory: z.string().trim().max(100_000).optional(),
+    filePath: z.string().trim().max(100_000).optional(),
+    SearchDirectory: z.string().trim().max(100_000).optional(),
+  })
+  .transform((data) => ({
+    path: (data.path || data.dir || data.directory || data.filePath || data.SearchDirectory || ".").trim(),
+  }));
 const runCommandSchema = z
   .object({
     command: z.string().trim().max(100_000).optional(),
@@ -1019,8 +1146,35 @@ const runCommandSchema = z
   .refine((data) => data.command.length > 0, {
     message: "A command string (command, CommandLine, cmd, or Command) is required",
   });
-const webSearchSchema = z.object({ query: z.string().trim().min(1).max(100_000) });
-const httpFetchSchema = z.object({ url: z.string().trim().min(1).max(100_000) });
+const webSearchSchema = z
+  .object({
+    query: z.string().trim().max(100_000).optional(),
+    q: z.string().trim().max(100_000).optional(),
+    search: z.string().trim().max(100_000).optional(),
+    searchTerm: z.string().trim().max(100_000).optional(),
+    prompt: z.string().trim().max(100_000).optional(),
+  })
+  .transform((data) => ({
+    query: (data.query || data.q || data.search || data.searchTerm || data.prompt || "").trim(),
+  }))
+  .refine((data) => data.query.length > 0, {
+    path: ["query"],
+    message: 'Missing "query" argument. Please provide a search query.',
+  });
+const httpFetchSchema = z
+  .object({
+    url: z.string().trim().max(100_000).optional(),
+    uri: z.string().trim().max(100_000).optional(),
+    link: z.string().trim().max(100_000).optional(),
+    href: z.string().trim().max(100_000).optional(),
+  })
+  .transform((data) => ({
+    url: (data.url || data.uri || data.link || data.href || "").trim(),
+  }))
+  .refine((data) => data.url.length > 0, {
+    path: ["url"],
+    message: 'Missing "url" argument. Please specify the HTTP/HTTPS URL to fetch.',
+  });
 const browserOpenSchema = z.object({ url: z.string().trim().min(1).max(100_000) });
 const browserClickSchema = z.object({ ref: z.string().trim().min(1).max(20) });
 const browserTypeSchema = z.object({
@@ -1208,19 +1362,79 @@ const messageSubagentSchema = z.object({
   message: z.string().trim().min(1).max(8000),
 });
 
-const multiEditOpSchema = z.object({
-  find: z.string().min(1).max(100_000_000),
-  replace: z.string().max(100_000_000),
-  replaceAll: z.boolean().optional(),
-});
-const multiEditSchema = z.object({
-  path: z.string().trim().min(1).max(100_000),
-  edits: z.array(multiEditOpSchema).min(1).max(200),
-});
-const globSchema = z.object({
-  pattern: z.string().trim().min(1).max(500),
-  path: z.string().trim().max(100_000).optional(),
-});
+const multiEditOpSchema = z
+  .object({
+    find: z.string().max(100_000_000).optional(),
+    old_string: z.string().max(100_000_000).optional(),
+    oldText: z.string().max(100_000_000).optional(),
+    search: z.string().max(100_000_000).optional(),
+    TargetContent: z.string().max(100_000_000).optional(),
+    replace: z.unknown().optional(),
+    new_string: z.unknown().optional(),
+    newText: z.unknown().optional(),
+    replacement: z.unknown().optional(),
+    ReplacementContent: z.unknown().optional(),
+    replaceAll: z.boolean().optional(),
+    all: z.boolean().optional(),
+    AllowMultiple: z.boolean().optional(),
+  })
+  .transform((data) => {
+    const replaceRaw = data.replace ?? data.new_string ?? data.newText ?? data.replacement ?? data.ReplacementContent;
+    return {
+      find: data.find ?? data.old_string ?? data.oldText ?? data.search ?? data.TargetContent ?? "",
+      replace: coerceFileContent(replaceRaw) ?? "",
+      hasReplace: replaceRaw !== undefined,
+      replaceAll: data.replaceAll ?? data.all ?? data.AllowMultiple,
+    };
+  })
+  .refine((data) => data.find.length > 0, {
+    path: ["find"],
+    message: 'Missing "find" in multi_edit edit operation.',
+  })
+  .refine((data) => data.hasReplace, {
+    path: ["replace"],
+    message: 'Missing "replace" in multi_edit edit operation (pass an empty string explicitly to delete).',
+  });
+
+const multiEditSchema = z
+  .object({
+    path: z.string().trim().max(100_000).optional(),
+    filePath: z.string().trim().max(100_000).optional(),
+    file_path: z.string().trim().max(100_000).optional(),
+    file: z.string().trim().max(100_000).optional(),
+    filename: z.string().trim().max(100_000).optional(),
+    targetFile: z.string().trim().max(100_000).optional(),
+    TargetFile: z.string().trim().max(100_000).optional(),
+    edits: z.array(multiEditOpSchema).min(1).max(200),
+  })
+  .transform((data) => ({
+    path: (data.path || data.filePath || data.file_path || data.file || data.filename || data.targetFile || data.TargetFile || "").trim(),
+    edits: data.edits,
+  }))
+  .refine((data) => data.path.length > 0, {
+    path: ["path"],
+    message: 'Missing "path" argument. Please specify the path of the file to edit.',
+  });
+const globSchema = z
+  .object({
+    pattern: z.string().trim().max(500).optional(),
+    glob: z.string().trim().max(500).optional(),
+    match: z.string().trim().max(500).optional(),
+    query: z.string().trim().max(500).optional(),
+    Pattern: z.string().trim().max(500).optional(),
+    path: z.string().trim().max(100_000).optional(),
+    dir: z.string().trim().max(100_000).optional(),
+    directory: z.string().trim().max(100_000).optional(),
+    SearchDirectory: z.string().trim().max(100_000).optional(),
+  })
+  .transform((data) => ({
+    pattern: (data.pattern || data.glob || data.match || data.query || data.Pattern || "").trim(),
+    path: (data.path || data.dir || data.directory || data.SearchDirectory || "").trim() || undefined,
+  }))
+  .refine((data) => data.pattern.length > 0, {
+    path: ["pattern"],
+    message: 'Missing "pattern" argument. Please specify a glob pattern (e.g. "**/*.ts").',
+  });
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export type TodoPriority = "high" | "medium" | "low";
@@ -1238,9 +1452,19 @@ const todoItemSchema = z.object({
   status: z.enum(["pending", "in_progress", "completed"]),
   priority: z.enum(["high", "medium", "low"]).optional(),
 });
-const todoWriteSchema = z.object({
-  todos: z.array(todoItemSchema).max(200),
-});
+const todoWriteSchema = z
+  .object({
+    todos: z.array(todoItemSchema).max(200).optional(),
+    items: z.array(todoItemSchema).max(200).optional(),
+    tasks: z.array(todoItemSchema).max(200).optional(),
+    todoList: z.array(todoItemSchema).max(200).optional(),
+  })
+  .refine((data) => data.todos !== undefined || data.items !== undefined || data.tasks !== undefined || data.todoList !== undefined, {
+    message: "Missing \"todos\" argument. Provide a todos/items/tasks array (use [] to clear explicitly).",
+  })
+  .transform((data) => ({
+    todos: data.todos || data.items || data.tasks || data.todoList || [],
+  }));
 const todoReadSchema = z.object({}).optional();
 
 export const questionItemSchema = z.object({
@@ -2037,9 +2261,15 @@ async function runToolImpl(
       }
       case "create_artifact": {
         const a = (args ?? {}) as Record<string, any>;
-        const rawPath = String(a.path ?? a.targetFile ?? a.TargetFile ?? "");
-        const content = String(a.content ?? "");
+        const rawPath = String(a.path ?? a.filePath ?? a.file_path ?? a.file ?? a.filename ?? a.targetFile ?? a.TargetFile ?? "").trim();
+        const rawContent = a.content ?? a.contents ?? a.text ?? a.data ?? a.code ?? a.file_content ?? a.CodeContent;
+        // Same contract as write_file: missing content is a validation error
+        // (explicit "" is allowed for an intentional empty artifact).
         if (!rawPath) return { ok: false, result: { error: "path is required for create_artifact" } };
+        if (rawContent === undefined || rawContent === null) {
+          return { ok: false, result: { error: 'Missing "content" argument. Please provide the text content for the artifact.' } };
+        }
+        const content = coerceFileContent(rawContent) ?? "";
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
 
         const filename = path.basename(rawPath);
@@ -2868,11 +3098,34 @@ async function runToolImpl(
         }
       }
       case "grep": {
-        const grepSchema = z.object({
-          pattern: z.string().trim().min(1).max(2000),
-          path: z.string().trim().min(1).max(500).optional(),
-          filePattern: z.string().trim().max(100).optional(),
-        });
+        const grepSchema = z
+          .object({
+            pattern: z.string().trim().max(2000).optional(),
+            query: z.string().trim().max(2000).optional(),
+            search: z.string().trim().max(2000).optional(),
+            regex: z.string().trim().max(2000).optional(),
+            text: z.string().trim().max(2000).optional(),
+            find: z.string().trim().max(2000).optional(),
+            Query: z.string().trim().max(2000).optional(),
+            path: z.string().trim().max(500).optional(),
+            dir: z.string().trim().max(500).optional(),
+            directory: z.string().trim().max(500).optional(),
+            SearchPath: z.string().trim().max(500).optional(),
+            filePath: z.string().trim().max(500).optional(),
+            filePattern: z.string().trim().max(100).optional(),
+            glob: z.string().trim().max(100).optional(),
+            include: z.string().trim().max(100).optional(),
+            Includes: z.union([z.string(), z.array(z.string())]).optional(),
+          })
+          .transform((data) => ({
+            pattern: (data.pattern || data.query || data.search || data.regex || data.text || data.find || data.Query || "").trim(),
+            path: (data.path || data.dir || data.directory || data.SearchPath || data.filePath || "").trim() || undefined,
+            filePattern: (data.filePattern || data.glob || data.include || (Array.isArray(data.Includes) ? data.Includes[0] : data.Includes) || "").trim() || undefined,
+          }))
+          .refine((data) => data.pattern.length > 0, {
+            path: ["pattern"],
+            message: 'Missing "pattern" argument. Please provide a search pattern or query.',
+          });
         const parsed = grepSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
@@ -2886,7 +3139,7 @@ async function runToolImpl(
             return {
               ok: false,
               result: {
-                error: `Invalid regex pattern: ${e instanceof Error ? e.message : "unknown error"}. Escape special characters (e.g. "catch \\\\{" or "foo\\\\.bar").`,
+                error: `Invalid regex pattern: ${e instanceof Error ? e.message : "unknown error"}. Escape special characters (e.g. "catch \\{" or "foo\\.bar").`,
               },
             };
           }

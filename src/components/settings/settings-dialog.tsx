@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AGENT_MODES } from "@/lib/agent-modes";
-import { useAppStore, DEFAULT_SYSTEM_PROMPT } from "@/stores/app-store";
+import { useAppStore, DEFAULT_SYSTEM_PROMPT, DEFAULT_FONT_SIZE, FONT_SIZE_MIN, FONT_SIZE_MAX } from "@/stores/app-store";
 import { useTheme } from "@/components/theme/theme-provider";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -348,7 +348,10 @@ function AppearanceTab() {
 
       {/* 7. Font Size */}
       <div>
-        <Label className="text-sm">Font size</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-sm">Font size</Label>
+          <span className="text-[11px] text-muted-foreground">Default: {DEFAULT_FONT_SIZE}px</span>
+        </div>
         <FontSizeSlider fontSize={fontSize} setFontSize={setFontSize} />
         <p className="text-[11px] text-muted-foreground mt-1">
           Affects UI text scale. Code blocks remain at a fixed size for legibility.
@@ -591,10 +594,21 @@ function DensityRow({ density, setDensity }: { density: "comfortable" | "compact
 function FontSizeSlider({ fontSize, setFontSize }: { fontSize: number; setFontSize: (s: number) => void }) {
   return (
     <div className="mt-2 flex items-center gap-3">
-      <span className="text-[11px] font-mono text-muted-foreground">12</span>
-      <Slider min={12} max={18} step={1} value={[fontSize]} onValueChange={(v) => setFontSize(v[0] ?? 14)} className="flex-1" />
-      <span className="text-[11px] font-mono text-muted-foreground">18</span>
+      <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MIN}</span>
+      <Slider min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} step={1} value={[fontSize]} onValueChange={(v) => setFontSize(v[0] ?? DEFAULT_FONT_SIZE)} className="flex-1" />
+      <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MAX}</span>
       <span className="text-xs font-mono w-8 text-right">{fontSize}px</span>
+      {fontSize !== DEFAULT_FONT_SIZE && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 text-muted-foreground hover:text-foreground shrink-0"
+          onClick={() => setFontSize(DEFAULT_FONT_SIZE)}
+          title={`Reset to default (${DEFAULT_FONT_SIZE}px)`}
+        >
+          <RotateCcw className="size-3" />
+        </Button>
+      )}
     </div>
   );
 }

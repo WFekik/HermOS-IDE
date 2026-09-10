@@ -1053,3 +1053,84 @@ describe("M3 Adversarial — Nested Fences, Lenient JSON & Unclosed Tags", () =>
   });
 });
 
+describe("parseNonStreamingResponse", () => {
+  it("parses standard OpenAI choices response with content and tool calls", () => {
+    const json = JSON.stringify({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "Hello from OpenAI",
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "read_file", arguments: '{"path":"/a"}' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const parsed = parseNonStreamingResponse(json);
+    expect(parsed?.content).toBe("Hello from OpenAI");
+    expect(parsed?.toolCalls).toEqual([
+      { id: "call_1", name: "read_file", arguments: '{"path":"/a"}' },
+    ]);
+  });
+
+  it("parses Responses API output array with text and function_call (OpenCode Zen format)", () => {
+    const json = JSON.stringify({
+      id: "resp_12345",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          id: "rs_1",
+          type: "reasoning",
+          content: "Thinking about the query...",
+        },
+        {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "Here is the answer.",
+            },
+          ],
+        },
+        {
+          id: "fc_1",
+          type: "function_call",
+          call_id: "call_123",
+          name: "get_weather",
+          arguments: '{"city":"Tokyo"}',
+        },
+      ],
+    });
+    const parsed = parseNonStreamingResponse(json);
+    expect(parsed?.content).toBe("Here is the answer.");
+    expect(parsed?.thinking).toBe("Thinking about the query...");
+    expect(parsed?.toolCalls).toEqual([
+      { id: "call_123", name: "get_weather", arguments: '{"city":"Tokyo"}' },
+    ]);
+  });
+
+  it("throws error with message on upstream error frame", () => {
+    const errorJson = JSON.stringify({
+      error: {
+        message: "Model quota exceeded",
+        status: 429,
+      },
+    });
+    expect(() => parseNonStreamingResponse(errorJson)).toThrow("Provider error: Model quota exceeded");
+  });
+
+  it("returns null for malformed or empty payloads", () => {
+    expect(parseNonStreamingResponse("not json")).toBeNull();
+    expect(parseNonStreamingResponse("{}")).toBeNull();
+  });
+});
+

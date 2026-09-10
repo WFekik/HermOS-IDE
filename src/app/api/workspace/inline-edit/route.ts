@@ -10,6 +10,18 @@ import { decrypt } from "@/lib/encryption";
 import { PROVIDERS } from "@/lib/ai/providers";
 import { parseModelsColumn } from "@/lib/provider-models";
 import type { ProviderId } from "@/lib/types";
+import {
+  buildProviderHeaders,
+  refreshRequestId,
+  isResponsesRequired,
+  isZenProvider,
+  markResponsesRequired,
+  clearResponsesRequired,
+  buildResponsesRequestBody,
+  resolveProviderUrls,
+  ZEN_PROTOCOL_FAILOVER_STATUSES,
+} from "@/lib/ai/provider-payloads";
+import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
 
 export const dynamic = "force-dynamic";
 
@@ -158,29 +170,88 @@ ${code}`;
       const text = data?.content?.find((c) => c.type === "text")?.text;
       return text !== undefined ? cleanCodeOutput(text) : null;
     } else {
-      const url = baseUrl.replace(/\/+$/, "") + "/chat/completions";
+      const useResponses = isResponsesRequired(providerId, baseUrl, model);
+      const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
+      const url = useResponses ? responsesUrl : completionsUrl;
       await assertUrlAllowed(url);
-      const res = await fetch(url, {
+      const headers = buildProviderHeaders({
+        providerId,
+        baseUrl,
+        apiKey,
+        // Stable per-user affinity for one-shots (avoids random session per request).
+        sessionId: `inline-${userId}`,
+        acceptStream: false,
+      });
+      const freshHeaders = () => refreshRequestId({ ...headers });
+      const body = useResponses
+        ? buildResponsesRequestBody({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            temperature: 0.2,
+            maxTokens: 4096,
+            stream: false,
+          })
+        : {
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 4096,
+          };
+      let res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
+        headers: freshHeaders(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      });
+      const isZen = isZenProvider(providerId, baseUrl);
+      if (!useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
+        markResponsesRequired(baseUrl, model);
+        const fallbackUrl = resolveProviderUrls(baseUrl).responsesUrl;
+        const fallbackBody = buildResponsesRequestBody({
           model,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.2,
-          max_tokens: 4096,
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
+          maxTokens: 4096,
+          stream: false,
+        });
+        res = await fetch(fallbackUrl, {
+          method: "POST",
+          headers: freshHeaders(),
+          body: JSON.stringify(fallbackBody),
+          signal: AbortSignal.timeout(30000),
+        });
+      } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
+        clearResponsesRequired(baseUrl, model);
+        const fallbackUrl = resolveProviderUrls(baseUrl).completionsUrl;
+        res = await fetch(fallbackUrl, {
+          method: "POST",
+          headers: freshHeaders(),
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 4096,
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+      }
       if (res.redirected) await assertUrlAllowed(res.url);
       if (!res.ok) return null;
-      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const text = data?.choices?.[0]?.message?.content;
+      const fullBody = await res.text();
+      const parsed = parseNonStreamingResponse(fullBody);
+      const text = parsed?.content;
       return text !== undefined ? cleanCodeOutput(text) : null;
     }
   } catch (err) {
