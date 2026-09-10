@@ -1509,6 +1509,8 @@ export type ToolCtx = {
    * `./`, `..`, backslash separators) maps to one key — see `toolLockKey`.
    */
   rootDir?: string;
+  /** Active workspace snapshot to avoid repetitive DB lookups. */
+  workspace?: WorkspaceInfo;
 };
 
 export type ToolResult = { ok: boolean; result: unknown };
@@ -1932,8 +1934,22 @@ async function snapshotBeforeEdit(ctx: ToolCtx, rootDir: string, filePath: strin
   }
 }
 
-/** Resolve active or conversation-linked workspace for per-project isolation. */
+const wsCache = new Map<string, { ws: WorkspaceInfo; expires: number }>();
+
+export function clearWorkspaceCache(): void {
+  wsCache.clear();
+}
+
+/** Resolve active or conversation-linked workspace for per-project isolation with fast in-memory caching. */
 export async function resolveWs(userId: string, conversationId?: string): Promise<WorkspaceInfo> {
+  const cacheKey = `${userId}:${conversationId ?? ""}`;
+  const now = Date.now();
+  const cached = wsCache.get(cacheKey);
+  if (cached && cached.expires > now) {
+    return cached.ws;
+  }
+
+  let ws: WorkspaceInfo | null = null;
   // Honor conversation-linked workspace if set for per-project isolation.
   if (conversationId) {
     const conv = await db.conversation.findUnique({
@@ -1941,11 +1957,23 @@ export async function resolveWs(userId: string, conversationId?: string): Promis
       select: { workspaceId: true },
     });
     if (conv?.workspaceId) {
-      const ws = await resolveWorkspace(userId, conv.workspaceId);
-      if (ws) return ws;
+      ws = await resolveWorkspace(userId, conv.workspaceId);
     }
   }
-  return await getActiveWorkspace(userId) ?? await ensureDefaultWorkspace(userId);
+  if (!ws) {
+    ws = (await getActiveWorkspace(userId)) ?? (await ensureDefaultWorkspace(userId));
+  }
+  if (wsCache.size > 200) wsCache.clear();
+  wsCache.set(cacheKey, { ws, expires: now + 15_000 });
+  return ws;
+}
+
+/** Fast workspace resolution: uses ctx.workspace directly if available, otherwise cached resolveWs. */
+export function getToolWs(ctx: ToolCtx | undefined): Promise<WorkspaceInfo> | WorkspaceInfo {
+  if (ctx?.workspace && (!ctx.parentConversationId || ctx.parentConversationId === ctx.conversationId)) {
+    return ctx.workspace;
+  }
+  return resolveWs(ctx?.userId ?? "", ctx ? convScope(ctx) : undefined);
 }
 
 /** An agent-supplied path resolved to an on-disk location. */
@@ -2169,7 +2197,7 @@ async function runToolImpl(
         const parsed = readFileSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         const target = await resolveAgentPath(ctx.userId, ws, convScope(ctx), parsed.data.path);
         if (!target) return { ok: false, result: { error: "Invalid path." } };
         const { path, offset, limit } = parsed.data;
@@ -2199,7 +2227,7 @@ async function runToolImpl(
         const parsed = writeFileSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         const target = await resolveAgentPath(ctx.userId, ws, convScope(ctx), parsed.data.path);
         if (!target) return { ok: false, result: { error: "Invalid path." } };
         const twGuard = truncationWriteGuard(target);
@@ -2305,7 +2333,7 @@ async function runToolImpl(
         const parsed = editFileSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         const target = await resolveAgentPath(ctx.userId, ws, convScope(ctx), parsed.data.path);
         if (!target) return { ok: false, result: { error: "Invalid path." } };
         const twGuard = truncationWriteGuard(target);
@@ -2380,7 +2408,7 @@ async function runToolImpl(
         const parsed = listDirSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const dirPath = parsed.data.path?.trim() || ".";
           // Scope directory listing to target path, returning null on traversal escapes.
@@ -2405,7 +2433,7 @@ async function runToolImpl(
         const parsed = runCommandSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         const cmd = parsed.data.command;
 
         acknowledgeCompletedCommand(ctx.userId, ctx.conversationId);
@@ -2808,7 +2836,7 @@ async function runToolImpl(
         const parsed = initPresentationSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await initPresentation({
@@ -2838,7 +2866,7 @@ async function runToolImpl(
         const parsed = addPresentationSlideSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await addPresentationSlide({
@@ -2866,7 +2894,7 @@ async function runToolImpl(
         const parsed = updatePresentationSlideSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await updatePresentationSlide({
@@ -2893,7 +2921,7 @@ async function runToolImpl(
         const parsed = generatePptSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await generatePpt({
@@ -2923,7 +2951,7 @@ async function runToolImpl(
         const parsed = generateDocSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await generateDoc({
@@ -2954,7 +2982,7 @@ async function runToolImpl(
         const parsed = generatePdfSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const outputPath = await resolveOutputPath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           const r = await generatePdf({
@@ -2985,7 +3013,7 @@ async function runToolImpl(
         const parsed = readDocSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         try {
           const abs = safePath(ctx.userId, ws.name, parsed.data.path, ws.rootDir);
           if (!abs) return { ok: false, result: { error: "Invalid path." } };
@@ -3130,7 +3158,7 @@ async function runToolImpl(
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
         try {
-          const ws = await resolveWs(ctx.userId, convScope(ctx));
+          const ws = await getToolWs(ctx);
           const wsName = ws?.name ?? "project";
           let re: RegExp;
           try {
@@ -3172,7 +3200,7 @@ async function runToolImpl(
         const parsed = multiEditSchema.safeParse(args);
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
-        const ws = await resolveWs(ctx.userId, convScope(ctx));
+        const ws = await getToolWs(ctx);
         const target = await resolveAgentPath(ctx.userId, ws, convScope(ctx), parsed.data.path);
         if (!target) return { ok: false, result: { error: "Invalid path." } };
         const twGuard = truncationWriteGuard(target);
@@ -3220,7 +3248,7 @@ async function runToolImpl(
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
         try {
-          const ws = await resolveWs(ctx.userId, convScope(ctx));
+          const ws = await getToolWs(ctx);
           const wsName = ws?.name ?? "project";
           const r = await globWs(ctx.userId, wsName, parsed.data.pattern, parsed.data.path, ws?.rootDir);
           const result = { matches: r.matches, count: r.count, pattern: r.pattern, path: r.path };
