@@ -4,7 +4,7 @@ import { withRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { z } from "zod";
 import { parseJson, apiError, ok, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
 import { db } from "@/lib/db";
-import { invalidateRootDirCache } from "@/lib/workspace";
+import { invalidateRootDirCache, invalidateResolvedWsCache } from "@/lib/workspace";
 import { statSync } from "fs";
 import path from "path";
 
@@ -94,6 +94,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     ]);
 
     invalidateRootDirCache(user.id, updated.name);
+    // Active pointer changed — drop cached resolveWs results for this user.
+    invalidateResolvedWsCache(user.id);
     return ok({ workspace: { id: updated.id, name: updated.name, isActive: true } });
   }
 
@@ -158,5 +160,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   invalidateRootDirCache(user.id, ws.name);
+  // New workspace becomes active — drop cached resolveWs results for this user.
+  invalidateResolvedWsCache(user.id);
   return ok({ workspace: { id: ws.id, name: ws.name, isActive: true } });
 }

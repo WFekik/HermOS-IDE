@@ -105,6 +105,32 @@ describe("trimMessagesToBudget", () => {
     expect(result.fitted).toBe(true);
     expect(result.promptTokens).toBeLessThanOrEqual(budget);
   });
+
+  it("keeps Responses function_call items paired with their outputs", () => {
+    const call = (id: string) => ({ type: "function_call", call_id: id, name: "read_file", arguments: "{}" }) as unknown as TokenBudgetMessage;
+    const output = (id: string, text: string) => ({ type: "function_call_output", call_id: id, output: text }) as unknown as TokenBudgetMessage;
+    const messages = [
+      msg("system", "sys"),
+      msg("user", "anchor"),
+      call("call_1"),
+      output("call_1", "tool-result-1"),
+      call("call_2"),
+      output("call_2", "tool-result-2"),
+      msg("user", "final"),
+    ];
+    const result = trimMessagesToBudget(messages, 20);
+    // Pairing invariant: an output survives only with its call in the kept set.
+    const keptIds = new Set(
+      result.messages
+        .filter((m) => (m as unknown as Record<string, unknown>).type === "function_call")
+        .map((m) => (m as unknown as Record<string, string>).call_id),
+    );
+    for (const m of result.messages) {
+      if ((m as unknown as Record<string, unknown>).type === "function_call_output") {
+        expect(keptIds.has((m as unknown as Record<string, string>).call_id)).toBe(true);
+      }
+    }
+  });
 });
 
 function makeBody(messages: TokenBudgetMessage[], maxTokens = 4096, tools?: unknown) {
@@ -174,5 +200,20 @@ describe("fitPayloadToBudget", () => {
     const body = makeBody(messages, 4096);
     const fit = fitPayloadToBudget(body, 100);
     expect(fit.fitted).toBe(false);
+  });
+
+  it("fits Responses bodies via input/max_output_tokens", () => {
+    const messages = [msg("system", "sys " + "x".repeat(200)), msg("user", "u")];
+    const body: Record<string, unknown> = {
+      model: "muse-spark",
+      input: messages,
+      stream: true,
+      max_output_tokens: 4096,
+    };
+    const fit = fitPayloadToBudget(body, 2_000);
+    expect(fit.fitted).toBe(true);
+    // Cap derives from max_output_tokens (not a default), and shrinks it.
+    expect(fit.maxTokens).toBeGreaterThanOrEqual(1);
+    expect(fit.maxTokens).toBeLessThan(4096);
   });
 });

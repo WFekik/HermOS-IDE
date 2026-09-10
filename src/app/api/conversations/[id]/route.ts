@@ -8,7 +8,7 @@ import { clearConversationDelivery } from "@/lib/ai/subagent-delivery";
 import { abortAgentStream } from "@/lib/agent-abort";
 import { cancelPendingForConversation } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation } from "@/lib/question-prompt";
-import { stopRunningCommand } from "@/lib/workspace";
+import { stopRunningCommand, invalidateResolvedWsCache } from "@/lib/workspace";
 import { rmSync } from "fs";
 import path from "path";
 import { CHECKPOINTS_DIR } from "@/lib/paths";
@@ -66,6 +66,10 @@ export const PATCH = withErrorHandler(
       where: { id },
       data: { ...parsed.data },
     });
+    if (parsed.data.workspaceId !== undefined && parsed.data.workspaceId !== existing.workspaceId) {
+      // Conversation moved projects — drop cached resolveWs for it.
+      invalidateResolvedWsCache(user.id, id);
+    }
     return ok({ conversation: toConversationDTO(updated) });
   },
 );
@@ -106,6 +110,7 @@ export const DELETE = withErrorHandler(
     });
     await db.conversation.delete({ where: { id } });
     clearConversationCache(id);
+    invalidateResolvedWsCache(user.id, id);
     clearConversationDelivery(user.id, id);
     await deleteConversationCheckpoints(user.id, id);
     // Unlink uploaded files (realpath-containment-checked inside uploads root).

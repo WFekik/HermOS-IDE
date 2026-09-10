@@ -105,6 +105,49 @@ export function invalidateRootDirCache(userId: string, wsName: string): void {
   rootDirCache.delete(`${userId}:${wsName}`);
 }
 
+// resolveWs result cache (`userId:conversationId` -> WorkspaceInfo).
+// Lives here (next to the data source) so workspace mutations can invalidate it;
+// tools.ts consumes it via getCachedResolvedWs/setCachedResolvedWs.
+// No TTL: entries are valid until an explicit invalidation below fires, so there
+// is no time-based staleness window. Every mutation of the active pointer,
+// workspace rows, or conversation->workspace links invalidates accordingly.
+const resolvedWsCache = new Map<string, WorkspaceInfo>();
+const RESOLVED_WS_CACHE_MAX = 200;
+
+/** Cached resolveWs result, or null on miss. */
+export function getCachedResolvedWs(userId: string, conversationId?: string): WorkspaceInfo | null {
+  return resolvedWsCache.get(`${userId}:${conversationId ?? ""}`) ?? null;
+}
+
+/** Store a resolveWs result with single-oldest eviction at cap. */
+export function setCachedResolvedWs(userId: string, conversationId: string | undefined, ws: WorkspaceInfo): void {
+  if (!resolvedWsCache.has(`${userId}:${conversationId ?? ""}`) && resolvedWsCache.size >= RESOLVED_WS_CACHE_MAX) {
+    const oldest = resolvedWsCache.keys().next();
+    if (!oldest.done) resolvedWsCache.delete(oldest.value);
+  }
+  resolvedWsCache.set(`${userId}:${conversationId ?? ""}`, ws);
+}
+
+/**
+ * Invalidate cached resolveWs results. Pass both ids for a targeted entry
+ * (e.g. conversation workspace reassignment); userId alone drops all of that
+ * user's entries (e.g. active-workspace switch); no args clears all (tests).
+ */
+export function invalidateResolvedWsCache(userId?: string, conversationId?: string): void {
+  if (userId === undefined) {
+    resolvedWsCache.clear();
+    return;
+  }
+  if (conversationId !== undefined) {
+    resolvedWsCache.delete(`${userId}:${conversationId}`);
+    return;
+  }
+  const prefix = `${userId}:`;
+  for (const key of Array.from(resolvedWsCache.keys())) {
+    if (key.startsWith(prefix)) resolvedWsCache.delete(key);
+  }
+}
+
 /** Resolve a relative path inside the workspace, rejecting traversal escapes. */
 export function safePath(userId: string, wsName: string, rel: string, rootDir?: string): string | null {
   const base = rootDir ?? rootDirCache.get(`${userId}:${wsName}`) ?? path.join(userRoot(userId), wsName);
@@ -353,6 +396,9 @@ export async function openWorkspace(
     where: { id: userId },
     data: { workspaceName: cleanName },
   });
+  // Active pointer (and possibly rootDir) changed — drop cached resolutions.
+  invalidateRootDirCache(userId, cleanName);
+  invalidateResolvedWsCache(userId);
   return {
     id: ws.id,
     name: cleanName,
@@ -414,6 +460,8 @@ export async function ensureDefaultWorkspace(
     where: { id: userId },
     data: { workspaceName: "default" },
   });
+  invalidateRootDirCache(userId, "default");
+  invalidateResolvedWsCache(userId);
   return { id: ws.id, name: "default", rootDir, isActive: true };
 }
 
@@ -513,6 +561,8 @@ export async function switchWorkspace(
       data: { workspaceName: target.name },
     }),
   ]);
+  // Active pointer changed — cached resolveWs results may point at the old root.
+  invalidateResolvedWsCache(userId);
   return {
     id: target.id,
     name: target.name,
@@ -530,6 +580,7 @@ export async function closeWorkspace(userId: string): Promise<void> {
     where: { id: userId },
     data: { workspaceName: null },
   });
+  invalidateResolvedWsCache(userId);
 }
 
 export async function renameWorkspace(
@@ -549,7 +600,11 @@ export async function renameWorkspace(
     where: { id: workspaceId },
     data: { name: newName },
   });
+  // Drop the old-name rootDir entry — otherwise a later workspace reusing the
+  // old name could resolve via the stale cached dir.
+  rootDirCache.delete(`${userId}:${ws.name}`);
   rootDirCache.set(`${userId}:${updated.name}`, updated.rootDir);
+  invalidateResolvedWsCache(userId);
   return { id: updated.id, name: updated.name, rootDir: updated.rootDir, isActive: updated.isActive };
 }
 
@@ -567,6 +622,10 @@ export async function deleteWorkspace(
     data: { workspaceId: null },
   });
   await db.workspace.delete({ where: { id: workspaceId } });
+  // Drop both caches for the deleted name: files remain on disk, so a
+  // recreated workspace reusing the name must not resolve via stale entries.
+  invalidateRootDirCache(userId, ws.name);
+  invalidateResolvedWsCache(userId);
 }
 
 export async function readTree(

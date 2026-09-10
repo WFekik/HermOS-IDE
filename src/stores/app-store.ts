@@ -523,7 +523,7 @@ interface AppState {
 
   /** UI density: comfortable (default) or compact. Persisted to localStorage. */
   density: "comfortable" | "compact";
-  /** UI font size in px (12-18, default 14). Persisted to localStorage. */
+  /** UI font size in px (12-18, default 15 — see DEFAULT_FONT_SIZE in @/lib/font). Persisted to localStorage. */
   fontSize: number;
   setDensity: (d: "comfortable" | "compact") => void;
   setFontSize: (s: number) => void;

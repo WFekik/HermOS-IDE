@@ -13,6 +13,16 @@ export interface SubagentSessionMessage {
   thinking?: string;
   toolCallId?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  /**
+   * Provider-measured token usage for the turn that produced this message
+   * (last usage frame wins). Accounting metadata only — never sent on the wire.
+   */
+  measuredUsage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
 }
 
 /** Live token-streamed partial turn before durable commit via `appendMessage`. */
@@ -36,6 +46,17 @@ export interface SubagentSession {
   error?: string;
   revives: number;
   partial?: SubagentPartial;
+  /**
+   * Provider-measured token totals accumulated across all iterations
+   * (sum of per-message measuredUsage). Observable via session subscribers
+   * for spend attribution; never sent on the wire.
+   */
+  totalMeasuredUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
   createdAt: number;
   completedAt?: number;
   provider: string;

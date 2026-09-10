@@ -6,6 +6,9 @@ import {
   getActiveWorkspace,
   ensureDefaultWorkspace,
   resolveWorkspace,
+  getCachedResolvedWs,
+  setCachedResolvedWs,
+  invalidateResolvedWsCache,
   ensureAgentTempDir,
   type WorkspaceInfo,
   readFileWs,
@@ -1104,7 +1107,8 @@ const editFileSchema = z
       path: data.path || data.filePath || data.file_path || data.file || data.filename || data.targetFile || data.TargetFile || "",
       find: data.find ?? data.old_string ?? data.oldText ?? data.search ?? data.TargetContent ?? "",
       replace: coercedReplace ?? "",
-      hasReplace: replaceRaw !== undefined,
+      // null is missing, not delete — explicit "" deletes (parity with write_file content).
+      hasReplace: replaceRaw !== undefined && replaceRaw !== null,
       replaceAll: data.replaceAll ?? data.all ?? data.AllowMultiple,
     };
   })
@@ -1383,7 +1387,8 @@ const multiEditOpSchema = z
     return {
       find: data.find ?? data.old_string ?? data.oldText ?? data.search ?? data.TargetContent ?? "",
       replace: coerceFileContent(replaceRaw) ?? "",
-      hasReplace: replaceRaw !== undefined,
+      // null is missing, not delete (parity with edit_file/write_file).
+      hasReplace: replaceRaw !== undefined && replaceRaw !== null,
       replaceAll: data.replaceAll ?? data.all ?? data.AllowMultiple,
     };
   })
@@ -1934,19 +1939,14 @@ async function snapshotBeforeEdit(ctx: ToolCtx, rootDir: string, filePath: strin
   }
 }
 
-const wsCache = new Map<string, { ws: WorkspaceInfo; expires: number }>();
-
-export function clearWorkspaceCache(): void {
-  wsCache.clear();
-}
-
 /** Resolve active or conversation-linked workspace for per-project isolation with fast in-memory caching. */
 export async function resolveWs(userId: string, conversationId?: string): Promise<WorkspaceInfo> {
-  const cacheKey = `${userId}:${conversationId ?? ""}`;
-  const now = Date.now();
-  const cached = wsCache.get(cacheKey);
-  if (cached && cached.expires > now) {
-    return cached.ws;
+  const cached = getCachedResolvedWs(userId, conversationId);
+  if (cached) {
+    // Self-heal (no TTL): an on-disk move/delete fires no DB write, so a
+    // cached rootDir can go dead. Evict and re-resolve instead of serving it forever.
+    if (existsSync(cached.rootDir)) return cached;
+    invalidateResolvedWsCache(userId, conversationId);
   }
 
   let ws: WorkspaceInfo | null = null;
@@ -1963,8 +1963,7 @@ export async function resolveWs(userId: string, conversationId?: string): Promis
   if (!ws) {
     ws = (await getActiveWorkspace(userId)) ?? (await ensureDefaultWorkspace(userId));
   }
-  if (wsCache.size > 200) wsCache.clear();
-  wsCache.set(cacheKey, { ws, expires: now + 15_000 });
+  setCachedResolvedWs(userId, conversationId, ws);
   return ws;
 }
 
@@ -2289,7 +2288,10 @@ async function runToolImpl(
       }
       case "create_artifact": {
         const a = (args ?? {}) as Record<string, any>;
-        const rawPath = String(a.path ?? a.filePath ?? a.file_path ?? a.file ?? a.filename ?? a.targetFile ?? a.TargetFile ?? "").trim();
+        // String-only path validation (parity with write_file schema): a
+        // non-string path is rejected, never coerced to "[object Object]".
+        const rawPathAlias = a.path ?? a.filePath ?? a.file_path ?? a.file ?? a.filename ?? a.targetFile ?? a.TargetFile;
+        const rawPath = typeof rawPathAlias === "string" ? rawPathAlias.trim() : "";
         const rawContent = a.content ?? a.contents ?? a.text ?? a.data ?? a.code ?? a.file_content ?? a.CodeContent;
         // Same contract as write_file: missing content is a validation error
         // (explicit "" is allowed for an intentional empty artifact).

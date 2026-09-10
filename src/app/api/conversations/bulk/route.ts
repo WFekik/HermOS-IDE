@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/session";
 import { withRateLimit, getClientIp } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { clearConversationCache } from "@/lib/ai/executor";
+import { invalidateResolvedWsCache } from "@/lib/workspace";
 import { clearConversationDelivery } from "@/lib/ai/subagent-delivery";
 import { deleteAttachmentFiles } from "@/lib/provision-db";
 import { deleteConversationCheckpoints } from "@/lib/checkpoints";
@@ -103,6 +104,7 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
 
   for (const cid of uniqueIds) {
     clearConversationCache(cid);
+    invalidateResolvedWsCache(user.id, cid);
     clearConversationDelivery(user.id, cid);
     await deleteConversationCheckpoints(user.id, cid);
   }

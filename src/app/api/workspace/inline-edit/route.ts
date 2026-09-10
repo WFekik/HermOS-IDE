@@ -20,6 +20,7 @@ import {
   buildResponsesRequestBody,
   resolveProviderUrls,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
+  INLINE_EDIT_MAX_OUTPUT_TOKENS,
 } from "@/lib/ai/provider-payloads";
 import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
 
@@ -159,7 +160,7 @@ ${code}`;
           model,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
-          max_tokens: 4096,
+          max_tokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           temperature: 0.2,
         }),
         signal: AbortSignal.timeout(30000),
@@ -191,7 +192,7 @@ ${code}`;
               { role: "user", content: userPrompt },
             ],
             temperature: 0.2,
-            maxTokens: 4096,
+            maxTokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
             stream: false,
           })
         : {
@@ -201,7 +202,7 @@ ${code}`;
               { role: "user", content: userPrompt },
             ],
             temperature: 0.2,
-            max_tokens: 4096,
+            max_tokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           };
       let res = await fetch(url, {
         method: "POST",
@@ -220,7 +221,7 @@ ${code}`;
             { role: "user", content: userPrompt },
           ],
           temperature: 0.2,
-          maxTokens: 4096,
+          maxTokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           stream: false,
         });
         res = await fetch(fallbackUrl, {
@@ -242,7 +243,7 @@ ${code}`;
               { role: "user", content: userPrompt },
             ],
             temperature: 0.2,
-            max_tokens: 4096,
+            max_tokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           }),
           signal: AbortSignal.timeout(30000),
         });

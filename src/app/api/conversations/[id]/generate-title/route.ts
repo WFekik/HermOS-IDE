@@ -15,6 +15,7 @@ import {
   buildResponsesRequestBody,
   resolveProviderUrls,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
+  TITLE_MAX_OUTPUT_TOKENS,
 } from "@/lib/ai/provider-payloads";
 import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
 import {
@@ -64,14 +65,14 @@ async function generateTitle(
     ? buildResponsesRequestBody({
         model,
         messages,
-        maxTokens: 20,
+        maxTokens: TITLE_MAX_OUTPUT_TOKENS,
         temperature: 0.3,
         stream: false,
       })
     : {
         model,
         messages,
-        max_tokens: 20,
+        max_tokens: TITLE_MAX_OUTPUT_TOKENS,
         temperature: 0.3,
       };
 
@@ -88,7 +89,7 @@ async function generateTitle(
     const fallbackBody = buildResponsesRequestBody({
       model,
       messages,
-      maxTokens: 20,
+      maxTokens: TITLE_MAX_OUTPUT_TOKENS,
       temperature: 0.3,
       stream: false,
     });
@@ -103,7 +104,7 @@ async function generateTitle(
     res = await fetch(fallbackUrl, {
       method: "POST",
       headers: freshHeaders(),
-      body: JSON.stringify({ model, messages, max_tokens: 20, temperature: 0.3 }),
+      body: JSON.stringify({ model, messages, max_tokens: TITLE_MAX_OUTPUT_TOKENS, temperature: 0.3 }),
     });
   }
 

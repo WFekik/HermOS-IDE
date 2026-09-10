@@ -16,6 +16,22 @@ import type { ProviderId } from "@/lib/types";
 // documented SDK default here.
 export const ANTHROPIC_SDK_DEFAULT_MAX_TOKENS = 4096;
 
+/**
+ * Last-resort output cap used when a request body carries no token limit
+ * field at all (unknown shape). Not a provider default — every known shape
+ * is read via getBodyMaxTokens first.
+ */
+export const FALLBACK_OUTPUT_TOKEN_CAP = 4096;
+
+/** Output budget for one-shot conversation-title generations. */
+export const TITLE_MAX_OUTPUT_TOKENS = 20;
+
+/** Minimal output budget for provider connectivity probes ("ping" prompts). */
+export const PROVIDER_PING_MAX_OUTPUT_TOKENS = 4;
+
+/** Output budget for one-shot inline-edit generations. */
+export const INLINE_EDIT_MAX_OUTPUT_TOKENS = 4096;
+
 export interface ConfigureRequestBodyOptions {
   providerId?: string;
   model: string;
@@ -112,6 +128,51 @@ export function parseSseReasoningChunk(delta: any): ParsedSseDelta {
   return { reasoningDelta, contentDelta };
 }
 
+/**
+ * Deduplicates Responses-protocol `*.done` frames against already-streamed
+ * `*.delta` text. Some gateways emit a trailing `*.done` frame carrying the
+ * full item text after streaming it piecewise via `*.delta`; yielding it
+ * verbatim would duplicate prose. `onDelta` records streamed text per item
+ * key; `onDone` returns only the unstreamed remainder ("" = nothing new).
+ */
+export interface ResponsesTextDedup {
+  onDelta(key: string, delta: string): void;
+  onDone(key: string, fullText: string): string;
+  /** Bytes silently dropped as diverged duplicates (observability for tests/logs). */
+  getDroppedBytes(): number;
+}
+
+export function createResponsesTextDedup(): ResponsesTextDedup {
+  const streamedByKey = new Map<string, string>();
+  let droppedBytes = 0;
+  return {
+    onDelta(key: string, delta: string): void {
+      streamedByKey.set(key, (streamedByKey.get(key) ?? "") + delta);
+    },
+    onDone(key: string, fullText: string): string {
+      if (!fullText) return "";
+      const streamed = streamedByKey.get(key) ?? "";
+      if (streamed && fullText.startsWith(streamed)) {
+        const remainder = fullText.slice(streamed.length);
+        if (remainder) streamedByKey.set(key, fullText);
+        return remainder;
+      }
+      if (!streamed) {
+        streamedByKey.set(key, fullText);
+        return fullText;
+      }
+      // Diverged from streamed text (e.g. whitespace normalization or prefix
+      // re-emission by a non-conformant gateway). Drop rather than duplicate,
+      // but count it so the loss is observable instead of invisible.
+      droppedBytes += fullText.length;
+      return "";
+    },
+    getDroppedBytes(): number {
+      return droppedBytes;
+    },
+  };
+}
+
 // Provider usage extraction (Cline-compatible measured accounting)
 
 export interface MeasuredUsage {
@@ -123,6 +184,31 @@ export interface MeasuredUsage {
   cacheReadTokens?: number;
   /** Prompt tokens written to the cache (Anthropic cache_creation). */
   cacheWriteTokens?: number;
+}
+
+/**
+ * Extract provider usage from a non-streaming 200 body without throwing on
+ * non-JSON payloads (gateway hiccups may return empty/HTML bodies).
+ * Merges OpenAI-compatible and Anthropic shapes so cache attribution
+ * (`cache_read_input_tokens`/`cache_creation_input_tokens`) is not dropped
+ * on Anthropic native responses.
+ */
+export function extractUsageFromBody(fullBody: string): MeasuredUsage | undefined {
+  let usage: unknown;
+  try {
+    usage = (JSON.parse(fullBody) as any)?.usage;
+  } catch {
+    return undefined;
+  }
+  const openai = extractOpenAIUsage(usage);
+  const anthropic = extractAnthropicUsage(usage);
+  if (!openai && !anthropic) return undefined;
+  return {
+    promptTokens: openai?.promptTokens ?? anthropic?.promptTokens,
+    completionTokens: openai?.completionTokens ?? anthropic?.completionTokens,
+    cacheReadTokens: openai?.cacheReadTokens ?? anthropic?.cacheReadTokens,
+    cacheWriteTokens: anthropic?.cacheWriteTokens,
+  };
 }
 
 /**
@@ -352,18 +438,23 @@ export function refreshRequestId(headers: Record<string, string>): Record<string
 
 /** Read the active output-token cap regardless of protocol shape. */
 export function getBodyMaxTokens(body: Record<string, unknown>): number | undefined {
-  const v =
-    (body as Record<string, any>).max_tokens ?? (body as Record<string, any>).max_output_tokens;
+  const b = body as Record<string, any>;
+  const v = b.max_tokens ?? b.max_output_tokens ?? b.max_completion_tokens;
   return typeof v === "number" ? v : undefined;
 }
 
-/** Write the capped output-token limit to whichever field the active body uses. */
+/** Write the capped output-token limit to whichever field(s) the active body uses. */
 export function setBodyMaxTokens(body: Record<string, unknown>, capped: number): void {
-  if ("max_output_tokens" in body) {
-    (body as Record<string, any>).max_output_tokens = capped;
-  } else {
-    (body as Record<string, any>).max_tokens = capped;
+  // Update every present cap field so a body carrying two never keeps a stale one.
+  const b = body as Record<string, any>;
+  let wrote = false;
+  for (const key of ["max_output_tokens", "max_completion_tokens", "max_tokens"] as const) {
+    if (key in body) {
+      b[key] = capped;
+      wrote = true;
+    }
   }
+  if (!wrote) b.max_tokens = capped;
 }
 
 // OpenCode Zen /responses protocol support
@@ -451,12 +542,28 @@ export function buildResponsesRequestBody({
 }: BuildResponsesRequestBodyOptions): Record<string, unknown> {
   const input: any[] = [];
 
+  // Valid function_call ids emitted by assistant turns in this payload.
+  // Tool outputs that link to nothing in the payload are dropped (mirrors the
+  // chat path, which filters orphan `tool` messages) instead of minting an
+  // unlinked random call_id that the Responses API would reject with 400.
+  const validCallIds = new Set<string>();
+  for (const m of messages) {
+    if (m?.role === "assistant" && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        const id = tc?.id ?? tc?.call_id;
+        if (typeof id === "string" && id) validCallIds.add(id);
+      }
+    }
+  }
+
   for (const m of messages) {
     if (!m) continue;
     if (m.role === "tool") {
+      const outId = m.tool_call_id ?? m.id;
+      if (typeof outId !== "string" || !outId || !validCallIds.has(outId)) continue;
       input.push({
         type: "function_call_output",
-        call_id: m.tool_call_id,
+        call_id: outId,
         output: typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""),
       });
     } else if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {

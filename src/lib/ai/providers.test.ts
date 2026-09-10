@@ -19,6 +19,10 @@ import {
   markResponsesRequired,
   clearResponsesRequired,
   buildResponsesRequestBody,
+  createResponsesTextDedup,
+  extractUsageFromBody,
+  getBodyMaxTokens,
+  setBodyMaxTokens,
 } from "./provider-payloads";
 
 describe("Provider Catalog", () => {
@@ -387,6 +391,104 @@ describe("Provider Catalog", () => {
       expect(flatTools[0].description).toBe("Get current weather in city");
       expect(flatTools[0].parameters).toBeDefined();
       expect(flatTools[0].function).toBeUndefined(); // ensure unnested
+    });
+
+    it("drops orphan tool outputs with no matching call in the payload", () => {
+      const body = buildResponsesRequestBody({
+        model: "muse-spark",
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "tool", tool_call_id: "call_orphan", content: "stale result" },
+          { role: "tool", content: "id-less result" },
+        ],
+        stream: false,
+      });
+      expect(body.input).toEqual([{ role: "user", content: "hi" }]);
+    });
+
+    it("preserves function-level vendor extensions like strict", () => {
+      const body = buildResponsesRequestBody({
+        model: "muse-spark",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "get_weather",
+              description: "d",
+              parameters: { type: "object" },
+              strict: true,
+            },
+          },
+        ],
+        stream: false,
+      });
+      const flatTools = body.tools as any[];
+      expect(flatTools[0].strict).toBe(true);
+    });
+  });
+
+  describe("Responses text dedup helper", () => {
+    it("yields only the unstreamed remainder on done", () => {
+      const d = createResponsesTextDedup();
+      d.onDelta("0:", "Hello ");
+      d.onDelta("0:", "world");
+      expect(d.onDone("0:", "Hello world!!!")).toBe("!!!");
+      expect(d.getDroppedBytes()).toBe(0);
+    });
+
+    it("yields full text when only done arrives", () => {
+      const d = createResponsesTextDedup();
+      expect(d.onDone("1:", "full answer")).toBe("full answer");
+    });
+
+    it("drops diverged done text and counts it instead of duplicating", () => {
+      const d = createResponsesTextDedup();
+      d.onDelta("0:", "Hello world");
+      expect(d.onDone("0:", "something entirely different")).toBe("");
+      expect(d.getDroppedBytes()).toBe("something entirely different".length);
+    });
+  });
+
+  describe("Usage + token-cap helpers", () => {
+    it("extracts usage from a non-streaming body without throwing on garbage", () => {
+      expect(
+        extractUsageFromBody(JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 5 } })),
+      ).toEqual({ promptTokens: 10, completionTokens: 5, cacheReadTokens: undefined });
+      expect(extractUsageFromBody("")).toBeUndefined();
+      expect(extractUsageFromBody("<html>gateway hiccup</html>")).toBeUndefined();
+    });
+
+    it("preserves Anthropic cache attribution in non-streaming bodies", () => {
+      expect(
+        extractUsageFromBody(
+          JSON.stringify({
+            usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 60, cache_creation_input_tokens: 10 },
+          }),
+        ),
+      ).toEqual({ promptTokens: 100, completionTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 10 });
+    });
+
+    it("reads and writes every cap field symmetrically", () => {
+      const chat = { model: "x", max_tokens: 100 };
+      expect(getBodyMaxTokens(chat)).toBe(100);
+      setBodyMaxTokens(chat, 50);
+      expect(chat.max_tokens).toBe(50);
+
+      const responses = { model: "x", max_output_tokens: 100 };
+      expect(getBodyMaxTokens(responses)).toBe(100);
+      setBodyMaxTokens(responses, 50);
+      expect(responses.max_output_tokens).toBe(50);
+
+      const completion = { model: "x", max_completion_tokens: 100 };
+      expect(getBodyMaxTokens(completion)).toBe(100);
+      setBodyMaxTokens(completion, 50);
+      expect(completion.max_completion_tokens).toBe(50);
+
+      const both = { model: "x", max_tokens: 100, max_output_tokens: 100 } as Record<string, unknown>;
+      setBodyMaxTokens(both, 25);
+      expect(both.max_tokens).toBe(25);
+      expect(both.max_output_tokens).toBe(25);
     });
   });
 });

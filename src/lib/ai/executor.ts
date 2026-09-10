@@ -76,7 +76,9 @@ import {
   sanitizeRejectedReasoningParams,
   parseSseReasoningChunk,
   extractOpenAIUsage,
+  extractUsageFromBody,
   extractAnthropicUsage,
+  createResponsesTextDedup,
   isStreamOptionsRejected,
   markStreamOptionsRejected,
   buildProviderHeaders,
@@ -92,6 +94,8 @@ import {
   resolveModelsUrl,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
+  FALLBACK_OUTPUT_TOKEN_CAP,
+  PROVIDER_PING_MAX_OUTPUT_TOKENS,
   type MeasuredUsage,
 } from "@/lib/ai/provider-payloads";
 import {
@@ -1650,7 +1654,7 @@ export async function* streamOpenAICompatible(
 
         if (limitMatch) {
           const limit = parseInt(limitMatch[1], 10);
-          const currentMax = getBodyMaxTokens(body) ?? 4096;
+          const currentMax = getBodyMaxTokens(body) ?? FALLBACK_OUTPUT_TOKEN_CAP;
           const capped = Math.min(currentMax, limit);
           console.warn(
             `[executor] OpenRouter 402: max_tokens exceeds account limit ${limit}, retrying with ${capped}`
@@ -1834,7 +1838,7 @@ export async function* streamOpenAICompatible(
       if (parsed.content) yield { type: "content", text: parsed.content };
       if (parsed.toolCalls?.length) yield { type: "tool_calls", calls: parsed.toolCalls };
     }
-    const usage = extractOpenAIUsage((JSON.parse(fullBody) as any)?.usage);
+    const usage = extractUsageFromBody(fullBody);
     if (usage) yield { type: "usage", usage };
     return;
   }
@@ -1874,10 +1878,16 @@ export async function* streamOpenAICompatible(
   let finishReason: string | undefined;
   // Measured usage reported by the provider (last usage object seen wins).
   let openaiUsage: MeasuredUsage | undefined;
-  // Track accumulated deltas for Responses API output and reasoning items so
+  // Track streamed deltas for Responses API output and reasoning items so
   // trailing `*.done` frames with complete item text don't duplicate already-streamed text.
-  const accumulatedResponsesOutputText = new Map<string, string>();
-  const accumulatedResponsesReasoningText = new Map<string, string>();
+  const responsesOutputDedup = createResponsesTextDedup();
+  const responsesReasoningDedup = createResponsesTextDedup();
+  // Diverged `*.done` frames are dropped (not duplicated); surface the count
+  // once per stream so the loss is observable instead of invisible.
+  const reportResponsesDedupDrops = () => {
+    const dropped = responsesOutputDedup.getDroppedBytes() + responsesReasoningDedup.getDroppedBytes();
+    if (dropped > 0) console.warn(`[executor] Dropped ${dropped} diverged Responses bytes to avoid duplicate prose`);
+  };
 
   const READ_TIMEOUT_MS = 300_000;
 
@@ -1912,6 +1922,7 @@ export async function* streamOpenAICompatible(
         if (finishReason) yield { type: "finish", reason: finishReason };
         // Yield measured usage exactly once, at stream end.
         if (openaiUsage) yield { type: "usage", usage: openaiUsage };
+        reportResponsesDedupDrops();
         // Yield accumulated tool calls before returning.
         if (sawToolCalls && toolCallAccumulator.size > 0) {
           const calls = Array.from(toolCallAccumulator.entries())
@@ -2013,19 +2024,13 @@ export async function* streamOpenAICompatible(
         }
         if (json.type === "response.reasoning_text.delta" && typeof json.delta === "string") {
           const key = `${json.output_index ?? ""}:${json.item_id ?? ""}`;
-          accumulatedResponsesReasoningText.set(
-            key,
-            (accumulatedResponsesReasoningText.get(key) ?? "") + json.delta,
-          );
+          responsesReasoningDedup.onDelta(key, json.delta);
           yield { type: "thinking", text: json.delta };
           continue;
         }
         if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
           const key = `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`;
-          accumulatedResponsesOutputText.set(
-            key,
-            (accumulatedResponsesOutputText.get(key) ?? "") + json.delta,
-          );
+          responsesOutputDedup.onDelta(key, json.delta);
           yield { type: "content", text: json.delta };
           continue;
         }
@@ -2039,19 +2044,8 @@ export async function* streamOpenAICompatible(
             (typeof json.output_text === "string" && json.output_text) ||
             "";
           const key = `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`;
-          const streamed = accumulatedResponsesOutputText.get(key) ?? "";
-          if (text) {
-            if (streamed && text.startsWith(streamed)) {
-              const remainder = text.slice(streamed.length);
-              if (remainder) {
-                accumulatedResponsesOutputText.set(key, text);
-                yield { type: "content", text: remainder };
-              }
-            } else if (!streamed) {
-              accumulatedResponsesOutputText.set(key, text);
-              yield { type: "content", text };
-            }
-          }
+          const remainder = responsesOutputDedup.onDone(key, text);
+          if (remainder) yield { type: "content", text: remainder };
           continue;
         }
         if (json.type === "response.reasoning_text.done") {
@@ -2060,19 +2054,8 @@ export async function* streamOpenAICompatible(
             (typeof json.delta === "string" && json.delta) ||
             "";
           const key = `${json.output_index ?? ""}:${json.item_id ?? ""}`;
-          const streamed = accumulatedResponsesReasoningText.get(key) ?? "";
-          if (text) {
-            if (streamed && text.startsWith(streamed)) {
-              const remainder = text.slice(streamed.length);
-              if (remainder) {
-                accumulatedResponsesReasoningText.set(key, text);
-                yield { type: "thinking", text: remainder };
-              }
-            } else if (!streamed) {
-              accumulatedResponsesReasoningText.set(key, text);
-              yield { type: "thinking", text };
-            }
-          }
+          const remainder = responsesReasoningDedup.onDone(key, text);
+          if (remainder) yield { type: "thinking", text: remainder };
           continue;
         }
         if (json.type === "response.output_item.done" && json.item?.type === "function_call" && json.item?.name) {
@@ -2246,6 +2229,7 @@ export async function* streamOpenAICompatible(
   if (pendingContent) {
     yield { type: "content", text: pendingContent };
   }
+  reportResponsesDedupDrops();
   // Yield any accumulated tool calls at end-of-stream.
   if (sawToolCalls && toolCallAccumulator.size > 0) {
     const calls = Array.from(toolCallAccumulator.entries())
@@ -5521,13 +5505,15 @@ const thinkInstruction = thinkPlan.kind === "params"
         // dangling `tool`-role message (the tool result) with no matching
         // `tool_use` — which some providers reject (400) and others silently
         // misinterpret (causing the model to echo the tool result as text).
-        // We use the SAME toolCallId scheme as the execution pass below:
-        // `${assistantMsg.id}-tc-${batchStartLen + i + 1}` so the IDs match
+        // We use the SAME toolCallId scheme as the execution sequence below:
+        // `${assistantMsg.id}-tc-${toolEntriesStartLen + i + 1}` so the IDs match
         // the `tool_call_id` on the persisted tool-result messages.
+        // Single length snapshot: nothing appends to allToolCalls between here
+        // and the execution sequence, so one const serves both sites.
+        const toolEntriesStartLen = allToolCalls.length;
         {
-          const batchStartLen0 = allToolCalls.length;
           const toolCallsForPersist = toolCalls.map((tc, i) => ({
-            id: `${assistantMsg.id}-tc-${batchStartLen0 + i + 1}`,
+            id: `${assistantMsg.id}-tc-${toolEntriesStartLen + i + 1}`,
             name: tc.toolName,
             args: tc.args,
             thought_signature: tc.thought_signature,
@@ -5553,12 +5539,13 @@ const thinkInstruction = thinkPlan.kind === "params"
           }
         }
 
-        // Tool batch execution: interleaved pipeline — each tool is permission-checked
-        // and executed immediately before moving to the next, so tool_call_start events
-        // stream to the client as each tool's permission resolves (not after the entire
-        // batch is screened). The persistence post-pass remains separate.
+        // Sequential tool execution: each tool is permission-checked and
+        // executed immediately before moving to the next, so tool_call_start
+        // events stream to the client as each tool's permission resolves (not
+        // after the entire sequence is screened). The persistence post-pass
+        // remains separate.
 
-        interface ToolBatchEntry {
+        interface ToolEntry {
           toolCallId: string;
           toolName: string;
           args: Record<string, unknown>;
@@ -5567,22 +5554,21 @@ const thinkInstruction = thinkPlan.kind === "params"
           allowed: boolean;
           /** Populated for denied entries. */
           denyReason?: string;
-          /** Populated by the execution pass for allowed entries. */
+          /** Populated by execution for allowed entries. */
           result?: { ok: boolean; result: unknown };
           durationMs?: number;
           thought_signature?: string;
           thoughtSignature?: string;
         }
 
-        const batch: ToolBatchEntry[] = [];
-        const batchStartLen = allToolCalls.length;
+        const toolEntries: ToolEntry[] = [];
 
-        // Load permission configuration and workspace once per tool batch.
-        let batchPermConfig = await getPermissions(user.id);
-        const batchWs = await resolveWs(user.id, conversation.id).catch(() => null);
-        const batchRootDir = batchWs?.rootDir;
+        // Load permission configuration and workspace once for this tool sequence.
+        let toolPermConfig = await getPermissions(user.id);
+        const toolWs = await resolveWs(user.id, conversation.id).catch(() => null);
+        const toolRootDir = toolWs?.rootDir;
 
-        const executeSingleEntry = async (entry: ToolBatchEntry) => {
+        const executeSingleTool = async (entry: ToolEntry) => {
           // The card appears NOW, immediately before this tool runs (or is
           // denied) — interleaved with permission evaluation.
           emit({ type: "tool_call_start", toolCallId: entry.toolCallId, name: entry.toolName });
@@ -5624,8 +5610,8 @@ const thinkInstruction = thinkPlan.kind === "params"
             thinkingLevel: req.thinkingLevel,
             checkpointId: preTurnCheckpointId,
             signal,
-            rootDir: batchRootDir,
-            workspace: batchWs ?? undefined,
+            rootDir: toolRootDir,
+            workspace: toolWs ?? undefined,
             onProgress: (text) => {
               emit({ type: "command_output", toolCallId: entry.toolCallId, text, running: true });
             },
@@ -5667,7 +5653,7 @@ const thinkInstruction = thinkPlan.kind === "params"
         // completely before moving to the next tool.
         for (let i = 0; i < toolCalls.length; i++) {
           const tc = toolCalls[i];
-          const toolCallId = `${assistantMsg.id}-tc-${batchStartLen + i + 1}`;
+          const toolCallId = `${assistantMsg.id}-tc-${toolEntriesStartLen + i + 1}`;
 
           if (mode === "architect" && tc.toolName === "spawn_subagent") {
             // Architect mode: enforce read-only tool access by clipping allowedTools.
@@ -5685,14 +5671,14 @@ const thinkInstruction = thinkPlan.kind === "params"
           // Evaluate tool action permission ("deny" blocks, "ask" prompts user, "allow" executes).
           let permissionMode: PermissionMode = "ask";
           try {
-            permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, batchPermConfig);
+            permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, toolPermConfig);
           } catch (e) {
             console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
             permissionMode = "ask"; // fail-closed: ask the user on errors
           }
           const action = actionForTool(tc.toolName);
 
-          const entry: ToolBatchEntry = {
+          const entry: ToolEntry = {
             toolCallId,
             toolName: tc.toolName,
             args: tc.args,
@@ -5764,11 +5750,11 @@ const thinkInstruction = thinkPlan.kind === "params"
               /* ignore audit failures */
             }
             if (decision === "always_allow") {
-              // Refresh permission snapshot after always_allow so subsequent batch calls skip prompting.
-              batchPermConfig = await refreshPermissionsConfig(
+              // Refresh permission snapshot after always_allow so subsequent tool calls skip prompting.
+              toolPermConfig = await refreshPermissionsConfig(
                 user.id,
                 decision,
-                batchPermConfig,
+                toolPermConfig,
               );
             }
             if (decision === "deny") {
@@ -5782,13 +5768,13 @@ const thinkInstruction = thinkPlan.kind === "params"
             entry.allowed = true;
           }
 
-          batch.push(entry);
+          toolEntries.push(entry);
 
           // Immediately execute this tool one by one — no batching
-          await executeSingleEntry(entry);
+          await executeSingleTool(entry);
         }
 
-        for (const entry of batch) {
+        for (const entry of toolEntries) {
           const { toolCallId, toolName, args } = entry;
 
           if (entry.allowed && entry.result) {
@@ -6290,7 +6276,7 @@ export async function testProvider(
         },
         body: JSON.stringify({
           model: testModel,
-          max_tokens: 4,
+          max_tokens: PROVIDER_PING_MAX_OUTPUT_TOKENS,
           messages: [{ role: "user", content: "ping" }],
         }),
       });
@@ -6362,14 +6348,14 @@ export async function testProvider(
         ? buildResponsesRequestBody({
             model: testM,
             messages: [{ role: "user", content: "ping" }],
-            maxTokens: 4,
+            maxTokens: PROVIDER_PING_MAX_OUTPUT_TOKENS,
             stream: false,
             providerId: provider,
           })
         : {
             model: testM,
             messages: [{ role: "user", content: "ping" }],
-            max_tokens: 4,
+            max_tokens: PROVIDER_PING_MAX_OUTPUT_TOKENS,
           };
       let resp = await safeProviderFetch(testUrl, {
         method: "POST",
@@ -6383,7 +6369,7 @@ export async function testProvider(
         const fallbackBody = buildResponsesRequestBody({
           model: testM,
           messages: [{ role: "user", content: "ping" }],
-          maxTokens: 4,
+          maxTokens: PROVIDER_PING_MAX_OUTPUT_TOKENS,
           stream: false,
           providerId: provider,
         });
@@ -6398,7 +6384,7 @@ export async function testProvider(
         resp = await safeProviderFetch(fallbackUrl, {
           method: "POST",
           headers: freshTestHeaders(),
-          body: JSON.stringify({ model: testM, messages: [{ role: "user", content: "ping" }], max_tokens: 4 }),
+          body: JSON.stringify({ model: testM, messages: [{ role: "user", content: "ping" }], max_tokens: PROVIDER_PING_MAX_OUTPUT_TOKENS }),
         });
       }
       if (resp.ok) {

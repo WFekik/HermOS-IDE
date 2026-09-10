@@ -48,6 +48,10 @@ import {
   refreshRequestId,
   getBodyMaxTokens,
   setBodyMaxTokens,
+  extractOpenAIUsage,
+  extractAnthropicUsage,
+  extractUsageFromBody,
+  createResponsesTextDedup,
   isResponsesRequired,
   isZenProvider,
   markResponsesRequired,
@@ -56,6 +60,8 @@ import {
   resolveProviderUrls,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
+  FALLBACK_OUTPUT_TOKEN_CAP,
+  type MeasuredUsage,
 } from "@/lib/ai/provider-payloads";
 import {
   resolveReasoningPlan,
@@ -97,10 +103,11 @@ interface OpenAIMessage {
 }
 
 interface StreamChunk {
-  type: "content" | "thinking" | "tool_calls" | "finish" | "tools_rejected";
+  type: "content" | "thinking" | "tool_calls" | "finish" | "tools_rejected" | "usage";
   text?: string;
   reason?: string;
   calls?: Array<{ id: string; name: string; arguments: string }>;
+  usage?: MeasuredUsage;
 }
 
 export const DEFAULT_SUBAGENT_PROMPT = `You are an HermOS research subagent. Gather ground truth, report precisely.
@@ -217,6 +224,17 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
 
     // Tracks if loop exited via final-answer break rather than max-iteration cut.
     let stoppedAfterAnswer = false;
+    // Session-wide provider-measured token totals (sum of per-iteration usage).
+    // Seeded from the session so a resumed worker accumulates onto pre-resume
+    // spend instead of overwriting it.
+    const priorTotals = session.totalMeasuredUsage;
+    const totalMeasured = {
+      promptTokens: priorTotals?.promptTokens ?? 0,
+      completionTokens: priorTotals?.completionTokens ?? 0,
+      cacheReadTokens: priorTotals?.cacheReadTokens ?? 0,
+      cacheWriteTokens: priorTotals?.cacheWriteTokens ?? 0,
+    };
+    let sawMeasured = false;
 
     for (let iter = 0; iter < 100; iter++) {
       const live = internalGet(sessionId);
@@ -248,6 +266,8 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
       let iterContent = "";
       let iterThinking = "";
       let toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+      // Provider-measured usage for this iteration (last frame wins, mirrors executor.ts).
+      let iterMeasured: MeasuredUsage | undefined;
       // Throttle live partial streaming (~60ms) to avoid O(n²) string clean passes on each chunk.
       let lastPartialFlush = 0;
       let partialTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -437,6 +457,17 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
               } else if (chunk.type === "thinking") {
                 iterThinking += chunk.text ?? "";
                 schedulePartial();
+              } else if (chunk.type === "usage") {
+                iterMeasured = chunk.usage;
+                if (chunk.usage) {
+                  // Accumulate session totals for spend attribution (observable
+                  // via the session channel, never sent on the wire).
+                  sawMeasured = true;
+                  totalMeasured.promptTokens += chunk.usage.promptTokens ?? 0;
+                  totalMeasured.completionTokens += chunk.usage.completionTokens ?? 0;
+                  totalMeasured.cacheReadTokens += chunk.usage.cacheReadTokens ?? 0;
+                  totalMeasured.cacheWriteTokens += chunk.usage.cacheWriteTokens ?? 0;
+                }
               } else if (chunk.type === "finish") {
                 lastFinishReason = chunk.reason ?? lastFinishReason;
               }
@@ -464,6 +495,17 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
               } else if (chunk.type === "thinking") {
                 iterThinking += chunk.text ?? "";
                 schedulePartial();
+              } else if (chunk.type === "usage") {
+                iterMeasured = chunk.usage;
+                if (chunk.usage) {
+                  // Accumulate session totals for spend attribution (observable
+                  // via the session channel, never sent on the wire).
+                  sawMeasured = true;
+                  totalMeasured.promptTokens += chunk.usage.promptTokens ?? 0;
+                  totalMeasured.completionTokens += chunk.usage.completionTokens ?? 0;
+                  totalMeasured.cacheReadTokens += chunk.usage.cacheReadTokens ?? 0;
+                  totalMeasured.cacheWriteTokens += chunk.usage.cacheWriteTokens ?? 0;
+                }
               } else if (chunk.type === "finish") {
                 lastFinishReason = chunk.reason ?? lastFinishReason;
               }
@@ -574,7 +616,11 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
         content: iterContent || "",
         thinking: iterThinking || undefined,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        measuredUsage: iterMeasured,
       });
+      if (sawMeasured) {
+        updateSession(sessionId, { totalMeasuredUsage: { ...totalMeasured } });
+      }
       // Turn committed — drop live partial draft in favor of the durable message.
       clearSubagentPartial(sessionId);
 
@@ -1288,7 +1334,7 @@ async function* streamOpenAICompatible(
     const isOpenRouter = url.includes("openrouter.ai") || providerId === "openrouter";
     const isGroq = plan?.scheme === "groq_effort" || providerId === "groq" || url.includes("api.groq.com");
     let capped: number | null = null;
-    const currentMax = getBodyMaxTokens(body) ?? 4096;
+    const currentMax = getBodyMaxTokens(body) ?? FALLBACK_OUTPUT_TOKEN_CAP;
 
     if (isOpenRouter || isGroq) {
       if (isOpenRouter && (resp.status === 402 || resp.status === 400)) {
@@ -1382,6 +1428,8 @@ async function* streamOpenAICompatibleFromResponse(
       if (parsed.content) yield { type: "content", text: parsed.content };
       if (parsed.toolCalls?.length) yield { type: "tool_calls", calls: parsed.toolCalls };
     }
+    const usage = extractUsageFromBody(fullBody);
+    if (usage) yield { type: "usage", usage };
     return;
   }
 
@@ -1394,6 +1442,18 @@ async function* streamOpenAICompatibleFromResponse(
   // Upstream finish_reason from the final SSE frame — surfaced so callers can
   // detect budget exhaustion (`length`) vs. a normal stop.
   let finishReason: string | undefined;
+  // Measured usage reported by the provider (last usage object seen wins).
+  let subagentUsage: MeasuredUsage | undefined;
+  // Shared dedup with executor.ts: trailing `*.done` frames must not re-emit
+  // text already streamed via `*.delta`.
+  const responsesOutputDedup = createResponsesTextDedup();
+  const responsesReasoningDedup = createResponsesTextDedup();
+  // Diverged `*.done` frames are dropped (not duplicated); surface the count
+  // once per stream so the loss is observable instead of invisible.
+  const reportResponsesDedupDrops = () => {
+    const dropped = responsesOutputDedup.getDroppedBytes() + responsesReasoningDedup.getDroppedBytes();
+    if (dropped > 0) console.warn(`[subagent] Dropped ${dropped} diverged Responses bytes to avoid duplicate prose`);
+  };
 
   while (true) {
     const { value, done } = await reader.read();
@@ -1407,6 +1467,8 @@ async function* streamOpenAICompatibleFromResponse(
       const payload = trimmed.slice(5).trim();
       if (payload === "[DONE]") {
         if (finishReason) yield { type: "finish", reason: finishReason };
+        if (subagentUsage) yield { type: "usage", usage: subagentUsage };
+        reportResponsesDedupDrops();
         if (sawToolCalls && acc.size > 0) yield { type: "tool_calls", calls: flushAcc(acc) };
         return;
       }
@@ -1433,6 +1495,10 @@ async function* streamOpenAICompatibleFromResponse(
         }
         if (json.type === "response.completed") {
           finishReason = "stop";
+          if (json.response?.usage) {
+            const usage = extractOpenAIUsage(json.response.usage);
+            if (usage) subagentUsage = usage;
+          }
           continue;
         }
         if (json.type === "response.output_item.added" && json.item?.type === "function_call") {
@@ -1478,22 +1544,32 @@ async function* streamOpenAICompatibleFromResponse(
           continue;
         }
         if (json.type === "response.reasoning_text.delta" && typeof json.delta === "string") {
+          responsesReasoningDedup.onDelta(`${json.output_index ?? ""}:${json.item_id ?? ""}`, json.delta);
           yield { type: "thinking", text: json.delta };
           continue;
         }
         if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+          responsesOutputDedup.onDelta(
+            `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`,
+            json.delta,
+          );
           yield { type: "content", text: json.delta };
           continue;
         }
         // Collapsed-stream gateways may emit only `*.done` frames with the full
-        // text (no preceding `.delta`). Yield those so content is not lost.
+        // text (no preceding `.delta`). Shared dedup yields only the unstreamed
+        // remainder so prose is never duplicated (parity with executor.ts).
         if (json.type === "response.output_text.done") {
           const text =
             (typeof json.text === "string" && json.text) ||
             (typeof json.delta === "string" && json.delta) ||
             (typeof json.output_text === "string" && json.output_text) ||
             "";
-          if (text) yield { type: "content", text };
+          const remainder = responsesOutputDedup.onDone(
+            `${json.output_index ?? ""}:${json.item_id ?? json.content_index ?? ""}`,
+            text,
+          );
+          if (remainder) yield { type: "content", text: remainder };
           continue;
         }
         if (json.type === "response.reasoning_text.done") {
@@ -1501,7 +1577,11 @@ async function* streamOpenAICompatibleFromResponse(
             (typeof json.text === "string" && json.text) ||
             (typeof json.delta === "string" && json.delta) ||
             "";
-          if (text) yield { type: "thinking", text };
+          const remainder = responsesReasoningDedup.onDone(
+            `${json.output_index ?? ""}:${json.item_id ?? ""}`,
+            text,
+          );
+          if (remainder) yield { type: "thinking", text: remainder };
           continue;
         }
         if (json.type === "response.output_item.done" && json.item?.type === "function_call" && json.item?.name) {
@@ -1531,6 +1611,10 @@ async function* streamOpenAICompatibleFromResponse(
       }
       const finishReasonFrame = json?.choices?.[0]?.finish_reason;
       if (typeof finishReasonFrame === "string") finishReason = finishReasonFrame;
+      if (json?.usage) {
+        const usage = extractOpenAIUsage(json.usage);
+        if (usage) subagentUsage = usage;
+      }
       const delta = json?.choices?.[0]?.delta;
       if (!delta) continue;
       try {
@@ -1553,6 +1637,8 @@ async function* streamOpenAICompatibleFromResponse(
       }
     }
   }
+  if (subagentUsage) yield { type: "usage", usage: subagentUsage };
+  reportResponsesDedupDrops();
   if (sawToolCalls && acc.size > 0) yield { type: "tool_calls", calls: flushAcc(acc) };
 }
 
@@ -1667,6 +1753,10 @@ async function* streamAnthropic(
   let buffer = "";
   const pending = new Map<number, { id: string; name: string; json: string }>();
   const completed: Array<{ id: string; name: string; arguments: string }> = [];
+  // Measured usage: input + cache counts arrive on `message_start`, the
+  // cumulative output count on `message_delta` (per the Anthropic streaming
+  // spec). Merged and yielded once at stream end (parity with executor.ts).
+  let anthropicUsage: MeasuredUsage | undefined;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -1679,7 +1769,15 @@ async function* streamAnthropic(
       if (!trimmed || !trimmed.startsWith("data:")) continue;
       try {
         const json = JSON.parse(trimmed.slice(5).trim());
-        if (json.type === "content_block_start" && json.content_block?.type === "tool_use") {
+        if (json.type === "message_start" && json.message?.usage) {
+          const usage = extractAnthropicUsage(json.message.usage);
+          if (usage) anthropicUsage = { ...anthropicUsage, ...usage };
+        } else if (json.type === "message_delta" && json.usage) {
+          const usage = extractAnthropicUsage(json.usage);
+          if (usage?.completionTokens !== undefined) {
+            anthropicUsage = { ...anthropicUsage, completionTokens: usage.completionTokens };
+          }
+        } else if (json.type === "content_block_start" && json.content_block?.type === "tool_use") {
           pending.set(json.index, {
             id: json.content_block.id,
             name: json.content_block.name,
@@ -1707,6 +1805,7 @@ async function* streamAnthropic(
     }
   }
   if (completed.length > 0) yield { type: "tool_calls", calls: completed };
+  if (anthropicUsage) yield { type: "usage", usage: anthropicUsage };
 }
 
 import { subscribeSubagentUpdates } from "./subagent-session";

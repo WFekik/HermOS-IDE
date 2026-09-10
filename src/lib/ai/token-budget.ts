@@ -4,6 +4,7 @@
  */
 
 import { estimateTokens, isCompactionMarker } from "./context";
+import { getBodyMaxTokens, setBodyMaxTokens, FALLBACK_OUTPUT_TOKEN_CAP } from "./provider-payloads";
 
 /** Shavings over the reported limit to absorb estimator-vs-strict tokenizer error. */
 const DEFAULT_HEADROOM = 256;
@@ -35,6 +36,12 @@ function contentTokens(m: TokenBudgetMessage): number {
 }
 
 function tokenFor(m: TokenBudgetMessage): number {
+  // Responses-protocol items (e.g. {type:"function_call",...}) carry no
+  // role/content — budget them as serialized JSON instead of zero.
+  const rec = m as unknown as Record<string, unknown>;
+  if (typeof rec.role !== "string" && typeof rec.type === "string") {
+    return estimateTokens(JSON.stringify(m));
+  }
   let t = contentTokens(m);
   if (m.tool_calls) t += estimateTokens(JSON.stringify(m.tool_calls));
   return t;
@@ -46,6 +53,21 @@ function isContextSummary(m: TokenBudgetMessage): boolean {
 
 function hasToolCalls(m: TokenBudgetMessage): boolean {
   return Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
+}
+
+/** Responses-protocol function call item (pairs with trailing function_call_output). */
+function isResponsesCall(m: TokenBudgetMessage): boolean {
+  return (m as unknown as Record<string, unknown>).type === "function_call";
+}
+
+/** Responses-protocol tool result item (pairs with its preceding function_call). */
+function isResponsesCallOutput(m: TokenBudgetMessage): boolean {
+  return (m as unknown as Record<string, unknown>).type === "function_call_output";
+}
+
+/** A tool result in either protocol shape (chat `tool` role or Responses output item). */
+function isToolResult(m: TokenBudgetMessage): boolean {
+  return m.role === "tool" || isResponsesCallOutput(m);
 }
 
 /**
@@ -103,11 +125,13 @@ export function trimMessagesToBudget<T extends TokenBudgetMessage>(
   };
 
   // A kept assistant tool-call message keeps its trailing tool results
-  // (never drop results of a call we're sending).
+  // (never drop results of a call we're sending). Applies to both protocols:
+  // chat `assistant[tool_calls]` + trailing `tool`, and Responses
+  // `function_call` + trailing `function_call_output`.
   for (let i = 0; i < messages.length; i += 1) {
-    if (kept.has(i) && messages[i].role === "assistant" && hasToolCalls(messages[i])) {
+    if (kept.has(i) && ((messages[i].role === "assistant" && hasToolCalls(messages[i])) || isResponsesCall(messages[i]))) {
       let j = i + 1;
-      while (j < messages.length && messages[j].role === "tool") {
+      while (j < messages.length && isToolResult(messages[j])) {
         kept.add(j);
         j += 1;
       }
@@ -115,16 +139,17 @@ export function trimMessagesToBudget<T extends TokenBudgetMessage>(
   }
 
   // 2. Group non-core messages into chunks oldest-first; assistant tool-call
-  //    messages chunk together with their trailing tool results.
+  //    messages chunk together with their trailing tool results (both protocols,
+  //    so a trim never strands a call without its output or vice versa).
   const chunks: number[][] = [];
   {
     const skip = new Set<number>();
     for (let i = 0; i < messages.length; i += 1) {
       if (kept.has(i) || skip.has(i)) continue;
       const chunk: number[] = [i];
-      if (messages[i].role === "assistant" && hasToolCalls(messages[i])) {
+      if ((messages[i].role === "assistant" && hasToolCalls(messages[i])) || isResponsesCall(messages[i])) {
         let j = i + 1;
-        while (j < messages.length && messages[j].role === "tool") {
+        while (j < messages.length && isToolResult(messages[j])) {
           chunk.push(j);
           skip.add(j);
           j += 1;
@@ -150,7 +175,7 @@ export function trimMessagesToBudget<T extends TokenBudgetMessage>(
 }
 
 export interface PayloadFit {
-  /** Messages to send (same shape as the input body's `messages`). */
+  /** Messages to send (same shape as the input body's `messages`, or `input` for Responses bodies). */
   messages: TokenBudgetMessage[];
   /** Max output tokens to request. */
   maxTokens: number;
@@ -187,23 +212,25 @@ export function fitPayloadToBudget(
 ): PayloadFit {
   const headroom = opts?.headroom ?? DEFAULT_HEADROOM;
   const target = Math.max(1, budgetTokens - headroom);
-  const baseMessages = (body.messages as TokenBudgetMessage[]) ?? [];
+  // Protocol-aware: Responses bodies carry `input`, chat bodies `messages`.
+  // The fit result writes back to whichever key the body uses.
+  const payloadKey = Array.isArray((body as Record<string, unknown>).messages) ? "messages" : "input";
+  const baseMessages = ((body as Record<string, unknown>)[payloadKey] as TokenBudgetMessage[]) ?? [];
   const hasTools = !!body.tools;
   const currentMax =
     typeof opts?.currentMaxTokens === "number" && opts.currentMaxTokens > 0
       ? opts.currentMaxTokens
-      : typeof body.max_tokens === "number"
-        ? body.max_tokens
-        : 4096;
+      : (getBodyMaxTokens(body) ?? FALLBACK_OUTPUT_TOKEN_CAP);
 
   // Serialized request size: prompt JSON (incl. tools when kept) + max_tokens.
   const measure = (msgs: TokenBudgetMessage[], maxOut: number, withTools: boolean): number => {
-    const probe: Record<string, unknown> = { ...body, messages: msgs };
+    const probe: Record<string, unknown> = { ...body, [payloadKey]: msgs };
     if (!withTools) {
       delete probe.tools;
       delete probe.tool_choice;
     }
     delete probe.max_tokens;
+    delete probe.max_output_tokens;
     return estimateTokens(JSON.stringify(probe)) + maxOut;
   };
 
@@ -272,12 +299,18 @@ export function recoverGroqTpmRateLimit(
   const requested = requestedMatch ? parseInt(requestedMatch[1], 10) : NaN;
 
   if (isFinite(limit) && limit > 0) {
-    const currentMax = typeof body.max_tokens === "number" ? body.max_tokens : 4096;
+    const currentMax = getBodyMaxTokens(body) ?? FALLBACK_OUTPUT_TOKEN_CAP;
     const fit = fitPayloadToBudget(body, limit, { currentMaxTokens: currentMax });
 
     if (fit.fitted) {
-      body.messages = fit.messages;
-      body.max_tokens = fit.maxTokens;
+      // Write back to whichever payload shape the body uses (messages/input)
+      // and whichever output-token field it carries (max_tokens/max_output_tokens).
+      if (Array.isArray((body as Record<string, unknown>).messages)) {
+        body.messages = fit.messages;
+      } else {
+        (body as Record<string, unknown>).input = fit.messages;
+      }
+      setBodyMaxTokens(body, fit.maxTokens);
       if (fit.dropTools) {
         delete body.tools;
         delete body.tool_choice;
