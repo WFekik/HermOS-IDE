@@ -10,7 +10,10 @@
  * propagate client disconnection to req.signal inside SSE routes.
  */
 
-const activeControllers = new Map<string, AbortController>();
+const g = globalThis as typeof globalThis & {
+  _agentAbortControllers?: Map<string, AbortController>;
+};
+const activeControllers = g._agentAbortControllers ?? (g._agentAbortControllers = new Map<string, AbortController>());
 
 /** Register an active stream's AbortController. If a run is already active for
  * this conversation, it is aborted first — latest intent wins, so two runs can

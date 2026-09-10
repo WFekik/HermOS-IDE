@@ -1599,7 +1599,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const curStreamingState = get().streamingStateByConversation[conversationId];
       if (isRunning && !curStreamingState?.isStreaming) {
         get().setStreaming(true, conversationId);
-      } else if (!isRunning && curStreamingState?.isStreaming) {
+      } else if (!isRunning && curStreamingState?.isStreaming && !curStreamingState?.streamingMessageId) {
         get().setStreaming(false, conversationId);
       }
       const list = (data?.conversation?.messages ?? []).filter(
@@ -1680,8 +1680,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             }
             merged.push({
               ...m,
+              content: (m.content && m.content.trim().length > 0) ? m.content : (local.content || m.content),
+              thinking: (m.thinking && m.thinking.trim().length > 0) ? m.thinking : (local.thinking ?? m.thinking),
               streaming: local.streaming ?? false,
-              segments: local.segments ?? m.segments,
+              segments: (local.segments && local.segments.length > 0) ? local.segments : (m.segments ?? local.segments),
               liveToolCalls: mergedTc.length > 0 ? mergedTc : (local.liveToolCalls ?? m.liveToolCalls),
             });
           } else if (m.role === "user") {
@@ -1908,8 +1910,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       toast.dismiss(`quest-${activeQuest.id}`);
     }
 
-    // Always refresh from server in background for up-to-date data
-    void get().refreshMessages(id);
+    // Refresh from server in background for up-to-date data (skip if actively streaming to prevent empty server stubs from clobbering live state)
+    const isConvStreaming = get().streamingStateByConversation[id]?.isStreaming;
+    if (!isConvStreaming) {
+      void get().refreshMessages(id);
+    }
     get().syncSelectionFromActive();
     void get().refreshCheckpoints(id);
     void get().refreshSubagents(id);

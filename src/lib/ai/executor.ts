@@ -1972,13 +1972,32 @@ export async function* streamOpenAICompatible(
         if (json.type === "response.failed") {
           throw new Error(`Provider error: ${extractUpstreamError(json.error ?? json.response?.error)}`);
         }
-        if (json.type === "response.completed") {
-          finishReason = "stop";
+        if (json.type === "response.completed" || json.type === "response.done") {
+          finishReason = json.response?.status === "completed" ? "stop" : (json.response?.status ?? "stop");
           if (json.response?.usage) {
             const usage = extractOpenAIUsage(json.response.usage);
             if (usage) openaiUsage = usage;
           }
-          continue;
+          if (sawToolCalls) {
+            const calls = Array.from(toolCallAccumulator.entries())
+              .sort(([a], [b]) => a - b)
+              .map(([, v]) => ({
+                id: v.id,
+                name: v.name,
+                arguments: v.args,
+                thought_signature: v.thought_signature,
+                thoughtSignature: v.thoughtSignature,
+              }))
+              .filter((c) => c.name.trim().length > 0);
+            if (calls.length > 0) {
+              yield { type: "tool_calls", calls };
+            }
+          }
+          if (openaiUsage) {
+            yield { type: "usage", usage: openaiUsage };
+          }
+          yield { type: "finish", reason: finishReason ?? "stop" };
+          return;
         }
         if (json.type === "response.output_item.added" && json.item?.type === "function_call") {
           sawToolCalls = true;
@@ -5568,15 +5587,22 @@ const thinkInstruction = thinkPlan.kind === "params"
         const toolWs = await resolveWs(user.id, conversation.id).catch(() => null);
         const toolRootDir = toolWs?.rootDir;
 
+        const startedToolCallIds = new Set<string>();
+        const emitToolStart = (id: string, name: string, args: unknown) => {
+          if (startedToolCallIds.has(id)) return;
+          startedToolCallIds.add(id);
+          emit({ type: "tool_call_start", toolCallId: id, name });
+          emit({
+            type: "tool_call_args",
+            toolCallId: id,
+            argsDelta: JSON.stringify(args),
+          });
+        };
+
         const executeSingleTool = async (entry: ToolEntry) => {
           // The card appears NOW, immediately before this tool runs (or is
           // denied) — interleaved with permission evaluation.
-          emit({ type: "tool_call_start", toolCallId: entry.toolCallId, name: entry.toolName });
-          emit({
-            type: "tool_call_args",
-            toolCallId: entry.toolCallId,
-            argsDelta: JSON.stringify(entry.args),
-          });
+          emitToolStart(entry.toolCallId, entry.toolName, entry.args);
           if (!entry.allowed) {
             const denyReason = entry.denyReason ?? "Permission denied.";
             emit({
@@ -5707,6 +5733,9 @@ const thinkInstruction = thinkPlan.kind === "params"
               /* ignore audit failures */
             }
           } else if (permissionMode === "ask") {
+            // Register and display the tool card in the chat immediately so the user
+            // sees the tool and its arguments alongside the permission prompt
+            emitToolStart(toolCallId, tc.toolName, tc.args);
             const target = buildPermissionTarget(tc.toolName, action, tc.args);
             const { id: approvalId, promise: approvalPromise } =
               createPendingApproval({

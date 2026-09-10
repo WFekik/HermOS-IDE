@@ -85,10 +85,22 @@ export function ChatView() {
     if (lastRestoredConvRef.current === activeConversationId) return;
     lastRestoredConvRef.current = activeConversationId;
 
+    const isStreamingNow = useAppStore.getState().streamingStateByConversation[activeConversationId]?.isStreaming;
     const saved = useAppStore.getState().scrollPositions[activeConversationId];
-    if (saved !== undefined) {
+    if (isStreamingNow) {
+      stickRef.current = true;
+      requestAnimationFrame(() => {
+        if (messages.length > 0) {
+          vl.scrollToIndex(messages.length - 1, { align: "end" });
+        }
+      });
+    } else if (saved !== undefined) {
       stickRef.current = false;
-      requestAnimationFrame(() => vl.scrollToOffset(saved));
+      requestAnimationFrame(() => {
+        const total = vl.getTotalSize();
+        const target = total > 0 ? Math.min(saved, Math.max(0, total - (scrollRef.current?.clientHeight ?? 0))) : saved;
+        vl.scrollToOffset(target);
+      });
     } else {
       // No saved offset — stick to the bottom. Messages may hydrate
       // asynchronously after switch, so the auto-scroll effect below
