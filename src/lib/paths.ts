@@ -1,7 +1,7 @@
 import path from "path";
 import os from "os";
 import { createHash } from "crypto";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, chmodSync, statSync, lstatSync } from "fs";
 
 /**
  * Centralized filesystem roots for HermOS IDE.
@@ -61,6 +61,83 @@ export const ARTIFACTS_DIR: string = path.join(APP_DATA_DIR, "artifacts");
 export const WORKSPACES_ROOT: string = path.join(APP_DATA_DIR, "workspaces");
 export const AGENT_TEMP_ROOT: string = path.join(APP_DATA_DIR, "agent-temp");
 
+/**
+ * Canonical com.hermos-ide temporary directory for sessions, temp files, and cross-mode control.
+ *
+ * CONTRACT: do not join paths off this constant for I/O. Call
+ * `ensureHermosTempDir()` and use its return value instead — it quarantines
+ * first-run symlink plants to a fresh owner-only dir and repairs modes.
+ * The constant remains exported for display strings and tests only.
+ */
+export const HERMOS_TEMP_DIR: string = path.join(os.tmpdir(), "com.hermos-ide");
+/** Sessions subdir — same contract as HERMOS_TEMP_DIR: prefer the ensure* return value. */
+export const HERMOS_TEMP_SESSIONS_DIR: string = path.join(HERMOS_TEMP_DIR, "sessions");
+
+let hermosTempDirOverride: string | null = null;
+
+export function ensureHermosTempDir(): string {
+  const dir = hermosTempDirOverride ?? HERMOS_TEMP_DIR;
+  const sessionsDir =
+    hermosTempDirOverride != null
+      ? path.join(hermosTempDirOverride, "sessions")
+      : HERMOS_TEMP_SESSIONS_DIR;
+  try {
+    // Fail closed on first-run symlink plants: a pre-created
+    // os.tmpdir()/com.hermos-ide symlink would redirect session writes
+    // (prompts, excerpts) to an attacker directory. On detection, quarantine
+    // to a fresh owner-only dir instead of following the link (throwing would
+    // break the never-throws contract; silently using it would leak data).
+    try {
+      const st = lstatSync(/* turbopackIgnore: true */ dir);
+      if (st.isSymbolicLink()) {
+        console.error(
+          `[paths] Refusing symlinked temp dir, quarantining: ${dir}. Remove it and restart to restore the default.`,
+        );
+        const safe = path.join(os.tmpdir(), `com.hermos-ide-safe-${process.pid}`);
+        mkdirSync(/* turbopackIgnore: true */ safe, { recursive: true, mode: 0o700 });
+        mkdirSync(/* turbopackIgnore: true */ path.join(safe, "sessions"), { recursive: true, mode: 0o700 });
+        hermosTempDirOverride = safe;
+        return safe;
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") throw e;
+    }
+    if (!existsSync(/* turbopackIgnore: true */ dir)) {
+      // mode 0o700: owner-only read/write/execute. Prevents other local users
+      // on a multi-user host from reading session data, prompts, or file excerpts
+      // stored under com.hermos-ide/sessions.
+      mkdirSync(/* turbopackIgnore: true */ dir, { recursive: true, mode: 0o700 });
+    } else {
+      // Repair pre-existing dirs created before the 0o700 hardening (or by a
+      // different installer with 0777): enforce owner-only access best-effort.
+      // Windows-tolerant — chmod is a no-op there, failures are ignored.
+      try {
+        if (process.platform !== "win32") {
+          const st = statSync(/* turbopackIgnore: true */ dir);
+          if ((st.mode & 0o777) !== 0o700) chmodSync(/* turbopackIgnore: true */ dir, 0o700);
+        }
+      } catch {
+        /* ignore — best-effort hardening */
+      }
+    }
+    if (!existsSync(/* turbopackIgnore: true */ sessionsDir)) {
+      mkdirSync(/* turbopackIgnore: true */ sessionsDir, { recursive: true, mode: 0o700 });
+    } else {
+      try {
+        if (process.platform !== "win32") {
+          const st = statSync(/* turbopackIgnore: true */ sessionsDir);
+          if ((st.mode & 0o777) !== 0o700) chmodSync(/* turbopackIgnore: true */ sessionsDir, 0o700);
+        }
+      } catch {
+        /* ignore — best-effort hardening */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return dir;
+}
+
 /** Generates a filesystem-safe per-user dir name, appending a hash on sanitization to avoid collisions. */
 export function safeUserId(userId: string): string {
   const sanitized = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -94,6 +171,7 @@ export function ensureRuntimeDirs(): void {
     if (!existsSync(/* turbopackIgnore: true */ AGENT_TEMP_ROOT)) {
       mkdirSync(/* turbopackIgnore: true */ AGENT_TEMP_ROOT, { recursive: true });
     }
+    ensureHermosTempDir();
   } catch {
     /* ignore */
   }

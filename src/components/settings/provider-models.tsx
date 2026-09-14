@@ -38,6 +38,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
+import { getThinkingLabel } from "@/lib/i18n";
 import { apiPost, apiPatch, ApiRequestError } from "@/lib/api-client";
 import {
   getReasoningLevels,
@@ -227,6 +229,7 @@ export function ProviderModels({
   provider: ProviderId;
   keyInfo?: ProviderKeyDTO;
 }) {
+  const { t } = useTranslation();
   const providers = useAppStore((s) => s.providers);
   const refreshProviderKeys = useAppStore((s) => s.refreshProviderKeys);
   const refreshProviders = useAppStore((s) => s.refreshProviders);
@@ -296,15 +299,15 @@ export function ProviderModels({
     onSuccess: (data) => {
       if (data && data.ok === false && data.error) {
         setFetchError(data.error);
-        toast.error(`Failed to list models: ${data.error}`);
+        toast.error(`${t("error")}: ${data.error}`);
         return;
       }
       const fetched = data.models ?? [];
       setFetchError(null);
       if (fetched.length === 0) {
-        toast.info("No remote models returned. Add custom model IDs below.");
+        toast.info(t("no_remote_models"));
       } else {
-        toast.success(`Loaded ${fetched.length} models from provider`);
+        toast.success(t("models_loaded_count", { count: fetched.length }));
       }
       const catalogModels =
         catalog?.models.map((m) => ({ id: m.id, name: m.name })) ?? [];
@@ -348,7 +351,7 @@ export function ProviderModels({
   const saveMut = useMutation({
     mutationFn: (toSave: ModelRow[]) => patchProviderModels(provider, toSave),
     onSuccess: () => {
-      toast.success("Model configuration saved");
+      toast.success(t("model_config_saved"));
       setDirty(false);
       void refreshProviderKeys();
       void refreshProviders();
@@ -386,7 +389,7 @@ export function ProviderModels({
     const clean = customModelId.trim();
     if (!clean) return;
     if (rows.some((r) => r.id === clean)) {
-      toast.error(`Model '${clean}' already exists.`);
+      toast.error(t("model_already_exists", { id: clean }));
       return;
     }
     setRows((cur) => [
@@ -427,9 +430,9 @@ export function ProviderModels({
       <div className="mt-2.5 rounded-lg border border-dashed p-2.5 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <Cpu className="size-3.5 text-muted-foreground" />
-          <span className="font-medium">Models</span>
+          <span className="font-medium">{t("models")}</span>
         </div>
-        <p className="mt-1 text-[11px]">Add an API key above to manage models.</p>
+        <p className="mt-1 text-[11px]">{t("add_key_to_manage_models")}</p>
       </div>
     );
   }
@@ -440,20 +443,20 @@ export function ProviderModels({
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 text-left flex-1 min-w-0 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-2 text-start flex-1 min-w-0 hover:opacity-80 transition-opacity"
         >
           <Cpu className="size-3.5 text-brand shrink-0" />
-          <span className="text-xs font-medium truncate">Models</span>
+          <span className="text-xs font-medium truncate">{t("models")}</span>
           <Badge
             variant="secondary"
             className="h-4 px-1.5 text-[9px] font-mono shrink-0"
           >
-            {enabledCount}/{rows.length} active
+            {enabledCount}/{rows.length} {t("active")}
           </Badge>
           {isOpen ? (
-            <ChevronUp className="size-3.5 text-muted-foreground ml-auto shrink-0" />
+            <ChevronUp className="size-3.5 text-muted-foreground ms-auto shrink-0" />
           ) : (
-            <ChevronDown className="size-3.5 text-muted-foreground ml-auto shrink-0" />
+            <ChevronDown className="size-3.5 text-muted-foreground ms-auto shrink-0" />
           )}
         </button>
         <Button
@@ -465,14 +468,14 @@ export function ProviderModels({
             refreshMut.mutate();
           }}
           disabled={refreshMut.isPending}
-          aria-label="Refresh models from provider"
+          aria-label={t("refresh_models_provider")}
         >
           {refreshMut.isPending ? (
             <Loader2 className="size-3 animate-spin" />
           ) : (
             <RefreshCw className="size-3" />
           )}
-          Fetch models
+          {t("fetch_models")}
         </Button>
       </div>
 
@@ -487,7 +490,7 @@ export function ProviderModels({
               className="mt-1 h-5 px-2 text-[10px]"
               onClick={() => refreshMut.mutate()}
             >
-              Retry
+              {t("retry")}
             </Button>
           </div>
         </div>
@@ -498,13 +501,13 @@ export function ProviderModels({
           {rows.length > 0 && (
             <div className="flex items-center gap-1.5 pt-1.5">
               <div className="relative flex-1">
-                <Search className="size-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                <Search className="size-3 text-muted-foreground absolute start-2 top-1/2 -translate-y-1/2" />
                 <Input
                   type="text"
                   value={modelFilter}
                   onChange={(e) => setModelFilter(e.target.value)}
-                  placeholder="Filter models (claude, gpt, llama, deepseek)..."
-                  className="h-7 pl-6 text-[11px]"
+                  placeholder={t("filter_models_placeholder")}
+                  className="h-7 ps-6 text-[11px]"
                 />
               </div>
               <Button
@@ -513,7 +516,7 @@ export function ProviderModels({
                 className="h-7 text-[10px] px-2 text-muted-foreground hover:text-foreground shrink-0"
                 onClick={() => handleToggleAll(true)}
               >
-                Enable all
+                {t("enable_all")}
               </Button>
               <Button
                 size="sm"
@@ -521,23 +524,23 @@ export function ProviderModels({
                 className="h-7 text-[10px] px-2 text-muted-foreground hover:text-foreground shrink-0"
                 onClick={() => handleToggleAll(false)}
               >
-                Disable all
+                {t("disable_all")}
               </Button>
             </div>
           )}
 
-          <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+          <div className="max-h-56 overflow-y-auto space-y-1 pe-1">
             {rows.length === 0 ? (
               <div className="space-y-1.5 py-2">
                 <Skeleton className="h-7 w-full" />
                 <Skeleton className="h-7 w-full" />
                 <p className="text-[11px] text-muted-foreground">
-                  Click &ldquo;Fetch models&rdquo; to load available models from this provider.
+                  {t("fetch_models_hint")}
                 </p>
               </div>
             ) : filteredRows.length === 0 ? (
               <div className="py-4 text-center text-xs text-muted-foreground">
-                No models matching &ldquo;{modelFilter}&rdquo;
+                {t("no_models_matching").replace("{filter}", modelFilter)}
               </div>
             ) : (
               filteredRows.map((row) => (
@@ -558,7 +561,7 @@ export function ProviderModels({
               type="text"
               value={customModelId}
               onChange={(e) => setCustomModelId(e.target.value)}
-              placeholder="Add custom model ID..."
+              placeholder={t("add_custom_model_id")}
               className="h-7 text-[11px] font-mono flex-1"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -574,7 +577,7 @@ export function ProviderModels({
               onClick={handleAddModel}
               disabled={!customModelId.trim()}
             >
-              <Plus className="size-3" /> Add
+              <Plus className="size-3" /> {t("add")}
             </Button>
           </div>
 
@@ -591,16 +594,16 @@ export function ProviderModels({
                 ) : (
                   <Save className="size-3" />
                 )}
-                Save model config
+                {t("save_model_config")}
               </Button>
               {dirty && (
                 <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                  Unsaved changes
+                  {t("unsaved_changes")}
                 </span>
               )}
               {!dirty && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-brand">
-                  <Check className="size-3" /> Saved
+                  <Check className="size-3" /> {t("saved")}
                 </span>
               )}
             </div>
@@ -624,11 +627,12 @@ function ModelRowView({
   onChangeThinking?: (tl: ThinkingLevel) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const normalized = normalizeThinkingLevel(row.thinkingLevel);
   const current =
-    levels.some((t) => t.value === normalized)
+    levels.some((lvl) => lvl.value === normalized)
       ? normalized
-      : levels.find((t) => t.value === "default")?.value ?? levels[0]?.value ?? "default";
+      : levels.find((lvl) => lvl.value === "default")?.value ?? levels[0]?.value ?? "default";
   return (
     <div
       className={cn(
@@ -639,7 +643,7 @@ function ModelRowView({
       <Switch
         checked={row.enabled}
         onCheckedChange={onToggleEnabled}
-        aria-label={`Toggle ${row.id}`}
+        aria-label={`${t("toggle")} ${row.id}`}
         id={`model-${row.id}`}
       />
       <div className="min-w-0 flex-1">
@@ -658,15 +662,15 @@ function ModelRowView({
         <Select
           value={current}
           onValueChange={(v) => onChangeThinking?.(v as ThinkingLevel)}
-          aria-label={`Thinking level for ${row.id}`}
+          aria-label={`${t("thinking_level")}: ${row.id}`}
         >
           <SelectTrigger className="h-6 w-[7.5rem] text-[11px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {levels.map((t) => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.label}
+            {levels.map((lvl) => (
+              <SelectItem key={lvl.value} value={lvl.value}>
+                {getThinkingLabel(lvl.value, lvl.label, t)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -677,7 +681,7 @@ function ModelRowView({
         variant="ghost"
         className="size-6 text-muted-foreground hover:text-destructive"
         onClick={onDelete}
-        title="Remove model"
+        title={t("remove_model")}
       >
         <Trash2 className="size-3" />
       </Button>

@@ -1,7 +1,20 @@
 import { z } from "zod";
 import path from "path";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+
+/**
+ * Non-blocking existence check for the async agent path. `resolveAgentPath`
+ * uses this instead of sync `existsSync` so tool calls never block the event
+ * loop on disk I/O.
+ */
+async function existsAsync(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 import {
   getActiveWorkspace,
   ensureDefaultWorkspace,
@@ -26,6 +39,8 @@ import {
   acknowledgeCompletedCommand,
   waitForCommandCompletion,
   safePath,
+  isSubpathOrEqual,
+  isAbsoluteInsideBase,
   grepWorkspace,
   deniedWriteExtension,
 } from "@/lib/workspace";
@@ -78,7 +93,7 @@ import {
 import { reviveSubagent } from "@/lib/ai/subagent-executor";
 import { isSubagentReportDelivered } from "@/lib/ai/subagent-queue";
 import { db } from "@/lib/db";
-import { ARTIFACTS_DIR } from "@/lib/paths";
+import { ARTIFACTS_DIR, ensureHermosTempDir } from "@/lib/paths";
 import { checkUrlHost, getSsrfDispatcher } from "@/lib/ssrf";
 import { tryDecryptJson } from "@/lib/encryption";
 import { publishTodos } from "@/lib/todo-pubsub";
@@ -989,7 +1004,14 @@ export const PUBLIC_BUILTIN_TOOLS: BuiltinTool[] =
 
 const MAX_HTTP_BYTES = 2_000_000;
 const MAX_HTTP_TEXT = 8000;
-const MAX_REDIRECTS = 10;
+/**
+ * Redirect cap for the agent `http_fetch` web-browsing tool. Intentionally
+ * deeper than PROVIDER_MAX_REDIRECTS (see ssrf-fetch.ts): real-world sites
+ * chain through trackers, consent walls, and shorteners. No credential
+ * headers are ever sent on this path, so the extra hops carry no auth-leak
+ * risk. Both caps live at their single sources — do not add a third literal.
+ */
+export const AGENT_WEB_MAX_REDIRECTS = 10;
 
 /**
  * Coerce model-provided file content to a string without data loss.
@@ -1472,18 +1494,102 @@ const todoWriteSchema = z
   }));
 const todoReadSchema = z.object({}).optional();
 
-export const questionItemSchema = z.object({
-  question: z.string().trim().min(1, "Question cannot be empty").max(5000),
-  options: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
-  is_multi_select: z.boolean().optional(),
-});
+const questionOptionItemSchema = z.union([
+  z.string().trim().min(1).max(500),
+  z.number().transform((n) => String(n)),
+  z
+    .object({
+      label: z.unknown().optional(),
+      value: z.unknown().optional(),
+      text: z.unknown().optional(),
+      option: z.unknown().optional(),
+      title: z.unknown().optional(),
+      name: z.unknown().optional(),
+    })
+    .transform((o) => {
+      const val = o.label ?? o.value ?? o.text ?? o.option ?? o.title ?? o.name;
+      return typeof val === "string" ? val.trim() : typeof val === "number" ? String(val) : "";
+    }),
+]);
+
+const TRUE_STRINGS = new Set(["true", "1", "yes", "y", "on"]);
+
+const booleanOrString = z.union([
+  z.boolean(),
+  z
+    .string()
+    .transform((s) => {
+      const norm = s.trim().toLowerCase();
+      if (TRUE_STRINGS.has(norm)) return true;
+      // Tolerant but explicit: "yes"/"y"/"on" map to true like "true"/"1";
+      // anything else ("false"/"0"/"no"/"n"/"off"/unknown) fails closed to
+      // single-select rather than throwing on model variance.
+      return false;
+    }),
+]);
+
+export const questionItemSchema = z
+  .object({
+    question: z.string().trim().max(5000).optional(),
+    title: z.string().trim().max(5000).optional(),
+    prompt: z.string().trim().max(5000).optional(),
+    text: z.string().trim().max(5000).optional(),
+    options: z.array(questionOptionItemSchema).max(20).optional(),
+    is_multi_select: booleanOrString.optional(),
+    isMultiSelect: booleanOrString.optional(),
+    multiSelect: booleanOrString.optional(),
+    multiple: booleanOrString.optional(),
+  })
+  .transform((data) => {
+    const q = (data.question || data.title || data.prompt || data.text || "").trim();
+    const isMulti = Boolean(
+      data.is_multi_select ?? data.isMultiSelect ?? data.multiSelect ?? data.multiple ?? false
+    );
+    // Unrecognized object options normalize to "" and are filtered; an empty
+    // result means "no usable options" → undefined (free-text) rather than an
+    // empty chip list.
+    const opts = data.options?.filter((o) => typeof o === "string" && o.trim().length > 0);
+    return {
+      question: q,
+      options: opts && opts.length > 0 ? opts : undefined,
+      is_multi_select: isMulti,
+      isMultiSelect: isMulti,
+    };
+  })
+  .refine((data) => data.question.length > 0, {
+    message: "Question text cannot be empty.",
+  });
 
 export const askQuestionSchema = z
   .object({
-    questions: z.array(questionItemSchema).min(1).max(10).optional(),
+    questions: z.union([
+      z.array(questionItemSchema).min(1).max(10),
+      questionItemSchema.transform((q) => [q]),
+    ]).optional(),
     question: z.string().trim().min(1).max(5000).optional(),
-    options: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
-    is_multi_select: z.boolean().optional(),
+    title: z.string().trim().min(1).max(5000).optional(),
+    prompt: z.string().trim().min(1).max(5000).optional(),
+    options: z.array(questionOptionItemSchema).max(20).optional(),
+    is_multi_select: booleanOrString.optional(),
+    isMultiSelect: booleanOrString.optional(),
+    multiSelect: booleanOrString.optional(),
+    multiple: booleanOrString.optional(),
+  })
+  .transform((data) => {
+    const isMulti = Boolean(
+      data.is_multi_select ?? data.isMultiSelect ?? data.multiSelect ?? data.multiple ?? false
+    );
+    const singleQ = (data.question || data.title || data.prompt || "").trim() || undefined;
+    const singleOpts = data.options?.filter((o) => typeof o === "string" && o.trim().length > 0);
+    // Return only canonical fields — drop stale aliases (title/prompt/
+    // multiSelect/multiple) so downstream code never reads a stale copy.
+    return {
+      questions: data.questions,
+      question: singleQ,
+      options: singleOpts && singleOpts.length > 0 ? singleOpts : undefined,
+      is_multi_select: isMulti,
+      isMultiSelect: isMulti,
+    };
   })
   .refine(
     (data) => (data.questions && data.questions.length > 0) || Boolean(data.question),
@@ -1516,6 +1622,8 @@ export type ToolCtx = {
   rootDir?: string;
   /** Active workspace snapshot to avoid repetitive DB lookups. */
   workspace?: WorkspaceInfo;
+  /** Whether execution outside workspace is explicitly permitted. */
+  userAllowedOutsideWorkspace?: boolean;
 };
 
 export type ToolResult = { ok: boolean; result: unknown };
@@ -1776,7 +1884,7 @@ async function realHttpFetch(
           /* ignore */
         }
         if (!location) throw new Error("Redirect without a Location header.");
-        if (++hops > MAX_REDIRECTS) throw new Error("Too many redirects.");
+        if (++hops > AGENT_WEB_MAX_REDIRECTS) throw new Error("Too many redirects.");
         try {
           current = new URL(location, current).toString();
         } catch {
@@ -1945,7 +2053,8 @@ export async function resolveWs(userId: string, conversationId?: string): Promis
   if (cached) {
     // Self-heal (no TTL): an on-disk move/delete fires no DB write, so a
     // cached rootDir can go dead. Evict and re-resolve instead of serving it forever.
-    if (existsSync(cached.rootDir)) return cached;
+    // Async probe — never block the event loop on this hot path.
+    if (await existsAsync(cached.rootDir)) return cached;
     invalidateResolvedWsCache(userId, conversationId);
   }
 
@@ -1995,40 +2104,102 @@ export async function resolveAgentPath(
   const artifactUserDir = path.join(ARTIFACTS_DIR, userId);
   const tempDir = ensureAgentTempDir(userId);
   const truncationDir = truncationUserDir(userId);
+  const hermosTempDir = ensureHermosTempDir();
 
   if (path.isAbsolute(input)) {
-    const artifactAbs = safePath(userId, ws.name, input, artifactUserDir);
-    if (artifactAbs) {
-      return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, artifactAbs), isArtifact: true, isTemp: false, isTruncation: false };
+    const abs = path.resolve(input);
+    if (isAbsoluteInsideBase(abs, artifactUserDir)) {
+      return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, abs), isArtifact: true, isTemp: false, isTruncation: false };
     }
-    const truncAbs = safePath(userId, ws.name, input, truncationDir);
-    if (truncAbs) {
-      return { rootDir: truncationDir, rel: path.relative(truncationDir, truncAbs), isArtifact: false, isTemp: false, isTruncation: true };
+    if (isAbsoluteInsideBase(abs, truncationDir)) {
+      return { rootDir: truncationDir, rel: path.relative(truncationDir, abs), isArtifact: false, isTemp: false, isTruncation: true };
     }
-    const tempAbs = safePath(userId, ws.name, input, tempDir);
-    if (tempAbs) {
-      return { rootDir: tempDir, rel: path.relative(tempDir, tempAbs), isArtifact: false, isTemp: true, isTruncation: false };
+    if (isAbsoluteInsideBase(abs, tempDir)) {
+      return { rootDir: tempDir, rel: path.relative(tempDir, abs), isArtifact: false, isTemp: true, isTruncation: false };
     }
-    const wsAbs = safePath(userId, ws.name, input, ws.rootDir);
-    if (wsAbs) {
-      return { rootDir: ws.rootDir, rel: path.relative(ws.rootDir, wsAbs), isArtifact: false, isTemp: false, isTruncation: false };
+    if (isAbsoluteInsideBase(abs, hermosTempDir)) {
+      return { rootDir: hermosTempDir, rel: path.relative(hermosTempDir, abs), isArtifact: false, isTemp: true, isTruncation: false };
+    }
+    if (isAbsoluteInsideBase(abs, ws.rootDir)) {
+      return { rootDir: ws.rootDir, rel: path.relative(ws.rootDir, abs), isArtifact: false, isTemp: false, isTruncation: false };
+    }
+    // Also handle leading-slash relative path such as "/src/index.ts" targeting workspace root.
+    // Route through safePath so the symlink/realpath defense applies here too.
+    const stripped = input.replace(/^[\\/]+/, "");
+    const wsValidated = safePath(userId, ws.name, stripped, ws.rootDir);
+    if (wsValidated) {
+      return { rootDir: ws.rootDir, rel: path.relative(ws.rootDir, wsValidated), isArtifact: false, isTemp: false, isTruncation: false };
     }
     return null;
   }
 
+  // Handle com.hermos-ide relative / virtual prefix (e.g. com.hermos-ide/sessions/...)
+  const normalized = input.replace(/^[\\/]/, "");
+  if (normalized === "com.hermos-ide" || normalized.startsWith("com.hermos-ide/") || normalized.startsWith("com.hermos-ide\\")) {
+    const sub = normalized.slice("com.hermos-ide".length).replace(/^[\\/]/, "");
+    const resolved = path.resolve(hermosTempDir, sub);
+    if (isSubpathOrEqual(resolved, hermosTempDir)) {
+      return { rootDir: hermosTempDir, rel: path.relative(hermosTempDir, resolved), isArtifact: false, isTemp: true, isTruncation: false };
+    }
+  }
+
+  // Handle virtual artifacts/ prefix.
+  // NOTE (TOCTOU): existence probes only disambiguate which allowed root to
+  // prefer — every branch re-validates with isSubpathOrEqual, and the actual
+  // read/write re-resolves via safePath and surfaces ENOENT. A file swapped
+  // between probe and use can at worst pick the other allowed root, never
+  // escape the sandbox.
+  if (normalized === "artifacts" || normalized.startsWith("artifacts/") || normalized.startsWith("artifacts\\")) {
+    const sub = normalized.slice("artifacts".length).replace(/^[\\/]/, "");
+    const convId = conversationId || "global";
+    const directResolved = path.resolve(artifactUserDir, sub);
+    const convResolved = path.resolve(path.join(/*turbopackIgnore: true*/ artifactUserDir, convId), sub);
+    if ((await existsAsync(/*turbopackIgnore: true*/ directResolved)) && isSubpathOrEqual(directResolved, artifactUserDir)) {
+      return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, directResolved), isArtifact: true, isTemp: false, isTruncation: false };
+    }
+    if ((await existsAsync(/*turbopackIgnore: true*/ convResolved)) && isSubpathOrEqual(convResolved, artifactUserDir)) {
+      return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, convResolved), isArtifact: true, isTemp: false, isTruncation: false };
+    }
+    // No existing file matched: default non-existent artifacts/* to the
+    // conversation-scoped artifact dir so create_artifact/write_file create
+    // in ARTIFACTS_DIR/<user>/<conv>/ instead of polluting the workspace.
+    // Fail closed on traversal: if either resolution escapes the artifact
+    // root, reject instead of falling through to the workspace.
+    const directInside = isSubpathOrEqual(directResolved, artifactUserDir);
+    const convInside = isSubpathOrEqual(convResolved, artifactUserDir);
+    if (!directInside || !convInside) return null;
+    if (normalized === "artifacts") {
+      return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, directResolved), isArtifact: true, isTemp: false, isTruncation: false };
+    }
+    return { rootDir: artifactUserDir, rel: path.relative(artifactUserDir, convResolved), isArtifact: true, isTemp: false, isTruncation: false };
+  }
+
+  // Handle sessions/ shorthand falling back to com.hermos-ide/sessions
+  if (normalized === "sessions" || normalized.startsWith("sessions/") || normalized.startsWith("sessions\\")) {
+    const wsTarget = safePath(userId, ws.name, input, ws.rootDir);
+    if (!wsTarget || !(await existsAsync(wsTarget))) {
+      const resolved = path.resolve(hermosTempDir, normalized);
+      if (isSubpathOrEqual(resolved, hermosTempDir)) {
+        return { rootDir: hermosTempDir, rel: path.relative(hermosTempDir, resolved), isArtifact: false, isTemp: true, isTruncation: false };
+      }
+    }
+  }
+
   // Relative path — resolve within the workspace first.
   const wsAbs = safePath(userId, ws.name, input, ws.rootDir);
-  if (wsAbs && existsSync(wsAbs)) {
+  if (wsAbs && (await existsAsync(wsAbs))) {
     return { rootDir: ws.rootDir, rel: input, isArtifact: false, isTemp: false, isTruncation: false };
   }
 
   // Bare filename fallback to conversation artifact if no matching workspace file exists.
   if (!/[\\/]/.test(input)) {
-    const convId = conversationId || "default";
-    const convDir = path.join(/* turbopackIgnore: true */ artifactUserDir, convId);
-    const convAbs = safePath(userId, ws.name, input, convDir);
-    if (convAbs && existsSync(convAbs)) {
-      return { rootDir: convDir, rel: input, isArtifact: true, isTemp: false, isTruncation: false };
+    const convIds = [conversationId, "global", "default"].filter(Boolean) as string[];
+    for (const cid of convIds) {
+      const convDir = path.join(/* turbopackIgnore: true */ artifactUserDir, cid);
+      const convAbs = safePath(userId, ws.name, input, convDir);
+      if (convAbs && (await existsAsync(convAbs))) {
+        return { rootDir: convDir, rel: input, isArtifact: true, isTemp: false, isTruncation: false };
+      }
     }
   }
 
@@ -2413,12 +2584,13 @@ async function runToolImpl(
         const ws = await getToolWs(ctx);
         try {
           const dirPath = parsed.data.path?.trim() || ".";
-          // Scope directory listing to target path, returning null on traversal escapes.
-          const target = safePath(ctx.userId, ws.name, dirPath, ws.rootDir);
+          // Scope directory listing to target path across workspace, com.hermos-ide, temp, or artifacts.
+          const target = await resolveAgentPath(ctx.userId, ws, convScope(ctx), dirPath);
           if (!target) {
             return { ok: false, result: { error: `Invalid path: ${dirPath}` } };
           }
-          const tree = await readTree(ctx.userId, ws.name, 1, target);
+          const absDir = path.resolve(target.rootDir, target.rel);
+          const tree = await readTree(ctx.userId, ws.name, 1, absDir);
           let files = 0;
           let dirs = 0;
           for (const n of tree) {
@@ -2443,6 +2615,7 @@ async function runToolImpl(
         const result = startBackgroundCommand(ctx.userId, ctx.conversationId, ws.name, cmd, {
           onProgress: ctx.onProgress,
           rootDir: ws.rootDir,
+          userAllowedOutsideWorkspace: ctx.userAllowedOutsideWorkspace,
         });
 
         if (!result.ok) {
@@ -3398,7 +3571,7 @@ async function runToolImpl(
           cancelPendingQuestionsForConversation(ctx.conversationId);
           return {
             ok: false,
-            result: { error: "Question prompt was cancelled or aborted." },
+            result: { error: "Question prompt was cancelled or aborted.", cancelled: true },
           };
         }
       }

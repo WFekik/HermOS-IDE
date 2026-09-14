@@ -47,6 +47,8 @@ import { toast } from "sonner";
 import type { AgentMode, AttachmentDTO } from "@/lib/types";
 import { AGENT_MODES, AGENT_MODES_BY_VALUE } from "@/lib/agent-modes";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
+import { getThinkingDesc, getThinkingLabel } from "@/lib/i18n";
 import { formatBytes } from "@/lib/tool-ui-shared";
 import { isMacPlatform } from "@/lib/platform";
 import { conversationWidthClass } from "@/lib/color-theme";
@@ -126,6 +128,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
   const text = useAppStore((s) => s.composerDraft);
   const setText = useAppStore((s) => s.setComposerDraft);
   const { stream, stop } = useChatStream();
+  const { t } = useTranslation();
   // Only subscribe to the message list while editing an existing message —
   // when not editing the selector is a constant `null` and the composer
   // subtree no longer re-renders on every streaming flush.
@@ -240,7 +243,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
         // Edits interrupt the run and regenerate — they can't be queued.
         // Stop first, then save the edit. The Stop button stays visible
         // while streaming, so this is always resolvable.
-        toast.info("Stop the current run before editing a message");
+        toast.info(t("stop_run_before_edit"));
         return;
       }
       const msgId = editingMessageId;
@@ -258,10 +261,11 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
           setComposerDraft,
           stream,
           stop,
+          noActiveConversationText: t("no_active_conversation"),
         });
-        toast.success("Edit saved & regenerated");
+        toast.success(t("edit_saved_regenerated"));
       } catch {
-        toast.error("Failed to save edit");
+        toast.error(t("failed_save_edit"));
       } finally {
         requestAnimationFrame(() => {
           if (taRef.current) taRef.current.style.height = "auto";
@@ -572,19 +576,19 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
               className="mb-2 flex items-center gap-2 rounded-md border border-brand/40 bg-brand/5 px-2.5 py-1.5 text-xs"
             >
               <Pencil className="size-3 text-brand" />
-              <span className="font-medium text-foreground">Editing message</span>
+              <span className="font-medium text-foreground">{t("editing_message")}</span>
               <span className="text-muted-foreground">
-                — Send to save &amp; regenerate · Esc to cancel
+                — {t("editing_message_desc")}
               </span>
               <Button
                 variant="ghost"
                 size="sm"
-                className="ml-auto h-6 px-2 text-xs gap-1"
+                className="ms-auto h-6 px-2 text-xs gap-1"
                 onClick={cancelEdit}
-                aria-label="Cancel edit"
+                aria-label={t("cancel")}
               >
                 <X className="size-3" />
-                Cancel
+                {t("cancel")}
               </Button>
             </motion.div>
           )}
@@ -624,7 +628,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                 accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.rtf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.zip,.tar,.gz,.ts,.tsx,.js,.jsx,.css,.html,.sh"
                 className="hidden"
                 onChange={handleFilePick}
-                aria-label="Choose files to attach"
+                aria-label={t("choose_files_to_attach")}
               />
               {attachments.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 px-2.5 pt-2 pb-1">
@@ -651,7 +655,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                             />
                             {a.uploading && (
                               <div className="absolute inset-0 bg-black/40 backdrop-blur-2xs flex items-center justify-center text-[10px] text-white font-medium">
-                                Uploading…
+                                {t("uploading")}…
                               </div>
                             )}
                           </>
@@ -661,7 +665,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                             <div className="flex flex-col min-w-0 flex-1">
                               <span className="text-xs font-medium truncate leading-snug">{a.file.name}</span>
                               <span className="text-[10px] text-muted-foreground tabular-nums">
-                                {a.error ? "Failed" : a.uploading ? "Uploading…" : formatBytes(a.file.size)}
+                                {a.error ? t("failed") : a.uploading ? `${t("uploading")}…` : formatBytes(a.file.size)}
                               </span>
                             </div>
                           </>
@@ -673,10 +677,10 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                             className={cn(
                               "size-4 rounded-full bg-zinc-900/80 text-white dark:bg-zinc-100 dark:text-zinc-900 flex items-center justify-center transition-opacity shadow-2xs",
                               isImage
-                                ? "absolute top-1 right-1 opacity-60 group-focus-within:opacity-100 hover:opacity-100"
-                                : "ml-auto shrink-0 opacity-60 hover:opacity-100",
+                                ? "absolute top-1 end-1 opacity-60 group-focus-within:opacity-100 hover:opacity-100"
+                                : "ms-auto shrink-0 opacity-60 hover:opacity-100",
                             )}
-                            aria-label={`Remove ${a.file.name}`}
+                            aria-label={t("remove_file_aria", { file: a.file.name })}
                           >
                             <X className="size-2.5" />
                           </button>
@@ -696,10 +700,10 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 onPaste={handlePaste}
-                placeholder={isEditMode ? "Edit your message…" : "Message HermOS…  (@ to mention, / to command)"}
+                placeholder={isEditMode ? `${t("editing_message")}…` : t("type_message")}
                 className="min-h-[40px] border-0 bg-transparent shadow-none resize-none focus-visible:ring-0 px-2.5 pt-1.5 pb-0 text-sm leading-relaxed placeholder:text-muted-foreground/50"
                 disabled={disabled && !isStreaming}
-                aria-label="Message input"
+                aria-label={t("type_message")}
                 rows={1}
               />
               <div className="flex items-center justify-between gap-1 px-1 pb-0.5 pt-1 min-w-0">
@@ -708,7 +712,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                     variant="ghost"
                     size="sm"
                     className="h-6.5 w-6.5 p-0 text-muted-foreground hover:text-foreground text-xs rounded-md transition-colors shrink-0 font-medium"
-                    aria-label="Attach files"
+                    aria-label={t("attach_files")}
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Paperclip className="size-3.5 text-brand" />
@@ -731,8 +735,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                         el.setSelectionRange(pos + 1, pos + 1);
                       });
                     }}
-                    aria-label="Insert @mention"
-                    title="Mention a file, skill, MCP server, or agent (@)"
+                    aria-label={t("insert_mention")}
+                    title={t("mention_tooltip")}
                   >
                     @
                   </Button>
@@ -762,8 +766,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                         });
                       }
                     }}
-                    aria-label="Insert /command"
-                    title="Run a command (/clear, /compact, /agent, /model)"
+                    aria-label={t("insert_command")}
+                    title={t("run_command_tooltip")}
                   >
                     /
                   </Button>
@@ -777,7 +781,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                           const Icon = AGENT_MODES_BY_VALUE[composerMode].icon;
                           return <Icon className="size-3.5 text-brand" />;
                         })()}
-                        <span className="hidden sm:inline font-medium text-foreground">{AGENT_MODES_BY_VALUE[composerMode].label}</span>
+                        <span className="hidden sm:inline font-medium text-foreground">{t(composerMode)}</span>
                         <ChevronDown className="size-3 text-muted-foreground/60" />
                       </Button>
                     </PopoverTrigger>
@@ -795,12 +799,12 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                                 setModeOpen(false);
                               }}
                               className={cn(
-                                "w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left transition-colors hover:bg-accent",
+                                "w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-start transition-colors hover:bg-accent",
                                 isSelected && "bg-accent font-medium text-foreground",
                               )}
                             >
                               <Icon className="size-3.5 text-brand shrink-0" />
-                              <span className="font-medium flex-1 truncate">{m.label}</span>
+                              <span className="font-medium flex-1 truncate">{t(m.value)}</span>
                               {isSelected && <Check className="size-3 text-brand shrink-0" />}
                             </button>
                           );
@@ -822,8 +826,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                         variant="ghost"
                         size="sm"
                         className="h-6.5 px-1.5 gap-1 text-[11px] rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 border-0 font-medium"
-                        aria-label="Enabled tools"
-                        title={`${enabledToolsCount} tools enabled`}
+                        aria-label={t("enabled_tools")}
+                        title={t("tools_available_count", { count: enabledToolsCount })}
                       >
                         <Wrench className="size-3.5 text-brand" />
                         <span className="text-[10px] font-mono text-muted-foreground">{enabledToolsCount}</span>
@@ -831,45 +835,45 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                     </PopoverTrigger>
                     <PopoverContent className="w-72 p-0 max-h-[min(420px,80vh)] flex flex-col" align="start">
                       <div className="px-3 py-2 border-b shrink-0">
-                        <div className="text-xs font-medium">Enabled tools</div>
+                        <div className="text-xs font-medium">{t("enabled_tools")}</div>
                         <div className="text-[10px] text-muted-foreground">
-                          {enabledToolsCount} tools available to the agent
+                          {t("tools_available_count", { count: enabledToolsCount })}
                         </div>
                       </div>
                       <ScrollArea className="flex-1 min-h-0 overflow-auto">
                         <div className="p-1.5 space-y-0.5">
                           {enabledTools.length === 0 && connectedMcpTools.length === 0 ? (
                             <div className="px-2 py-3 text-[11px] text-muted-foreground text-center">
-                              No tools enabled
+                              {t("no_tools_enabled")}
                             </div>
                           ) : (
                             <>
-                              {enabledTools.map((t) => (
+                              {enabledTools.map((toolName) => (
                                 <div
-                                  key={`builtin-${t}`}
+                                  key={`builtin-${toolName}`}
                                   className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px]"
                                 >
                                   <Wrench className="size-3 text-muted-foreground" />
-                                  <span className="font-mono">{t}</span>
-                                  <Badge variant="secondary" className="ml-auto text-[9px] h-4">
-                                    builtin
+                                  <span className="font-mono">{toolName}</span>
+                                  <Badge variant="secondary" className="ms-auto text-[9px] h-4">
+                                    {t("builtin")}
                                   </Badge>
                                 </div>
                               ))}
-                              {connectedMcpTools.map((t, i) => (
+                              {connectedMcpTools.map((mcpItem, i) => (
                                 <div
-                                  key={`mcp-${t.server}-${t.tool}-${i}`}
+                                  key={`mcp-${mcpItem.server}-${mcpItem.tool}-${i}`}
                                   className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px]"
                                 >
                                   <Wrench className="size-3 text-muted-foreground" />
                                   <div className="min-w-0">
-                                    <div className="font-mono truncate">{t.tool}</div>
+                                    <div className="font-mono truncate">{mcpItem.tool}</div>
                                     <div className="text-[10px] text-muted-foreground truncate">
-                                      {t.server}
+                                      {mcpItem.server}
                                     </div>
                                   </div>
-                                  <Badge variant="outline" className="ml-auto text-[9px] h-4">
-                                    mcp
+                                  <Badge variant="outline" className="ms-auto text-[9px] h-4">
+                                    {t("mcp")}
                                   </Badge>
                                 </div>
                               ))}
@@ -881,8 +885,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                   </Popover>
                 </div>
 
-                <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                  <span className="hidden md:flex items-center gap-0.5 text-[10px] text-muted-foreground mr-0.5">
+                <div className="ms-auto flex items-center gap-1.5 shrink-0">
+                  <span className="hidden md:flex items-center gap-0.5 text-[10px] text-muted-foreground me-0.5">
                     <kbd className="inline-flex items-center justify-center min-w-[1.1rem] rounded border bg-muted px-1 py-px font-mono text-[9px] text-foreground/80">{isMacPlatform() ? "⌘" : "Ctrl"}</kbd>
                     <kbd className="inline-flex items-center justify-center min-w-[1.1rem] rounded border bg-muted px-1 py-px font-mono text-[9px] text-foreground/80">↵</kbd>
                   </span>
@@ -905,11 +909,11 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                             size="sm"
                             className="h-7 px-2.5 gap-1.5 rounded-lg bg-brand hover:bg-brand/90 text-brand-foreground transition-all text-xs font-medium shrink-0 flex items-center justify-center shadow-2xs"
                             onClick={() => void submit()}
-                            title="Queue message — sent to the agent on its next iteration (the current run keeps going)"
-                            aria-label="Queue message for next iteration"
+                            title={t("queue_message")}
+                            aria-label={t("queue_message")}
                           >
                             <SendHorizonal className="size-3.5" />
-                            <span className="hidden sm:inline">Queue</span>
+                            <span className="hidden sm:inline">{t("queue_message")}</span>
                           </Button>
                         )}
                         <Button
@@ -917,8 +921,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                           variant="ghost"
                           className="size-7 p-0 rounded-lg text-rose-500 dark:text-rose-400 hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-300 transition-colors shrink-0 flex items-center justify-center border-0"
                           onClick={onStop}
-                          aria-label="Stop streaming"
-                          title={hasDraft ? "Stop the agent — your draft stays in the composer" : "Stop the agent"}
+                          aria-label={t("stop_agent")}
+                          title={t("stop_agent")}
                         >
                           <Square className="size-3.5 fill-rose-500 text-rose-500" />
                         </Button>
@@ -937,8 +941,8 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                           className="size-7 p-0 rounded-lg bg-brand hover:bg-brand/90 text-brand-foreground transition-all text-xs font-medium disabled:opacity-30 shrink-0 flex items-center justify-center shadow-2xs"
                           onClick={() => void submit()}
                           disabled={!hasDraft || disabled}
-                          title={isEditMode ? "Save edit & regenerate" : "Send message"}
-                          aria-label={isEditMode ? "Save edit & regenerate" : "Send message"}
+                          title={isEditMode ? t("save_edit") : t("send_message")}
+                          aria-label={isEditMode ? t("save_edit") : t("send_message")}
                         >
                           {isEditMode ? (
                             <Pencil className="size-3.5" />
@@ -960,6 +964,7 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
 }
 
 function ThinkingSelector() {
+  const { t } = useTranslation();
   const selectedProvider = useAppStore((s) => s.selectedProvider);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const providers = useAppStore((s) => s.providers);
@@ -991,6 +996,8 @@ function ThinkingSelector() {
   // The user's stored thinkingLevel is the source of truth.
   const current = levels.find((t) => t.value === normalizeThinkingLevel(thinkingLevel)) ?? levels.find((t) => t.value === "default") ?? levels[0];
 
+  const currentLabel = getThinkingLabel(current.value, current.label, t);
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -998,32 +1005,36 @@ function ThinkingSelector() {
           variant="ghost"
           size="sm"
           className="h-6.5 px-1.5 gap-1 text-[11px] rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 border-0 font-medium"
-          aria-label="Thinking level"
-          title={`Thinking level: ${current.label}`}
+          aria-label={t("thinking_level")}
+          title={`${t("thinking_level")}: ${currentLabel}`}
         >
           <Brain className="size-3.5 text-brand" />
-          <span className="hidden md:inline font-medium text-foreground">{current.label}</span>
+          <span className="hidden md:inline font-medium text-foreground">{currentLabel}</span>
           <ChevronDown className="size-3 text-muted-foreground/60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-1" align="start">
-        {levels.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            onClick={() => {
-              setThinkingLevel(t.value);
-              setOpen(false);
-            }}
-            className={cn(
-              "w-full text-left text-xs px-2.5 py-1.5 rounded-sm hover:bg-accent flex items-center justify-between gap-2",
-              t.value === current.value && "bg-accent font-medium",
-            )}
-          >
-            <span className="shrink-0 font-medium">{t.label}</span>
-            <span className="text-[10px] text-muted-foreground truncate text-right">{t.desc}</span>
-          </button>
-        ))}
+        {levels.map((lvl) => {
+          const label = getThinkingLabel(lvl.value, lvl.label, t);
+          const desc = getThinkingDesc(lvl.value, lvl.desc, t);
+          return (
+            <button
+              key={lvl.value}
+              type="button"
+              onClick={() => {
+                setThinkingLevel(lvl.value);
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full text-start text-xs px-2.5 py-1.5 rounded-sm hover:bg-accent flex items-center justify-between gap-2",
+                lvl.value === current.value && "bg-accent font-medium",
+              )}
+            >
+              <span className="shrink-0 font-medium">{label}</span>
+              <span className="text-[10px] text-muted-foreground truncate text-end tabular-nums">{desc}</span>
+            </button>
+          );
+        })}
       </PopoverContent>
     </Popover>
   );
@@ -1053,6 +1064,8 @@ function PermissionsButton() {
     };
   }, [open]);
 
+  const { t } = useTranslation();
+
   const getMode = (action: string): string => {
     if (!perms) return "ask";
     const rule = perms.rules?.find((r) => r.action === action);
@@ -1066,16 +1079,16 @@ function PermissionsButton() {
   };
 
   const modeLabel = (mode: string) => {
-    if (mode === "allow") return "Allow";
-    if (mode === "deny") return "Deny";
-    return "Ask";
+    if (mode === "allow") return t("perm_allow");
+    if (mode === "deny") return t("perm_deny");
+    return t("perm_ask");
   };
 
   const actions = [
-    { action: "file.read", label: "File read" },
-    { action: "file.write", label: "File write" },
-    { action: "command.run", label: "Commands" },
-    { action: "browser.open", label: "Browser" },
+    { action: "file.read", label: t("action_file_read") },
+    { action: "file.write", label: t("action_file_write") },
+    { action: "command.run", label: t("action_commands") },
+    { action: "browser.open", label: t("action_browser") },
   ];
 
   return (
@@ -1085,15 +1098,15 @@ function PermissionsButton() {
           variant="ghost"
           size="sm"
           className="h-6.5 px-1.5 gap-1 text-[11px] rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 border-0 font-medium"
-          aria-label="Permissions"
-          title="Permissions"
+          aria-label={t("permissions")}
+          title={t("permissions")}
         >
           <Shield className="size-3.5 text-brand" />
-          <span className="hidden md:inline font-medium text-foreground">Perms</span>
+          <span className="hidden md:inline font-medium text-foreground">{t("permissions")}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-2" align="start">
-        <div className="text-xs font-medium mb-2">Permissions</div>
+        <div className="text-xs font-medium mb-2">{t("permissions")}</div>
         <div className="space-y-1">
           {actions.map((a) => {
             const mode = getMode(a.action);
@@ -1118,7 +1131,7 @@ function PermissionsButton() {
           }}
         >
           <Shield className="size-3" />
-          Manage permissions
+          {t("manage_permissions")}
         </Button>
       </PopoverContent>
     </Popover>
@@ -1141,6 +1154,7 @@ function PermissionPromptCard({
   prompt: NonNullable<ReturnType<typeof useAppStore.getState>["permissionPrompt"]>;
   onResolve: (decision: "allow-once" | "always-allow" | "deny") => void;
 }) {
+  const { t } = useTranslation();
   const resolveRef = React.useRef(onResolve);
   React.useEffect(() => {
     resolveRef.current = onResolve;
@@ -1172,7 +1186,7 @@ function PermissionPromptCard({
       className="p-3"
       role="dialog"
       aria-live="assertive"
-      aria-label={`Permission request: ${prompt.action}`}
+      aria-label={`${t("permissions")}: ${prompt.action}`}
     >
       <div className="rounded-lg border border-amber-500/40 bg-card overflow-hidden">
         <div className="flex items-start gap-2.5 p-3 pb-2">
@@ -1181,10 +1195,10 @@ function PermissionPromptCard({
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium text-foreground">
-              HermOS wants permission
+              {t("wants_permission")}
             </div>
             <div className="mt-1 text-[13px] text-foreground/90 leading-snug">
-              <span className="text-muted-foreground">Action: </span>
+              <span className="text-muted-foreground">{t("action_label")} </span>
               <code className="font-mono text-[11px] bg-muted/60 rounded px-1 py-0.5">
                 {prompt.action}
               </code>
@@ -1210,34 +1224,34 @@ function PermissionPromptCard({
             size="sm"
             onClick={() => onResolve("allow-once")}
             className="h-8 gap-1 bg-brand text-brand-foreground hover:bg-brand/90"
-            aria-label="Allow once"
+            aria-label={t("allow_once")}
           >
             <Check className="size-3.5" />
-            Allow once
+            {t("allow_once")}
           </Button>
           <Button
             size="sm"
             variant="secondary"
             onClick={() => onResolve("always-allow")}
             className="h-8 gap-1"
-            aria-label="Always allow"
+            aria-label={t("always_allow")}
           >
             <ShieldCheck className="size-3.5" />
-            Always
+            {t("always_allow")}
           </Button>
           <Button
             size="sm"
             variant="destructive"
             onClick={() => onResolve("deny")}
             className="h-8 gap-1"
-            aria-label="Deny"
+            aria-label={t("deny")}
           >
             <Ban className="size-3.5" />
-            Deny
+            {t("deny")}
           </Button>
         </div>
         <div className="px-3 pb-2 -mt-1 text-[10px] text-muted-foreground/80 font-mono text-center">
-          Auto-deny in {secondsLeft}s
+          {t("auto_deny_in", { seconds: secondsLeft })}
         </div>
       </div>
     </motion.div>
@@ -1286,11 +1300,12 @@ async function commitMessageEdit(
       opts?: { skipUserAppend?: boolean },
     ) => Promise<void>;
     stop: (conversationId?: string) => void;
+    noActiveConversationText?: string;
   },
 ) {
   const cid = deps.activeConversationId;
   if (!cid) {
-    toast.error("No active conversation");
+    toast.error(deps.noActiveConversationText || "No active conversation");
     return;
   }
 

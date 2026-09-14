@@ -16,6 +16,7 @@ import { useAppStore, type WorkspaceListItem } from "@/stores/app-store";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { isTauri } from "@/lib/tauri";
+import { useTranslation } from "@/hooks/use-translation";
 
 export function ProjectSelector({
   className,
@@ -25,6 +26,7 @@ export function ProjectSelector({
   /** When true (fresh-chat context), selecting a workspace also creates a new conversation. */
   createOnSwitch?: boolean;
 }) {
+  const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
   const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   const refreshWorkspaces = useAppStore((s) => s.refreshWorkspaces);
@@ -54,9 +56,9 @@ export function ProjectSelector({
       if (createOnSwitch) {
         await createConversation({ workspaceId: ws.id });
       }
-      toast.success(`Switched to ${ws.name}`);
+      toast.success(t("switched_to_workspace", { name: ws.name }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't switch workspace");
+      toast.error(e instanceof Error ? e.message : t("failed_switch_workspace"));
     }
   };
 
@@ -66,14 +68,14 @@ export function ProjectSelector({
     requestOpenFolderDialog();
   };
 
-  const displayName = activeWorkspace?.rootDir || activeWorkspace?.name || "Select Project";
+  const displayName = activeWorkspace?.rootDir || activeWorkspace?.name || t("select_project");
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Current project: ${displayName}. Click to change.`}
+          aria-label={t("current_project_aria", { name: displayName })}
           className={cn(
             "group inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-mono transition-colors",
             "text-muted-foreground hover:text-foreground hover:bg-muted/40",
@@ -107,7 +109,7 @@ export function ProjectSelector({
                 type="button"
                 onClick={() => void handleSelectWorkspace(ws)}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-left transition-colors font-mono",
+                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-start transition-colors font-mono",
                   "hover:bg-accent hover:text-foreground",
                   ws.isActive ? "text-foreground font-medium" : "text-muted-foreground",
                 )}
@@ -127,14 +129,14 @@ export function ProjectSelector({
         <button
           type="button"
           onClick={handleOpenFolder}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-left transition-colors text-foreground/90 hover:bg-accent"
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-start transition-colors text-foreground/90 hover:bg-accent"
         >
           <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" />
-          <span>{!isTauri() ? "New workspace (sandboxed)" : "Open Folder / New Project"}</span>
+          <span>{!isTauri() ? t("new_workspace_sandboxed") : t("open_folder_new_project")}</span>
         </button>
         {!isTauri() && (
           <p className="px-2.5 pt-1 text-[10px] leading-snug text-muted-foreground">
-            Creates a sandboxed directory under ~/.hermos/workspaces — your existing folders require the desktop app.
+            {t("new_workspace_sandboxed_desc")}
           </p>
         )}
       </PopoverContent>

@@ -16,6 +16,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* -------------------------------------------------------------------------- *
  * BreadcrumbBar
@@ -49,6 +50,7 @@ export interface BreadcrumbBarProps {
 }
 
 export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBarProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -95,11 +97,11 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
     try {
       await navigator.clipboard.writeText(path);
       setCopied(true);
-      toast.success("Path copied");
+      toast.success(t("path_copied"));
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1400);
     } catch {
-      toast.error("Could not copy path");
+      toast.error(t("copy_failed"));
     }
   };
 
@@ -110,7 +112,7 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
         className,
       )}
       role="navigation"
-      aria-label="File path"
+      aria-label={t("file_path")}
     >
       <div
         className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-2 hermos-breadcrumb-scroll"
@@ -134,9 +136,9 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
                 type="button"
                 onClick={() => handleSegmentClick(idx)}
                 disabled={isLast}
-                title={isLast ? path : `Reveal ${segmentPaths[idx]} in file tree`}
+                title={isLast ? path : t("reveal_dir_in_tree", { path: segmentPaths[idx] })}
                 aria-current={isLast ? "page" : undefined}
-                aria-label={isLast ? `File: ${seg}` : `Reveal ${seg} directory`}
+                aria-label={isLast ? t("file_named", { name: seg }) : t("reveal_dir", { name: seg })}
                 className={cn(
                   "flex shrink-0 items-center rounded px-1 py-0.5 text-xs font-mono transition-colors",
                   "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/40",
@@ -146,7 +148,7 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
                 )}
               >
                 {isLast && (
-                  <FileText className="mr-1 size-3 shrink-0 text-brand/80" aria-hidden />
+                  <FileText className="me-1 size-3 shrink-0 text-brand/80" aria-hidden />
                 )}
                 {seg}
               </button>
@@ -154,7 +156,7 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
           );
         })}
       </div>
-      <div className="flex shrink-0 items-center pr-1 pl-0.5 border-l bg-background/40">
+      <div className="flex shrink-0 items-center pe-1 ps-0.5 border-s bg-background/40">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -163,7 +165,7 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
               variant="ghost"
               className="size-6 p-0"
               onClick={() => void copyPath()}
-              aria-label="Copy path"
+              aria-label={t("copy_path")}
             >
               {copied ? (
                 <Check className="size-3 text-brand" />
@@ -172,7 +174,7 @@ export function BreadcrumbBar({ path, onSegmentClick, className }: BreadcrumbBar
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Copy path</TooltipContent>
+          <TooltipContent side="bottom">{t("copy_path")}</TooltipContent>
         </Tooltip>
       </div>
     </div>

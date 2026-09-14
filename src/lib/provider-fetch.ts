@@ -5,7 +5,7 @@ import { parseModelsColumn, mergeReasoningCapability, type ModelRate, type Provi
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId } from "@/lib/types";
-import { checkUrlHost } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { normalizeThinkingLevel, parseModelReasoningCapabilities } from "@/lib/reasoning";
 import type { ModelReasoningCapabilities } from "@/lib/reasoning";
 import { buildProviderHeaders, resolveModelsUrl } from "@/lib/ai/provider-payloads";
@@ -104,18 +104,10 @@ export async function refreshProviderModels(
       ? baseUrl.replace(/\/$/, "") + "/models"
       : resolveModelsUrl(baseUrl);
     if (!url) return null;
-    // SSRF: The provider base URL is user-editable and this auto-refresh runs from
-    // the server, so it must go through the same SSRF policy as every other
-    // outbound fetch. We validate pre-fetch and re-validate post-redirect
-    // (per-hop). `fetch` follows redirects automatically (up to 20); we check
-    // `resp.redirected && resp.url` to ensure the final landing URL is still
-    // allowed. For full per-hop validation of every 3xx Location intermediate,
-    // a manual redirect loop (redirect: 'manual' + re-check each Location header)
-    // would be needed; the current check covers the common case where the final
-    // target is the security-relevant one, and DNS rebinding is further mitigated
-    // by checkUrlHost now failing closed on DNS errors and by post-fetch IP
-    // re-verification (see ssrf.ts).
-    if (await checkUrlHost(url)) return null;
+    // SSRF: the provider base URL is user-editable and this auto-refresh runs
+    // from the server. fetchWithSsrf validates every redirect hop (manual
+    // redirects, 3-hop cap, cross-origin credential strip); violations throw
+    // and are caught below as null (fail-closed).
     const headers: Record<string, string> = isAnthropic
       ? {
           Accept: "application/json",
@@ -130,13 +122,8 @@ export async function refreshProviderModels(
           includeContentType: false,
         });
 
-    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    const resp = await fetchWithSsrf(url, { headers, signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return null;
-    // Re-validate after redirects: an attacker-controlled domain could 302 to a
-    // private/metadata address (link-local, cloud metadata) that was not visible
-    // at check time. This covers the final redirect target; see comment above for
-    // per-hop completeness. `checkUrlHost` is now fail-closed on DNS failures.
-    if (resp.redirected && (await checkUrlHost(resp.url))) return null;
 
     const json = (await resp.json()) as { data?: Array<Record<string, unknown>>; models?: Array<Record<string, unknown>> };
     const list = json.data || json.models || [];

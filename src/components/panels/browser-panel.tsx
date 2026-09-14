@@ -69,6 +69,7 @@ import {
   type BrowserSession,
 } from "@/components/browser/types";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
  * BrowserPanel — exported entry point.
@@ -126,6 +127,7 @@ function saveMode(mode: BrowserMode) {
 }
 
 function BrowserPanelInner() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const browserAgentActive = useAppStore((s: any) => s.browserAgentActive);
   const setBrowserAgentActive = useAppStore((s: any) => s.setBrowserAgentActive);
@@ -224,7 +226,7 @@ function BrowserPanelInner() {
       setSession(data.session);
       setUrlInput(data.session.url);
       queryClient.setQueryData(browserKeys.snapshot, { snapshot: data.snapshot });
-      toast.success(`Opened ${data.session.url}`);
+      toast.success(t("browser_opened_url", { url: data.session.url }));
     },
     onError: (e) => {
       toast.error(toErrorMessage(e));
@@ -235,7 +237,7 @@ function BrowserPanelInner() {
     mutationFn: () => fetchSnapshot(),
     onSuccess: (data) => {
       queryClient.setQueryData(browserKeys.snapshot, data);
-      toast.success("Snapshot refreshed");
+      toast.success(t("browser_snapshot_refreshed"));
     },
     onError: (e) => {
       toast.error(toErrorMessage(e));
@@ -252,7 +254,7 @@ function BrowserPanelInner() {
       setTextDraft("");
       setRefDraft("");
       queryClient.setQueryData(browserKeys.snapshot, { snapshot: "" });
-      toast.success("Browser session closed");
+      toast.success(t("browser_session_closed"));
     },
     onError: (e) => {
       toast.error(toErrorMessage(e));
@@ -289,7 +291,7 @@ function BrowserPanelInner() {
       queryClient.setQueryData(browserKeys.snapshot, {
         snapshot: data.snapshot,
       });
-      toast.success(`Pressed ${key}`);
+      toast.success(t("browser_pressed_key", { key }));
     },
     onError: (e) => toast.error(toErrorMessage(e)),
   });
@@ -360,7 +362,7 @@ function BrowserPanelInner() {
   const handleGo = () => {
     const url = normalizeBrowserUrl(urlInput);
     if (!url) {
-      toast.error("Enter a URL or search term");
+      toast.error(t("browser_enter_url_error"));
       return;
     }
     setUrlInput(url);
@@ -387,7 +389,7 @@ function BrowserPanelInner() {
   const handleActionBarClick = () => {
     const ref = (refDraft || selectedRef || "").trim();
     if (!ref) {
-      toast.error("Enter a ref (e.g. @e1)");
+      toast.error(t("browser_enter_ref_error"));
       return;
     }
     void clickMut.mutate(ref);
@@ -396,7 +398,7 @@ function BrowserPanelInner() {
   const handleActionBarType = () => {
     const ref = (refDraft || selectedRef || "").trim();
     if (!ref) {
-      toast.error("Enter a ref (e.g. @e1)");
+      toast.error(t("browser_enter_ref_error"));
       return;
     }
     void typeMut.mutate({ ref, text: textDraft });
@@ -433,7 +435,7 @@ function BrowserPanelInner() {
           <div className="bg-brand text-white text-[10px] py-1 px-3 flex items-center justify-between font-medium tracking-wide border-b border-brand/40 shadow-sm shrink-0 z-10">
             <div className="flex items-center gap-1.5">
               <Loader2 className="size-3 animate-spin text-white" />
-              <span>Agent is controlling this browser session...</span>
+              <span>{t("browser_agent_controlling")}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -441,9 +443,9 @@ function BrowserPanelInner() {
                 onClick={() => setBrowserAgentActive(false)}
                 className="text-[9px] font-sans font-bold bg-white/20 hover:bg-white/30 text-white border border-white/30 rounded px-1.5 py-0.5 transition-colors cursor-pointer"
               >
-                Unlock
+                {t("browser_unlock")}
               </button>
-              <Badge variant="outline" className="text-[8px] h-4 text-white border-white/40">LIVE</Badge>
+              <Badge variant="outline" className="text-[8px] h-4 text-white border-white/40">{t("live")}</Badge>
             </div>
           </div>
           <div className="absolute inset-x-0 bottom-0 top-[28px] z-[50] bg-transparent pointer-events-auto cursor-not-allowed" />
@@ -469,9 +471,9 @@ function BrowserPanelInner() {
             }
           }}
           disabled={browserAgentActive}
-          placeholder="Enter a URL or search…"
+          placeholder={t("browser_url_placeholder")}
           className="h-7 flex-1 font-mono text-xs"
-          aria-label="Browser URL"
+          aria-label={t("browser_url")}
           spellCheck={false}
           autoComplete="off"
         />
@@ -480,14 +482,14 @@ function BrowserPanelInner() {
           className="h-7 gap-1 bg-brand px-2 text-[11px] text-brand-foreground hover:bg-brand/90"
           onClick={handleGo}
           disabled={openMut.isPending || browserAgentActive}
-          aria-label="Open URL"
+          aria-label={t("browser_open")}
         >
           {openMut.isPending ? (
             <Loader2 className="size-3 animate-spin" />
           ) : (
             <ArrowRight className="size-3" />
           )}
-          Go
+          {t("browser_go")}
         </Button>
         {/* Snapshot / Preview toggle */}
         <ToggleGroup
@@ -501,27 +503,27 @@ function BrowserPanelInner() {
             }
           }}
           className="h-7 rounded-md border bg-background px-0.5"
-          aria-label="Browser view mode"
+          aria-label={t("browser_view_mode")}
         >
           <ToggleGroupItem
             value="snapshot"
             className="h-6 px-1.5 text-[11px] gap-1 data-[state=on]:bg-accent"
-            aria-label="Snapshot view (accessibility tree)"
+            aria-label={t("browser_snapshot_view_aria")}
           >
             <ListTree className="size-3" />
-            <span className="hidden xl:inline">Snapshot</span>
+            <span className="hidden xl:inline">{t("browser_snapshot")}</span>
           </ToggleGroupItem>
           <ToggleGroupItem
             value="preview"
             className="h-6 px-1.5 text-[11px] gap-1 data-[state=on]:bg-accent"
-            aria-label="Preview view (live iframe)"
+            aria-label={t("browser_preview_view_aria")}
           >
             <Eye className="size-3" />
-            <span className="hidden xl:inline">Preview</span>
+            <span className="hidden xl:inline">{t("browser_preview")}</span>
           </ToggleGroupItem>
         </ToggleGroup>
         <ToolbarIconButton
-          label={activeMode === "snapshot" ? "Refresh snapshot" : "Reload preview"}
+          label={activeMode === "snapshot" ? t("browser_refresh_snapshot") : t("browser_reload_preview")}
           onClick={() =>
             activeMode === "snapshot"
               ? void refreshMut.mutate()
@@ -537,14 +539,14 @@ function BrowserPanelInner() {
           />
         </ToolbarIconButton>
         <ToolbarIconButton
-          label="Screenshot"
+          label={t("browser_screenshot")}
           onClick={handleScreenshot}
           disabled={!session}
         >
           <Camera className="size-3.5" />
         </ToolbarIconButton>
         <ToolbarIconButton
-          label="Close session"
+          label={t("browser_close_session")}
           onClick={() => void closeMut.mutate()}
           disabled={!session || closeMut.isPending || browserAgentActive}
         >
@@ -595,18 +597,18 @@ function BrowserPanelInner() {
       {activeMode === "preview" && session ? (
         <div className="flex h-10 shrink-0 items-center gap-2 border-t px-3 text-[11px] text-muted-foreground">
           <Info className="size-3 text-brand" />
-          <span>Switch to Snapshot mode to interact with the page.</span>
+          <span>{t("browser_switch_to_snapshot")}</span>
           <Button
             size="sm"
             variant="outline"
-            className="ml-auto h-7 gap-1 text-[11px]"
+            className="ms-auto h-7 gap-1 text-[11px]"
             onClick={() => {
               handleModeChange("snapshot");
               setAgentViewOverride("snapshot");
             }}
           >
             <ListTree className="size-3" />
-            Snapshot
+            {t("browser_snapshot")}
           </Button>
         </div>
       ) : (
@@ -617,7 +619,7 @@ function BrowserPanelInner() {
             disabled={browserAgentActive}
             placeholder="@e1"
             className="h-7 w-20 font-mono text-xs"
-            aria-label="Element ref"
+            aria-label={t("browser_element_ref")}
             spellCheck={false}
             autoComplete="off"
           />
@@ -631,9 +633,9 @@ function BrowserPanelInner() {
               }
             }}
             disabled={browserAgentActive}
-            placeholder="Type text…"
+            placeholder={t("browser_type_text_placeholder")}
             className="h-7 flex-1 font-mono text-xs"
-            aria-label="Text to type"
+            aria-label={t("browser_text_to_type")}
             spellCheck={false}
             autoComplete="off"
           />
@@ -643,14 +645,14 @@ function BrowserPanelInner() {
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={handleActionBarClick}
             disabled={!session || clickMut.isPending || !refDraft || browserAgentActive}
-            aria-label="Click element"
+            aria-label={t("browser_click_element")}
           >
             {clickMut.isPending ? (
               <Loader2 className="size-3 animate-spin" />
             ) : (
               <MousePointerClick className="size-3" />
             )}
-            Click
+            {t("click")}
           </Button>
           <Button
             size="sm"
@@ -658,14 +660,14 @@ function BrowserPanelInner() {
             className="h-7 gap-1 px-2 text-[11px]"
             onClick={handleActionBarType}
             disabled={!session || typeMut.isPending || !refDraft || browserAgentActive}
-            aria-label="Type into element"
+            aria-label={t("browser_type_into_element")}
           >
             {typeMut.isPending ? (
               <Loader2 className="size-3 animate-spin" />
             ) : (
               <Keyboard className="size-3" />
             )}
-            Type
+            {t("type")}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -674,18 +676,18 @@ function BrowserPanelInner() {
                 variant="outline"
                 className="h-7 gap-1 px-2 text-[11px]"
                 disabled={!session || pressMut.isPending || browserAgentActive}
-                aria-label="Press a key"
+                aria-label={t("browser_press_key")}
               >
                 {pressMut.isPending ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : (
                   <Keyboard className="size-3" />
                 )}
-                Press
+                {t("browser_press")}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Press a key</DropdownMenuLabel>
+              <DropdownMenuLabel>{t("browser_press_key")}</DropdownMenuLabel>
               <DropdownMenuSeparator />
               {PRESSABLE_KEYS.map((k) => (
                 <DropdownMenuItem
@@ -699,28 +701,28 @@ function BrowserPanelInner() {
           </DropdownMenu>
           <div className="mx-0.5 flex items-center overflow-hidden rounded-md border">
             <ScrollBtn
-              label="Scroll left"
+              label={t("scroll_left")}
               onClick={() => handleScroll("left")}
               disabled={!session || scrollMut.isPending || browserAgentActive}
             >
               <ChevronLeft className="size-3" />
             </ScrollBtn>
             <ScrollBtn
-              label="Scroll up"
+              label={t("scroll_up")}
               onClick={() => handleScroll("up")}
               disabled={!session || scrollMut.isPending || browserAgentActive}
             >
               <ChevronUp className="size-3" />
             </ScrollBtn>
             <ScrollBtn
-              label="Scroll down"
+              label={t("scroll_down")}
               onClick={() => handleScroll("down")}
               disabled={!session || scrollMut.isPending || browserAgentActive}
             >
               <ChevronDown className="size-3" />
             </ScrollBtn>
             <ScrollBtn
-              label="Scroll right"
+              label={t("scroll_right")}
               onClick={() => handleScroll("right")}
               disabled={!session || scrollMut.isPending || browserAgentActive}
             >
@@ -735,7 +737,7 @@ function BrowserPanelInner() {
         <div
           className="h-0.5 w-full bg-brand/40"
           role="status"
-          aria-label="Browser action in progress"
+          aria-label={t("browser_action_in_progress")}
         />
       )}
 
@@ -769,6 +771,7 @@ function BrowserPanelInner() {
  * with the same guidance.
  */
 function PreviewView({ url, nonce }: { url: string; nonce: number }) {
+  const { t } = useTranslation();
   const [showFallback, setShowFallback] = React.useState(false);
   const timerRef = React.useRef<number | null>(null);
 
@@ -811,11 +814,11 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
           href={url}
           target="_blank"
           rel="noreferrer"
-          className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-brand hover:bg-accent transition-colors"
-          aria-label="Open in new tab"
+          className="ms-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-brand hover:bg-accent transition-colors"
+          aria-label={t("browser_open_new_tab")}
         >
           <ExternalLink className="size-2.5" />
-          <span>Open</span>
+          <span>{t("open")}</span>
         </a>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -832,11 +835,9 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
         {showFallback && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/95 p-6 text-center backdrop-blur-sm">
             <AlertTriangle className="size-6 text-amber-500" />
-            <p className="text-sm font-medium">Can&apos;t preview this site</p>
+            <p className="text-sm font-medium">{t("browser_cant_preview")}</p>
             <p className="max-w-sm text-xs text-muted-foreground">
-              Many sites block iframe embedding via X-Frame-Options or
-              Content-Security-Policy. Use Snapshot mode to interact with
-              the page, or open it in a new tab.
+              {t("browser_cant_preview_desc")}
             </p>
             <div className="mt-2 flex items-center gap-2">
               <a
@@ -846,7 +847,7 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
                 className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-xs font-medium text-white hover:bg-brand/90 transition-colors"
               >
                 <ExternalLink className="size-3" />
-                Open in new tab
+                {t("browser_open_new_tab")}
               </a>
             </div>
           </div>
@@ -938,13 +939,13 @@ function EmptyState({
 }: {
   onQuickLink: (host: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col items-center justify-center p-6 text-center">
       <Globe className="size-9 text-muted-foreground/40" />
-      <p className="mt-2 text-sm font-medium">Browse the web</p>
+      <p className="mt-2 text-sm font-medium">{t("browse_the_web")}</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Enter a URL above to start. Pages render as an accessibility tree you
-        can click and type into.
+        {t("browse_the_web_desc")}
       </p>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
         {QUICK_LINKS.map((host) => (
@@ -970,6 +971,7 @@ function ErrorState({
   message: string;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
       <AlertTriangle className="size-5 text-amber-500" />
@@ -977,7 +979,7 @@ function ErrorState({
         {message}
       </p>
       <Button size="sm" variant="outline" onClick={onRetry}>
-        Retry
+        {t("retry")}
       </Button>
     </div>
   );

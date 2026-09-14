@@ -39,6 +39,12 @@ import type {
   DocSection,
   OfficeThemeId,
 } from "@/lib/office/types";
+import {
+  type SupportedLanguage,
+  DEFAULT_LANGUAGE,
+  LANGUAGES,
+  applyLanguageDocumentDir,
+} from "@/lib/i18n";
 
 const SECURITY_SETTINGS_KEY = "hermos_security_settings_v1";
 
@@ -525,8 +531,11 @@ interface AppState {
   density: "comfortable" | "compact";
   /** UI font size in px (12-18, default 15 — see DEFAULT_FONT_SIZE in @/lib/font). Persisted to localStorage. */
   fontSize: number;
+  /** Display language. Persisted to localStorage. */
+  language: SupportedLanguage;
   setDensity: (d: "comfortable" | "compact") => void;
   setFontSize: (s: number) => void;
+  setLanguage: (lang: SupportedLanguage) => void;
 
   /** Conversation max-width (default | narrow | wide). Persisted to localStorage. */
   conversationWidth: ConversationWidth;
@@ -866,6 +875,29 @@ const MAX_OPEN_TABS = 10;
 
 /** Cap live command output buffering to prevent unbounded memory growth. */
 const MAX_LIVE_OUTPUT_CHARS = 200_000;
+
+/**
+ * Resolve which message owns a live tool call: prefer the exact `toolCallId`
+ * match, fall back to the streaming message, then to the last assistant
+ * message. Single source of truth for the 5 tool-call mutators below.
+ */
+function resolveToolCallTarget(
+  msgs: UIMessage[],
+  streamingId: string | undefined | null,
+  toolCallId: string,
+): string | undefined {
+  const exact = msgs.find((m) => m.liveToolCalls?.some((t) => t.id === toolCallId))?.id;
+  if (exact) return exact;
+  if (streamingId && msgs.some((m) => m.id === streamingId)) return streamingId;
+  const lastResort = [...msgs].reverse().find((m) => m.role === "assistant")?.id;
+  if (lastResort && process.env.NODE_ENV !== "production") {
+    // Last-resort branch (no toolCallId match, no streamingId): misattributes
+    // when two assistant messages exist. Log so conversation-switch races
+    // (eff8da1 scenario) stay visible in dev.
+    console.debug(`[store] resolveToolCallTarget last-resort for ${toolCallId} → ${lastResort}`);
+  }
+  return lastResort;
+}
 /** Cap streamed thinking/text segments to prevent unbounded buffering. */
 const MAX_SEGMENT_CHARS = 500_000;
 
@@ -874,6 +906,7 @@ const MAX_SEGMENT_CHARS = 500_000;
 const RECENT_COMMANDS_KEY = "hermos:recent-commands";
 const FILE_WATCH_KEY = "hermos:file-watch-enabled";
 const DENSITY_KEY = "hermos:density";
+const LANGUAGE_KEY = "hermos:language";
 const CONVERSATION_WIDTH_KEY = "hermos:conversation-width";
 const LIGHT_THEME_KEY = "hermos:light-theme";
 const DARK_THEME_KEY = "hermos:dark-theme";
@@ -927,6 +960,17 @@ function loadFontSize(): number {
     return DEFAULT_FONT_SIZE;
   } catch {
     return DEFAULT_FONT_SIZE;
+  }
+}
+
+function loadLanguage(): SupportedLanguage {
+  if (typeof window === "undefined") return DEFAULT_LANGUAGE;
+  try {
+    const raw = window.localStorage.getItem(LANGUAGE_KEY);
+    if (raw && Object.hasOwn(LANGUAGES, raw)) return raw as SupportedLanguage;
+    return DEFAULT_LANGUAGE;
+  } catch {
+    return DEFAULT_LANGUAGE;
   }
 }
 
@@ -1076,6 +1120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   conversationWidth: loadConversationWidth(),
   lightThemeConfig: loadLightThemeConfig(),
   darkThemeConfig: loadDarkThemeConfig(),
+  language: loadLanguage(),
 
   /* Context governance — persisted to localStorage */
   contextConfig: loadContextConfig(),
@@ -1137,6 +1182,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   openFolderDialogRequested: false,
 
   hydrate: async () => {
+    const savedLang = loadLanguage();
+    if (savedLang !== get().language) {
+      get().setLanguage(savedLang);
+    } else {
+      applyLanguageDocumentDir(get().language);
+    }
     await get().refreshAuth();
     if (!get().currentUser) return;
     // Restore lazily-created conversations and unsent drafts from a previous
@@ -1631,7 +1682,14 @@ export const useAppStore = create<AppState>((set, get) => ({
               name: tc.name,
               args: argsStr,
               parsedArgs,
-              status: (tc.status || "done") as any,
+              // Server status is free-form: preserve the LiveToolCall states,
+              // surface explicit cancellation as error (never as completed),
+              // default everything else (incl. undefined) to done.
+              status: (tc.status === "running" || tc.status === "error"
+                ? tc.status
+                : tc.status === "cancelled" || tc.status === "canceled"
+                  ? "error"
+                  : "done") as LiveToolCall["status"],
               result: tc.result,
             };
           });
@@ -1663,19 +1721,42 @@ export const useAppStore = create<AppState>((set, get) => ({
 
           if (local) {
             matchedLocalIds.add(local.id);
-            // Merge liveToolCalls: preserve local liveToolCalls and their details/results
-            let mergedTc: LiveToolCall[] = m.liveToolCalls || [];
+            // Merge liveToolCalls: preserve all local liveToolCalls and their details/results without dropping any
+            const serverTcMap = new Map((m.liveToolCalls || []).map((t) => [t.id, t]));
+            const mergedTc: LiveToolCall[] = [];
+            const seenTcIds = new Set<string>();
+
+            // Preserve all local tool calls in their original chronological order, updating with server results if available
             if (local.liveToolCalls && local.liveToolCalls.length > 0) {
-              const localTcMap = new Map(local.liveToolCalls.map((t) => [t.id, t]));
-              if (m.liveToolCalls && m.liveToolCalls.length > 0) {
-                mergedTc = m.liveToolCalls.map((stc) => {
-                  const ltc = localTcMap.get(stc.id);
-                  return (ltc && ltc.result !== undefined)
-                    ? ltc
-                    : { ...stc, result: ltc?.result ?? stc.result, status: ltc?.status ?? stc.status };
-                });
-              } else {
-                mergedTc = local.liveToolCalls;
+              for (const ltc of local.liveToolCalls) {
+                seenTcIds.add(ltc.id);
+                const stc = serverTcMap.get(ltc.id);
+                if (stc) {
+                  mergedTc.push({
+                    ...stc,
+                    ...ltc,
+                    result: ltc.result !== undefined ? ltc.result : stc.result,
+                    status: ltc.status !== "running" ? ltc.status : (stc.status ?? ltc.status),
+                    // Precedence: non-empty local args win (streamed deltas are
+                    // freshest); empty-string local ("") falls back to server
+                    // args. Explicit length check — `||` would also work but
+                    // hides the empty-string intent.
+                    args: ltc.args !== undefined && ltc.args !== "" ? ltc.args : (stc.args ?? ltc.args),
+                    parsedArgs: ltc.parsedArgs ?? stc.parsedArgs,
+                  });
+                } else {
+                  mergedTc.push(ltc);
+                }
+              }
+            }
+
+            // Append any server tool calls not yet present locally
+            if (m.liveToolCalls && m.liveToolCalls.length > 0) {
+              for (const stc of m.liveToolCalls) {
+                if (!seenTcIds.has(stc.id)) {
+                  seenTcIds.add(stc.id);
+                  mergedTc.push(stc);
+                }
               }
             }
             merged.push({
@@ -2278,9 +2359,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
-      if (!streamingId) return s;
+      const targetId = resolveToolCallTarget(msgs, streamingId, toolCallId);
+      if (!targetId) return s;
       const updated = msgs.map((m) => {
-        if (m.id !== streamingId) return m;
+        if (m.id !== targetId) return m;
         const existing = m.liveToolCalls ?? [];
         if (existing.some((t) => t.id === toolCallId)) return m;
         const live: LiveToolCall = {
@@ -2304,9 +2386,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
-      if (!streamingId) return s;
+      const targetId = resolveToolCallTarget(msgs, streamingId, toolCallId);
+      if (!targetId) return s;
       const updated = msgs.map((m) => {
-        if (m.id !== streamingId) return m;
+        if (m.id !== targetId) return m;
         const calls = (m.liveToolCalls ?? []).map((t) => {
           if (t.id === toolCallId) {
             const nextArgs = t.args + delta;
@@ -2333,14 +2416,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
-      if (!streamingId) return s;
+      const targetId = resolveToolCallTarget(msgs, streamingId, toolCallId);
+      if (!targetId) return s;
 
       let detectedArtifactPath: string | null = null;
-      let detectedTodos: any[] | null = null;
+      let detectedTodos: TodoItemDTO[] | null = null;
       let detectedTodosCompleted = false;
       let detectedTodoClear = false;
       const updated = msgs.map((m) => {
-        if (m.id !== streamingId) return m;
+        if (m.id !== targetId) return m;
         const calls = (m.liveToolCalls ?? []).map((t) => {
           if (t.id !== toolCallId) return t;
           const parsed = safeParseArgs(t.args);
@@ -2355,8 +2439,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             detectedTodoClear = true;
           }
           if (ok && r?.todos && Array.isArray(r.todos)) {
-            detectedTodos = r.todos as any[];
-            const list = r.todos as any[];
+            detectedTodos = r.todos as TodoItemDTO[];
+            const list = r.todos as Array<{ status?: unknown }>;
             detectedTodosCompleted =
               list.length > 0 && list.every((t) => t.status === "completed");
           }
@@ -2408,9 +2492,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
-      if (!streamingId) return s;
+      const targetId = resolveToolCallTarget(msgs, streamingId, toolCallId);
+      if (!targetId) return s;
       const updated = msgs.map((m) => {
-        if (m.id !== streamingId) return m;
+        if (m.id !== targetId) return m;
         const calls = (m.liveToolCalls ?? []).map((t) =>
           t.id === toolCallId
             ? {
@@ -2435,9 +2520,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const streamingId = s.streamingStateByConversation[convId]?.streamingMessageId ?? s.streamingMessageId;
-      if (!streamingId) return s;
+      const targetId = resolveToolCallTarget(msgs, streamingId, toolCallId);
+      if (!targetId) return s;
       const updated = msgs.map((m) => {
-        if (m.id !== streamingId) return m;
+        if (m.id !== targetId) return m;
         const calls = (m.liveToolCalls ?? []).map((t) => {
           if (t.id !== toolCallId) return t;
           const next = (t.liveOutput ?? "") + text;
@@ -2925,6 +3011,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } catch { /* ignore */ }
     set({ fontSize: s });
+  },
+  setLanguage: (lang) => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LANGUAGE_KEY, lang);
+      }
+    } catch { /* ignore */ }
+    applyLanguageDocumentDir(lang);
+    set({ language: lang });
   },
   setConversationWidth: (w) => {
     try {

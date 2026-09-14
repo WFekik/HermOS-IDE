@@ -21,7 +21,10 @@ import {
   Sun,
   Moon,
   Monitor,
+  Globe,
 } from "lucide-react";
+import { LANGUAGES, type SupportedLanguage } from "@/lib/i18n";
+import { useTranslation } from "@/hooks/use-translation";
 import {
   type ConversationWidth,
   type ThemeColorConfig,
@@ -112,32 +115,33 @@ function TabSkeleton() {
 }
 
 export function SettingsDialog({ open, onOpenChange, tab, onTabChange }: SettingsDialogProps) {
+  const { t, language } = useTranslation();
   // Non-blocking tab switch: the shell stays interactive while a lazy tab
   // chunk (providers) loads behind its skeleton.
-  const switchTab = (t: string) => React.startTransition(() => onTabChange(t));
+  const switchTab = (tabVal: string) => React.startTransition(() => onTabChange(tabVal));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTitle className="sr-only">Settings</DialogTitle>
+      <DialogTitle className="sr-only">{t("settings")}</DialogTitle>
       <DialogContent className="sm:max-w-4xl h-[85vh] p-0 flex overflow-hidden" showCloseButton>
-        <aside className="w-44 sm:w-52 border-r bg-muted/30 p-2 hidden sm:block shrink-0">
+        <aside className="w-44 sm:w-52 border-e bg-muted/30 p-2 hidden sm:block shrink-0">
           <div className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Settings
+            {t("settings")}
           </div>
           <nav className="space-y-0.5">
-            {TABS.map((t) => (
+            {TABS.map((item) => (
               <button
-                key={t.value}
+                key={item.value}
                 type="button"
-                onClick={() => switchTab(t.value)}
+                onClick={() => switchTab(item.value)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                  tab === t.value
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs transition-colors",
+                  tab === item.value
                     ? "bg-accent text-accent-foreground font-medium"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                 )}
               >
-                <t.icon className="size-3.5" />
-                {t.label}
+                <item.icon className="size-3.5" />
+                {t(item.value)}
               </button>
             ))}
           </nav>
@@ -146,16 +150,16 @@ export function SettingsDialog({ open, onOpenChange, tab, onTabChange }: Setting
           {/* mobile tab select */}
           <div className="sm:hidden border-b px-3 py-2 overflow-x-auto">
             <div className="flex gap-1">
-              {TABS.map((t) => (
+              {TABS.map((item) => (
                 <Button
-                  key={t.value}
-                  variant={tab === t.value ? "default" : "outline"}
+                  key={item.value}
+                  variant={tab === item.value ? "default" : "outline"}
                   size="sm"
                   className="h-7 text-xs"
-                  onClick={() => switchTab(t.value)}
+                  onClick={() => switchTab(item.value)}
                 >
-                  <t.icon className="size-3" />
-                  {t.label}
+                  <item.icon className="size-3" />
+                  {t(item.value)}
                 </Button>
               ))}
             </div>
@@ -172,8 +176,8 @@ export function SettingsDialog({ open, onOpenChange, tab, onTabChange }: Setting
                 {tab === "providers" && <ProvidersTab />}
                 {tab === "appearance" && <AppearanceTab />}
                 {tab === "agent" && <AgentTab />}
-                {tab === "mcp" && <RedirectTab label="MCP servers" hint="Open the MCP tab in the right panel to manage servers." tab="mcp" />}
-                {tab === "plugins" && <RedirectTab label="Plugins & skills" hint="Open the Plugins tab in the right panel to manage plugins." tab="plugins" />}
+                {tab === "mcp" && <RedirectTab label={t("mcp_servers")} hint={t("mcp_redirect_hint")} tab="mcp" />}
+                {tab === "plugins" && <RedirectTab label={t("plugins_skills")} hint={t("plugins_redirect_hint")} tab="plugins" />}
                 {tab === "security" && <SecurityTab />}
                 {tab === "permissions" && <PermissionsSettings />}
                 {tab === "usage" && <UsageSettings />}
@@ -191,6 +195,7 @@ export function SettingsDialog({ open, onOpenChange, tab, onTabChange }: Setting
 function RedirectTab({ label, hint, tab }: { label: string; hint: string; tab: string }) {
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const { t, language } = useTranslation();
   return (
     <div className="max-w-md">
       <h3 className="text-base font-semibold mb-1">{label}</h3>
@@ -204,7 +209,7 @@ function RedirectTab({ label, hint, tab }: { label: string; hint: string; tab: s
           setSettingsOpen(false);
         }}
       >
-        Open {label}
+        {t("open")} {label}
       </Button>
     </div>
   );
@@ -225,16 +230,52 @@ function AppearanceTab() {
   const setLightThemeConfig = useAppStore((s) => s.setLightThemeConfig);
   const setDarkThemeConfig = useAppStore((s) => s.setDarkThemeConfig);
   const resetThemeConfig = useAppStore((s) => s.resetThemeConfig);
+  const { t, language } = useTranslation();
+  const setLanguage = useAppStore((s) => s.setLanguage);
 
   return (
     <div className="space-y-6 max-w-lg pb-4">
-      {/* 1. Conversation Width */}
+      {/* 1. Language */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <Globe className="size-3.5" />
+          {t("language")}
+        </h4>
+        <div className="flex items-center justify-between rounded-xl border bg-card/40 p-3">
+          <div className="space-y-0.5">
+            <Label className="text-sm font-medium">{t("language")}</Label>
+            <p className="text-xs text-muted-foreground">{t("language_description")}</p>
+          </div>
+          <Select
+            value={language}
+            onValueChange={(val) => setLanguage(val as SupportedLanguage)}
+          >
+            <SelectTrigger className="w-[180px] h-8 text-xs">
+              <SelectValue placeholder={t("select_language")} />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.values(LANGUAGES).map((l) => (
+                <SelectItem key={l.code} value={l.code} className="text-xs">
+                  <div className="flex items-center justify-between gap-2 w-full">
+                    <span className="font-medium">{l.nativeName}</span>
+                    <span className="text-[10px] text-muted-foreground">({l.name})</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* 2. Conversation Width */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <Label className="text-sm font-medium">Conversation Width</Label>
+            <Label className="text-sm font-medium">{t("conversation_width")}</Label>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Configure the maximum width of the conversation panel.
+              {t("conversation_width_desc")}
             </p>
           </div>
           <ToggleGroup
@@ -250,13 +291,13 @@ function AppearanceTab() {
             className="bg-card/50"
           >
             <ToggleGroupItem value="default" className="text-xs px-3">
-              Default
+              {t("default")}
             </ToggleGroupItem>
             <ToggleGroupItem value="narrow" className="text-xs px-3">
-              Narrow
+              {t("narrow")}
             </ToggleGroupItem>
             <ToggleGroupItem value="wide" className="text-xs px-3">
-              Wide
+              {t("wide")}
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -264,15 +305,15 @@ function AppearanceTab() {
 
       <Separator />
 
-      {/* 2. Appearance / Theme */}
+      {/* 3. Appearance / Theme */}
       <div className="space-y-3">
         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Appearance
+          {t("appearance")}
         </h4>
         <div className="flex items-center justify-between rounded-xl border bg-card/40 p-3">
           <div>
-            <Label className="text-sm font-medium">Theme</Label>
-            <p className="text-xs text-muted-foreground">Active color mode</p>
+            <Label className="text-sm font-medium">{t("theme")}</Label>
+            <p className="text-xs text-muted-foreground">{t("active_color_mode")}</p>
           </div>
           <div className="inline-flex rounded-lg border p-1 bg-muted/40 gap-0.5">
             <Button
@@ -284,7 +325,7 @@ function AppearanceTab() {
                 "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
                 theme === "system" && "bg-background text-foreground shadow-xs font-medium"
               )}
-              title="System Theme"
+              title={t("theme_system")}
             >
               <Monitor className="size-4" />
             </Button>
@@ -297,7 +338,7 @@ function AppearanceTab() {
                 "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
                 theme === "light" && "bg-background text-foreground shadow-xs font-medium"
               )}
-              title="Light Theme"
+              title={t("theme_light")}
             >
               <Sun className="size-4" />
             </Button>
@@ -310,7 +351,7 @@ function AppearanceTab() {
                 "h-7 w-8 p-0 rounded-md transition-all text-muted-foreground",
                 theme === "dark" && "bg-background text-foreground shadow-xs font-medium"
               )}
-              title="Dark Theme"
+              title={t("theme_dark")}
             >
               <Moon className="size-4" />
             </Button>
@@ -349,12 +390,12 @@ function AppearanceTab() {
       {/* 7. Font Size */}
       <div>
         <div className="flex items-center justify-between">
-          <Label className="text-sm">Font size</Label>
-          <span className="text-[11px] text-muted-foreground">Default: {DEFAULT_FONT_SIZE}px</span>
+          <Label className="text-sm">{t("font_size")}</Label>
+          <span className="text-[11px] text-muted-foreground">{t("default")}: {DEFAULT_FONT_SIZE}px</span>
         </div>
         <FontSizeSlider fontSize={fontSize} setFontSize={setFontSize} />
         <p className="text-[11px] text-muted-foreground mt-1">
-          Affects UI text scale. Code blocks remain at a fixed size for legibility.
+          {t("font_size_desc")}
         </p>
       </div>
     </div>
@@ -374,8 +415,9 @@ function ThemeSection({
   onChange: (patch: Partial<ThemeColorConfig>) => void;
   onReset: () => void;
 }) {
+  const { t, language } = useTranslation();
   const isLight = mode === "light";
-  const title = isLight ? "Light Theme" : "Dark Theme";
+  const title = isLight ? t("light_theme") : t("dark_theme");
 
   const handlePresetSelect = (presetId: string) => {
     const found = presets.find((p) => p.id === presetId);
@@ -402,13 +444,13 @@ function ThemeSection({
         <h4 className="text-xs font-semibold tracking-wide text-foreground">{title}</h4>
         {config.preset === "custom" && (
           <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/30">
-            Custom
+            {t("custom")}
           </Badge>
         )}
       </div>
 
       <div className="flex items-center justify-between py-1">
-        <Label className="text-xs text-foreground/80 font-normal">Preset</Label>
+        <Label className="text-xs text-foreground/80 font-normal">{t("preset")}</Label>
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
@@ -416,13 +458,13 @@ function ThemeSection({
             size="sm"
             onClick={onReset}
             className="size-7 p-0 text-muted-foreground hover:text-foreground"
-            title="Reset to preset defaults"
+            title={t("reset_preset_defaults")}
           >
             <RotateCcw className="size-3.5" />
           </Button>
           <Select value={config.preset} onValueChange={handlePresetSelect}>
             <SelectTrigger className="h-7 w-40 text-xs">
-              <SelectValue placeholder="Select preset" />
+              <SelectValue placeholder={t("select_preset")} />
             </SelectTrigger>
             <SelectContent>
               {presets.map((p) => (
@@ -432,7 +474,7 @@ function ThemeSection({
               ))}
               {config.preset === "custom" && (
                 <SelectItem value="custom" className="text-xs">
-                  Custom
+                  {t("custom")}
                 </SelectItem>
               )}
             </SelectContent>
@@ -442,17 +484,17 @@ function ThemeSection({
 
       <div className="space-y-1.5 pt-1 border-t border-border/50">
         <ColorFieldRow
-          label="Background"
+          label={t("background")}
           value={config.background}
           onChange={(c) => handleColorChange("background", c)}
         />
         <ColorFieldRow
-          label="Foreground"
+          label={t("foreground")}
           value={config.foreground}
           onChange={(c) => handleColorChange("foreground", c)}
         />
         <ColorFieldRow
-          label="Accent"
+          label={t("accent")}
           value={config.accent}
           onChange={(c) => handleColorChange("accent", c)}
         />
@@ -470,6 +512,7 @@ function ColorFieldRow({
   value: string;
   onChange: (val: string) => void;
 }) {
+  const { t, language } = useTranslation();
   const [draft, setDraft] = React.useState(value);
   const colorInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -503,7 +546,7 @@ function ColorFieldRow({
             onClick={() => colorInputRef.current?.click()}
             className="size-6 rounded-md border border-border/80 shadow-2xs hover:scale-105 active:scale-95 transition-transform cursor-pointer"
             style={{ backgroundColor: hexSafe }}
-            title={`Pick ${label} color`}
+            title={`${t("pick_color")} (${label})`}
           />
           <input
             ref={colorInputRef}
@@ -533,23 +576,24 @@ function ColorFieldRow({
 }
 
 function ThemeLivePreview() {
+  const { t, language } = useTranslation();
   return (
     <div className="rounded-xl border p-3.5 bg-card/60 space-y-2.5">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-foreground">Live Theme Preview</span>
+        <span className="text-xs font-medium text-foreground">{t("live_theme_preview")}</span>
         <Badge variant="outline" className="text-[10px] h-4 border-brand/40 text-brand">
-          Active Accent
+          {t("active_accent")}
         </Badge>
       </div>
       <div className="rounded-lg border border-border p-3 bg-background space-y-2">
         <div className="flex items-center gap-2">
           <Button size="sm" className="h-6 px-2.5 text-[11px] bg-brand text-brand-foreground hover:bg-brand/90 font-medium">
-            Primary Button
+            {t("primary_button")}
           </Button>
           <Button size="sm" variant="outline" className="h-6 px-2.5 text-[11px]">
-            Secondary
+            {t("secondary_button")}
           </Button>
-          <span className="text-[11px] text-muted-foreground ml-auto font-mono">
+          <span className="text-[11px] text-muted-foreground ms-auto font-mono">
             var(--brand)
           </span>
         </div>
@@ -565,11 +609,12 @@ function ThemeLivePreview() {
 }
 
 function DensityRow({ density, setDensity }: { density: "comfortable" | "compact"; setDensity: (d: "comfortable" | "compact") => void }) {
+  const { t, language } = useTranslation();
   return (
     <div className="flex items-center justify-between">
       <div>
-        <Label className="text-sm">Density</Label>
-        <p className="text-[11px] text-muted-foreground">Compact reduces paddings in lists.</p>
+        <Label className="text-sm">{t("density")}</Label>
+        <p className="text-[11px] text-muted-foreground">{t("density_desc")}</p>
       </div>
       <ToggleGroup
         type="single"
@@ -581,10 +626,10 @@ function DensityRow({ density, setDensity }: { density: "comfortable" | "compact
         size="sm"
       >
         <ToggleGroupItem value="comfortable" className="text-xs px-3">
-          Comfortable
+          {t("comfortable")}
         </ToggleGroupItem>
         <ToggleGroupItem value="compact" className="text-xs px-3">
-          Compact
+          {t("compact")}
         </ToggleGroupItem>
       </ToggleGroup>
     </div>
@@ -592,19 +637,20 @@ function DensityRow({ density, setDensity }: { density: "comfortable" | "compact
 }
 
 function FontSizeSlider({ fontSize, setFontSize }: { fontSize: number; setFontSize: (s: number) => void }) {
+  const { t, language } = useTranslation();
   return (
     <div className="mt-2 flex items-center gap-3">
       <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MIN}</span>
       <Slider min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} step={1} value={[fontSize]} onValueChange={(v) => setFontSize(v[0] ?? DEFAULT_FONT_SIZE)} className="flex-1" />
       <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MAX}</span>
-      <span className="text-xs font-mono w-8 text-right">{fontSize}px</span>
+      <span className="text-xs font-mono w-8 text-end">{fontSize}px</span>
       {fontSize !== DEFAULT_FONT_SIZE && (
         <Button
           variant="ghost"
           size="icon"
           className="size-6 text-muted-foreground hover:text-foreground shrink-0"
           onClick={() => setFontSize(DEFAULT_FONT_SIZE)}
-          title={`Reset to default (${DEFAULT_FONT_SIZE}px)`}
+          title={`${t("reset_to_default")} (${DEFAULT_FONT_SIZE}px)`}
         >
           <RotateCcw className="size-3" />
         </Button>
@@ -615,6 +661,7 @@ function FontSizeSlider({ fontSize, setFontSize }: { fontSize: number; setFontSi
 
 /* ----------------------------- Agent ----------------------------- */
 function AgentTab() {
+  const { t, language } = useTranslation();
   const selectedProvider = useAppStore((s) => s.selectedProvider);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const composerMode = useAppStore((s) => s.composerMode);
@@ -638,24 +685,24 @@ function AgentTab() {
   return (
     <div className="space-y-5 max-w-2xl">
       <div>
-        <h3 className="text-base font-semibold">Agent Configuration</h3>
+        <h3 className="text-base font-semibold">{t("agent_configuration")}</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Configure default provider, model, mode, system prompt, and tool access.
+          {t("agent_config_desc")}
         </p>
       </div>
 
       <div className="rounded-md border border-brand/30 bg-brand/[0.03] p-3 text-xs space-y-1">
         <div className="font-semibold text-brand flex items-center gap-1.5">
-          <Bot className="size-3.5" /> Auto-driven Context & Rules
+          <Bot className="size-3.5" /> {t("autodriven_context_rules")}
         </div>
         <p className="text-muted-foreground">
-          System prompt is dynamically assembled per turn: <strong>Agent Persona</strong> + <strong>System Prompt</strong> + <strong>Workspace Rules</strong> (auto-driven from <code className="font-mono text-foreground">AGENTS.md</code> & <code className="font-mono text-foreground">.agents/rules</code> in workspace root).
+          {t("autodriven_context_rules_desc")}
         </p>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
         <div className="grid gap-1.5">
-          <Label className="text-xs">Default provider</Label>
+          <Label className="text-xs">{t("default_provider")}</Label>
           <Select
             value={selectedProvider}
             onValueChange={(v) => {
@@ -666,7 +713,7 @@ function AgentTab() {
             }}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select provider" />
+              <SelectValue placeholder={t("select_provider")} />
             </SelectTrigger>
             <SelectContent>
               {providers.map((p) => (
@@ -678,13 +725,13 @@ function AgentTab() {
           </Select>
         </div>
         <div className="grid gap-1.5">
-          <Label className="text-xs">Default model</Label>
+          <Label className="text-xs">{t("default_model")}</Label>
           <Select
             value={selectedModel}
             onValueChange={(v) => void applyChatModelSelection(selectedProvider, v)}
           >
             <SelectTrigger className="w-full font-mono text-xs">
-              <SelectValue placeholder="Select model" />
+              <SelectValue placeholder={t("select_model")} />
             </SelectTrigger>
             <SelectContent>
               {currentModels.map((m) => (
@@ -698,7 +745,7 @@ function AgentTab() {
       </div>
 
       <div className="grid gap-1.5">
-        <Label className="text-xs">Default mode</Label>
+        <Label className="text-xs">{t("default_mode")}</Label>
         <ToggleGroup
           type="single"
           value={composerMode}
@@ -718,7 +765,7 @@ function AgentTab() {
                 className="text-xs gap-1.5 px-3 h-8"
               >
                 <Icon className="size-3.5 text-muted-foreground" />
-                {m.label}
+                {t(m.value) || m.label}
               </ToggleGroupItem>
             );
           })}
@@ -727,17 +774,17 @@ function AgentTab() {
 
       <div className="grid gap-1.5">
         <div className="flex items-center justify-between">
-          <Label htmlFor="sysprompt" className="text-xs">System prompt instructions</Label>
+          <Label htmlFor="sysprompt" className="text-xs">{t("system_prompt_instructions")}</Label>
           <Button
             variant="ghost"
             size="sm"
             className="h-6 text-[11px] gap-1"
             onClick={() => {
               setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
-              toast.success("System prompt reset to default");
+              toast.success(t("system_prompt_reset_success"));
             }}
           >
-            <RotateCcw className="size-3" /> Reset to default
+            <RotateCcw className="size-3" /> {t("reset_to_default")}
           </Button>
         </div>
         <Textarea
@@ -749,31 +796,31 @@ function AgentTab() {
       </div>
 
       <div className="grid gap-1.5">
-        <Label className="text-xs">Enabled tools</Label>
+        <Label className="text-xs">{t("enabled_tools")}</Label>
         {allTools.length === 0 ? (
           <p className="text-xs text-muted-foreground italic">
-            No MCP tools available. Connect a server to expose tools.
+            {t("no_mcp_tools_available")}
           </p>
         ) : (
           <div className="rounded-md border divide-y max-h-48 overflow-y-auto">
-            {allTools.map((t) => {
-              const checked = enabledTools.includes(t.name);
+            {allTools.map((tItem) => {
+              const checked = enabledTools.includes(tItem.name);
               return (
                 <Label
-                  key={t.name + t.server}
-                  htmlFor={`tool-${t.name}`}
+                  key={tItem.name + tItem.server}
+                  htmlFor={`tool-${tItem.name}`}
                   className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-accent/40 cursor-pointer"
                 >
                   <Switch
-                    id={`tool-${t.name}`}
+                    id={`tool-${tItem.name}`}
                     checked={checked}
                     onCheckedChange={(v) => {
-                      if (v) setEnabledTools([...enabledTools, t.name]);
-                      else setEnabledTools(enabledTools.filter((x) => x !== t.name));
+                      if (v) setEnabledTools([...enabledTools, tItem.name]);
+                      else setEnabledTools(enabledTools.filter((x) => x !== tItem.name));
                     }}
                   />
-                  <span className="font-mono">{t.name}</span>
-                  <span className="text-[10px] text-muted-foreground">via {t.server}</span>
+                  <span className="font-mono">{tItem.name}</span>
+                  <span className="text-[10px] text-muted-foreground">{t("via")} {tItem.server}</span>
                 </Label>
               );
             })}
@@ -786,6 +833,7 @@ function AgentTab() {
 
 /* ----------------------------- Security & Privacy ----------------------------- */
 function SecurityTab() {
+  const { t, language } = useTranslation();
   const sec = useAppStore((s) => s.securitySettings);
   const setSec = useAppStore((s) => s.setSecuritySettings);
   const [rotateOpen, setRotateOpen] = React.useState(false);
@@ -793,9 +841,9 @@ function SecurityTab() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h3 className="text-base font-semibold">Security & Privacy Guardrails</h3>
+        <h3 className="text-base font-semibold">{t("security_guardrails")}</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Pre-flight credential scrubbing, enforced server-side on the agent executor before any payload leaves the IDE.
+          {t("security_guardrails_desc")}
         </p>
       </div>
 
@@ -803,16 +851,16 @@ function SecurityTab() {
       <div className="rounded-xl border p-4 space-y-4 bg-card">
         <div className="flex items-center gap-2 border-b pb-2">
           <Lock className="size-4 text-brand" />
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">Secret Scrubbing & Pre-Flight Redaction</h4>
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">{t("secret_scrubbing_title")}</h4>
         </div>
 
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-0.5">
             <Label className="text-xs font-medium cursor-pointer" htmlFor="autoScrubSecrets">
-              Auto-Scrub API Keys & Credentials
+              {t("auto_scrub_title")}
             </Label>
             <p className="text-[11px] text-muted-foreground">
-              Redacts API keys (<code className="font-mono text-foreground">sk-...</code>, <code className="font-mono text-foreground">ghp_...</code>), private keys, database connection URIs, and JWTs before LLM payloads hit the network. Applied to the conversation history, system prompts, subagents, and context compaction on the server.
+              {t("auto_scrub_desc")}
             </p>
           </div>
           <Switch
@@ -820,13 +868,13 @@ function SecurityTab() {
             checked={sec.autoScrubSecrets}
             onCheckedChange={(v) => {
               setSec({ autoScrubSecrets: v });
-              toast.success(v ? "Pre-flight secret scrubbing enabled" : "Secret scrubbing disabled");
+              toast.success(v ? t("secret_scrubbing_enabled") : t("secret_scrubbing_disabled"));
             }}
           />
         </div>
 
         <div className="grid gap-1.5 pt-1">
-          <Label className="text-xs">Custom Redaction Regex Pattern (optional)</Label>
+          <Label className="text-xs">{t("custom_redaction_regex")}</Label>
           <Input
             placeholder="e.g. COMPANY_TOKEN_[A-Z0-9]+"
             value={sec.customRedactionRegex}
@@ -834,7 +882,7 @@ function SecurityTab() {
             className="h-8 text-xs font-mono"
           />
           <p className="text-[10px] text-muted-foreground">
-            Matching text in prompt context is replaced with <code className="font-mono text-foreground">[REDACTED_CUSTOM_SECRET]</code>. Invalid expressions are rejected before being saved.
+            {t("custom_redaction_desc")}
           </p>
         </div>
       </div>
@@ -843,40 +891,40 @@ function SecurityTab() {
       <div className="rounded-xl border p-4 space-y-4 bg-card">
         <div className="flex items-center gap-2 border-b pb-2">
           <ShieldCheck className="size-4 text-brand" />
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">Destructive Action Safety & Encryption</h4>
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">{t("destructive_action_title")}</h4>
         </div>
 
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-0.5">
-            <div className="text-xs font-medium">Auto-Checkpoint Before Destructive Actions</div>
+            <div className="text-xs font-medium">{t("auto_checkpoint_title")}</div>
             <p className="text-[11px] text-muted-foreground">
-              A workspace snapshot is always created before batch/multi-file modifications, so destructive changes can be rolled back.
+              {t("auto_checkpoint_desc")}
             </p>
           </div>
           <Badge variant="outline" className="text-[11px] px-2 py-0.5">
-            Always on
+            {t("always_on")}
           </Badge>
         </div>
 
         <div className="pt-2 border-t flex items-center justify-between">
           <div>
-            <div className="text-xs font-medium">Master Key Encryption (AES-256-GCM)</div>
-            <div className="text-[11px] text-muted-foreground">Keys stored at rest are encrypted with server-side environment key.</div>
+            <div className="text-xs font-medium">{t("master_key_encryption")}</div>
+            <div className="text-[11px] text-muted-foreground">{t("master_key_encryption_desc")}</div>
           </div>
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setRotateOpen(true)}>
-            <RefreshCw className="size-3" /> Rotate Master Key
+            <RefreshCw className="size-3" /> {t("rotate_master_key")}
           </Button>
         </div>
 
         {rotateOpen && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-1">
-            <p className="font-medium text-amber-600 dark:text-amber-400">Server Key Rotation Instructions:</p>
+            <p className="font-medium text-amber-600 dark:text-amber-400">{t("server_key_rotation_instructions")}</p>
             <p className="text-muted-foreground text-[11px]">
-              Update <code className="font-mono text-foreground">ENCRYPTION_KEY</code> in environment variables, then run:
+              {t("update_encryption_key_env")}
             </p>
             <pre className="font-mono text-[11px] bg-muted/60 p-1.5 rounded">bun run scripts/rotate-keys.ts</pre>
             <Button size="sm" variant="ghost" className="h-6 text-[11px] mt-1" onClick={() => setRotateOpen(false)}>
-              Close
+              {t("close")}
             </Button>
           </div>
         )}
@@ -887,6 +935,7 @@ function SecurityTab() {
 
 /* ----------------------------- About ----------------------------- */
 function AboutTab() {
+  const { t, language } = useTranslation();
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
   const [appInfo, setAppInfo] = React.useState<{
     version: string;
@@ -919,9 +968,9 @@ function AboutTab() {
       const { checkForUpdates } = await import("@/lib/updater");
       const res = await checkForUpdates(false);
       if (res.status === "up-to-date") {
-        toast.success(`HermOS IDE is up to date (v${res.currentVersion}).`);
+        toast.success(`${t("up_to_date")} (v${res.currentVersion}).`);
       } else if (res.status === "available") {
-        toast.info(`New version v${res.latestVersion} is available!`, {
+        toast.info(t("update_available"), {
           id: "app-update-available",
           duration: 20000,
           action: res.releaseUrl
@@ -937,10 +986,10 @@ function AboutTab() {
               },
         });
       } else if (res.status === "error") {
-        toast.error(`Update check failed: ${res.message}`);
+        toast.error(`${t("update_failed")}: ${res.message}`);
       }
     } catch (e) {
-      toast.error("Failed to check for updates");
+      toast.error(t("update_failed"));
     } finally {
       setCheckingUpdate(false);
     }
@@ -954,15 +1003,15 @@ function AboutTab() {
   return (
     <div className="space-y-5 max-w-md">
       <div>
-        <h3 className="text-base font-semibold">About HermOS</h3>
+        <h3 className="text-base font-semibold">{t("about_hermos")}</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Enterprise-grade local-first agentic IDE. MIT licensed.
+          {t("about_hermos_desc")}
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="rounded-md border p-2.5 space-y-1">
           <div className="text-muted-foreground flex items-center justify-between">
-            <span>Version</span>
+            <span>{t("version")}</span>
             <Badge variant="outline" className="text-[10px] uppercase font-mono px-1 py-0 h-4">
               {displayChannel}
             </Badge>
@@ -973,9 +1022,9 @@ function AboutTab() {
           )}
         </div>
         <div className="rounded-md border p-2.5 space-y-1">
-          <div className="text-muted-foreground">License</div>
+          <div className="text-muted-foreground">{t("license")}</div>
           <div className="font-mono font-medium text-sm">MIT</div>
-          <div className="text-[10px] text-muted-foreground">Open-Source</div>
+          <div className="text-[10px] text-muted-foreground">{t("open_source")}</div>
         </div>
       </div>
 
@@ -988,7 +1037,7 @@ function AboutTab() {
           disabled={checkingUpdate}
         >
           <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
-          {checkingUpdate ? "Checking updates..." : "Check for updates"}
+          {checkingUpdate ? t("checking_updates") : t("check_for_updates")}
         </Button>
       </div>
 
@@ -1001,7 +1050,7 @@ function AboutTab() {
           rel="noopener noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
-          <ExternalLink className="size-3.5" /> Source on GitHub
+          <ExternalLink className="size-3.5" /> {t("source_on_github")}
         </a>
         <a
           href={`${repoUrl}/releases`}
@@ -1009,12 +1058,12 @@ function AboutTab() {
           rel="noopener noreferrer"
           className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
         >
-          <ExternalLink className="size-3.5" /> Release Notes & Changelogs
+          <ExternalLink className="size-3.5" /> {t("release_notes")}
         </a>
       </div>
       <Separator />
       <p className="text-[11px] text-muted-foreground">
-        Built with Next.js, Prisma, and the Model Context Protocol. Bring your own keys to OpenRouter, OpenAI, Anthropic, Groq, Mistral, Together AI, and more.
+        {t("about_built_with")}
       </p>
     </div>
   );
@@ -1022,26 +1071,27 @@ function AboutTab() {
 
 /* ----------------------------- Context governance ----------------------------- */
 function ContextTab() {
+  const { t, language } = useTranslation();
   const cfg = useAppStore((s) => s.contextConfig);
   const setCfg = useAppStore((s) => s.setContextConfig);
 
   return (
     <div className="space-y-5 max-w-md">
       <div>
-        <h3 className="text-base font-semibold">Context governance</h3>
+        <h3 className="text-base font-semibold">{t("context_governance")}</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Retention policies control how the agent manages its context window. Higher values preserve more history at the cost of token usage.
+          {t("context_governance_desc")}
         </p>
       </div>
 
       <div className="grid gap-4">
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
-            <Label className="text-xs">Protection window (tokens)</Label>
+            <Label className="text-xs">{t("protection_window")}</Label>
             <span className="text-xs font-mono text-muted-foreground">{cfg.pruneProtectTokens.toLocaleString()}</span>
           </div>
           <p className="text-[11px] text-muted-foreground -mt-1">
-            Recent tool outputs within this window are kept intact. Older outputs are replaced with a placeholder.
+            {t("protection_window_desc")}
           </p>
           <Slider
             min={5000}
@@ -1052,7 +1102,7 @@ function ContextTab() {
           />
           <div className="flex justify-between text-[10px] text-muted-foreground">
             <span>5K</span>
-            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.pruneProtectTokens.toLocaleString()} default</span>
+            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.pruneProtectTokens.toLocaleString()} {t("default")}</span>
             <span>200K</span>
           </div>
         </div>
@@ -1061,11 +1111,11 @@ function ContextTab() {
 
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
-            <Label className="text-xs">Compaction buffer (tokens)</Label>
+            <Label className="text-xs">{t("compaction_buffer")}</Label>
             <span className="text-xs font-mono text-muted-foreground">{cfg.compactionBuffer.toLocaleString()}</span>
           </div>
           <p className="text-[11px] text-muted-foreground -mt-1">
-            Extra headroom reserved beyond the output limit before compaction triggers.
+            {t("compaction_buffer_desc")}
           </p>
           <Slider
             min={2000}
@@ -1076,7 +1126,7 @@ function ContextTab() {
           />
           <div className="flex justify-between text-[10px] text-muted-foreground">
             <span>2K</span>
-            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.compactionBuffer.toLocaleString()} default</span>
+            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.compactionBuffer.toLocaleString()} {t("default")}</span>
             <span>80K</span>
           </div>
         </div>
@@ -1085,11 +1135,11 @@ function ContextTab() {
 
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
-            <Label className="text-xs">Tail turns</Label>
+            <Label className="text-xs">{t("tail_turns")}</Label>
             <span className="text-xs font-mono text-muted-foreground">{cfg.tailTurns}</span>
           </div>
           <p className="text-[11px] text-muted-foreground -mt-1">
-            Number of recent user&harr;assistant exchanges always preserved during truncation.
+            {t("tail_turns_desc")}
           </p>
           <Slider
             min={1}
@@ -1100,7 +1150,7 @@ function ContextTab() {
           />
           <div className="flex justify-between text-[10px] text-muted-foreground">
             <span>1</span>
-            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.tailTurns} default</span>
+            <span className="text-brand">{DEFAULT_CONTEXT_CONFIG.tailTurns} {t("default")}</span>
             <span>10</span>
           </div>
         </div>
@@ -1113,10 +1163,10 @@ function ContextTab() {
           className="h-8 text-xs gap-1"
           onClick={() => {
             setCfg({ ...DEFAULT_CONTEXT_CONFIG });
-            toast.success("Context settings reset to defaults");
+            toast.success(t("context_reset_success"));
           }}
         >
-          <RotateCcw className="size-3" /> Reset to defaults
+          <RotateCcw className="size-3" /> {t("reset_to_defaults")}
         </Button>
       </div>
     </div>

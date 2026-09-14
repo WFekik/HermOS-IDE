@@ -273,3 +273,36 @@
   50% { background-position: 0% 0%, 100% 50%; }
   100% { background-position: 0% 0%, 0% 50%; }
 }
+
+/* RTL adjustments for Arabic language support */
+[dir="rtl"] {
+  text-align: start;
+}
+
+[dir="rtl"] input:not([type="checkbox"]):not([type="radio"]),
+[dir="rtl"] textarea {
+  text-align: start;
+}
+
+/* Monospace code, diffs, terminals, and file paths MUST preserve LTR */
+[dir="rtl"] pre,
+[dir="rtl"] code,
+[dir="rtl"] kbd,
+[dir="rtl"] .font-mono,
+[dir="rtl"] .font-mono * {
+  direction: ltr !important;
+  text-align: left !important;
+  /* embed (not isolate): keeps the block LTR while letting mixed-direction
+     inline runs (e.g. an Arabic comment inside code) order correctly instead
+     of isolating every child span. */
+  unicode-bidi: embed;
+}
+
+/*
+ * Radix primitive positioning stays physical intentionally. Centered overlays
+ * (dialog/alert-dialog: top/left 50% + -50% translate) center identically in
+ * both directions, and slide/fade animations keyed to Radix's physical
+ * `data-[side=...]` values cannot be statically mirrored — mirroring needs
+ * runtime dir awareness, not class swaps. Overlay *content* uses logical
+ * properties throughout, so text and controls still mirror correctly.
+ */

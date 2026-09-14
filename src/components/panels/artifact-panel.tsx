@@ -24,6 +24,7 @@ import { apiGet } from "@/lib/api-client";
 import { CodeBlock } from "@/components/ide/code-block";
 import { preprocessContent } from "@/components/ide/message-renderer";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +70,7 @@ function AlertBlockquote({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <blockquote className="my-3 border-l-2 border-brand/40 pl-3 text-muted-foreground italic text-xs leading-relaxed">
+    <blockquote className="my-3 border-s-2 border-brand/40 ps-3 text-muted-foreground italic text-xs leading-relaxed">
       {children}
     </blockquote>
   );
@@ -113,7 +114,7 @@ const artifactMarkdownComponents: Components = {
   },
   th({ children }) {
     return (
-      <th className="border-b px-3 py-1.5 text-left font-semibold text-foreground">{children}</th>
+      <th className="border-b px-3 py-1.5 text-start font-semibold text-foreground">{children}</th>
     );
   },
   td({ children }) {
@@ -132,10 +133,10 @@ const artifactMarkdownComponents: Components = {
     return <p className="my-2 leading-relaxed text-xs text-foreground/90">{children}</p>;
   },
   ul({ children }) {
-    return <ul className="my-2 list-disc pl-5 space-y-1 text-xs">{children}</ul>;
+    return <ul className="my-2 list-disc ps-5 space-y-1 text-xs">{children}</ul>;
   },
   ol({ children }) {
-    return <ol className="my-2 list-decimal pl-5 space-y-1 text-xs">{children}</ol>;
+    return <ol className="my-2 list-decimal ps-5 space-y-1 text-xs">{children}</ol>;
   },
   li({ children }) {
     return <li className="leading-relaxed">{children}</li>;
@@ -179,6 +180,7 @@ const artifactMarkdownComponents: Components = {
 };
 
 export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: ArtifactPanelProps) {
+  const { t } = useTranslation();
   const storeActivePath = useAppStore((s) => s.activeArtifactPath);
   const storeArtifacts = useAppStore((s) => s.artifactsList);
   const setActiveArtifactPath = useAppStore((s) => s.setActiveArtifactPath);
@@ -265,15 +267,15 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
       } else {
         const filename = cleanPath.replace(/\\/g, "/").split("/").pop() || cleanPath;
         const fallbackRes = await apiGet<{ content?: string }>(`/api/workspace/file?path=${encodeURIComponent(filename)}`);
-        setContent(fallbackRes?.content ?? "# Artifact Content\n\nNo content available.");
+        setContent(fallbackRes?.content ?? `# ${filename}\n\n${t("no_artifact_content") || "No content available."}`);
       }
     } catch {
-      const filename = artifactPath.replace(/\\/g, "/").split("/").pop() || "Artifact";
-      setContent(`# ${filename}\n\n*Unable to load artifact content.*`);
+      const filename = artifactPath.replace(/\\/g, "/").split("/").pop() || t("artifact");
+      setContent(`# ${filename}\n\n*${t("unable_to_load_artifact") || "Unable to load artifact content."}*`);
     } finally {
       setLoading(false);
     }
-  }, [artifactPath]);
+  }, [artifactPath, t]);
 
   React.useEffect(() => {
     void loadArtifact();
@@ -283,13 +285,22 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
     if (!content) return;
     navigator.clipboard.writeText(content);
     setCopied(true);
-    toast.success("Artifact copied to clipboard");
+    toast.success(t("artifact_copied"));
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const activeFileName = artifactPath ? artifactPath.replace(/\\/g, "/").split("/").pop() : "Artifact Canvas";
+  const activeFileName = artifactPath ? artifactPath.replace(/\\/g, "/").split("/").pop() : t("artifact_canvas");
 
   const [viewMode, setViewMode] = React.useState<"markdown" | "preview" | "code">("markdown");
+
+  const previewSrcDoc = React.useMemo(() => {
+    if (!content) return "";
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https: http:; font-src data: https:;">`;
+    if (content.includes("<head>")) {
+      return content.replace("<head>", `<head>${cspMeta}`);
+    }
+    return `${cspMeta}${content}`;
+  }, [content]);
 
   const isHtmlOrSvg = React.useMemo(() => {
     if (!artifactPath) return false;
@@ -308,38 +319,38 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
           </span>
           {artifactPath && (
             <Badge variant="outline" className="h-4 text-[10px] font-mono border-brand/30 text-brand bg-brand/5 shrink-0">
-              Artifact
+              {t("artifact")}
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0 ml-2">
+        <div className="flex items-center gap-1 shrink-0 ms-2">
           {content && (
-            <div className="flex items-center rounded-md border bg-background p-0.5 text-[11px] mr-1">
+            <div className="flex items-center rounded-md border bg-background p-0.5 text-[11px] me-1">
               <button
                 type="button"
                 onClick={() => setViewMode("markdown")}
                 className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors", viewMode === "markdown" ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-foreground")}
-                title="Markdown View"
+                title={t("markdown_view")}
               >
-                Docs
+                {t("view_docs")}
               </button>
               {isHtmlOrSvg && (
                 <button
                   type="button"
                   onClick={() => setViewMode("preview")}
                   className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors", viewMode === "preview" ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-foreground")}
-                  title="Live HTML/SVG Preview"
+                  title={t("live_preview")}
                 >
-                  Preview
+                  {t("view_preview")}
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => setViewMode("code")}
                 className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors", viewMode === "code" ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-foreground")}
-                title="Raw Code View"
+                title={t("raw_code_view")}
               >
-                Code
+                {t("view_code")}
               </button>
             </div>
           )}
@@ -349,8 +360,8 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             className="size-6"
             onClick={() => void loadArtifact()}
             disabled={loading || !artifactPath}
-            title="Refresh Artifact"
-            aria-label="Refresh Artifact"
+            title={t("refresh_artifact")}
+            aria-label={t("refresh_artifact")}
           >
             <RefreshCw className={cn("size-3", loading && "animate-spin")} />
           </Button>
@@ -360,8 +371,8 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             className="size-6"
             onClick={handleCopy}
             disabled={!content}
-            title="Copy Artifact Content"
-            aria-label="Copy Artifact Content"
+            title={t("copy_artifact")}
+            aria-label={t("copy_artifact")}
           >
             {copied ? <Check className="size-3 text-brand" /> : <Copy className="size-3" />}
           </Button>
@@ -370,8 +381,8 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
             onClick={(e) => handleCloseTab(artifactPath || displayTabs[0] || "", e)}
-            title="Close Artifact Canvas"
-            aria-label="Close Artifact Canvas"
+            title={t("close_artifact_canvas")}
+            aria-label={t("close_artifact_canvas")}
           >
             <X className="size-3.5" />
           </Button>
@@ -397,8 +408,8 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
               <button
                 type="button"
                 onClick={(e) => handleCloseTab(path, e)}
-                className="rounded p-0.5 opacity-60 hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity ml-0.5"
-                title="Close Artifact Tab"
+                className="rounded p-0.5 opacity-60 hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity ms-0.5"
+                title={t("close_artifact_tab")}
               >
                 <X className="size-2.5" />
               </button>
@@ -412,7 +423,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
         viewMode === "preview" ? (
           <div className="flex-1 w-full h-full bg-white relative overflow-hidden">
             <iframe
-              srcDoc={content}
+              srcDoc={previewSrcDoc}
               title={activeFileName}
               className="w-full h-full border-0"
               sandbox="allow-scripts"
@@ -442,9 +453,9 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
           <div className="rounded-full bg-brand/10 p-3 text-brand border border-brand/20">
             <Sparkles className="size-6" />
           </div>
-          <h3 className="text-sm font-semibold text-foreground">No Artifacts Selected</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t("no_artifacts_selected")}</h3>
           <p className="text-xs text-muted-foreground max-w-sm leading-relaxed">
-            Select an artifact from the conversation or list to view its rendered implementation plan, code, or live preview.
+            {t("no_artifacts_selected_desc")}
           </p>
         </div>
       )}

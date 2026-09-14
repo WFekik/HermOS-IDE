@@ -4,8 +4,9 @@ import type { ReasoningSchemeId } from "@/lib/reasoning";
 
 export const DEFAULT_PROVIDER = "puter";
 export const DEFAULT_MODEL = "auto";
-export const DEFAULT_FALLBACK_MODEL = "claude-3-5-sonnet";
-export const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o";
+// NOTE: no hardcoded model IDs. Model selection resolves dynamically — the
+// "auto" sentinel, the provider's live model list, or the user's saved
+// configuration. Nothing here may name a concrete model family.
 
 /**
  * Static registry of AI providers annotated with capability flags:
@@ -256,28 +257,49 @@ export function resolveModel(provider: ProviderId, model: string): string {
   return "auto";
 }
 
+/**
+ * Whether image content blocks may be sent for a provider/model pair.
+ *
+ * Capability-driven only — no model-ID sniffing. Resolution order:
+ *   1. Runtime store config (`supportsVision: false` denies; per-model
+ *      `visionEnabled` explicitly allows/denies). User configuration wins.
+ *   2. Static provider catalog flag.
+ *   3. Unknown providers default to false (conservative: sending image blocks
+ *      to a non-vision endpoint causes upstream 400s).
+ *
+ * Text-only models behind a vision-capable provider flag will attempt image
+ * payloads once; the executor's upstream-rejection fallback (400/413/422/500
+ * → drop images, retry text-only) handles that fail-safe. Mark such models
+ * via the per-model `visionEnabled: false` store toggle instead of adding
+ * ID patterns here.
+ */
 export function modelSupportsVision(
   providerId: string,
   _modelId?: string,
-  storeProviders?: any[],
+  storeProviders?: unknown[],
 ): boolean {
-  // Check static PROVIDERS catalog first
-  const staticProvider = PROVIDERS[providerId as ProviderId];
-  if (staticProvider?.supportsVision === false) return false;
-
-  // Check runtime provider models from store (user-saved config may override)
+  // Runtime store config first — user-saved config explicitly overrides defaults.
   if (storeProviders && Array.isArray(storeProviders)) {
-    const runtime = storeProviders.find((p: any) => p.id === providerId || p.provider === providerId);
+    const runtime = (storeProviders as Record<string, unknown>[]).find(
+      (p) => p.id === providerId || p.provider === providerId,
+    );
     if (runtime?.supportsVision === false) return false;
-    // Check per-model config for explicit vision toggle
-    if (_modelId && runtime?.modelsConfig && Array.isArray(runtime.modelsConfig)) {
-      const modelCfg = runtime.modelsConfig.find((m: any) => m.id === _modelId);
+    // Per-model explicit vision toggle.
+    if (_modelId && Array.isArray(runtime?.modelsConfig)) {
+      const modelCfg = (runtime.modelsConfig as Record<string, unknown>[]).find(
+        (m) => m.id === _modelId,
+      );
       if (modelCfg?.visionEnabled === false) return false;
       if (modelCfg?.visionEnabled === true) return true;
     }
   }
 
-  // Default to the provider-level flag (undefined → false for vision,
-  // because sending image blocks to non-vision models can cause API errors).
+  // Static provider catalog flag. The model ID is intentionally consulted only
+  // for the runtime store lookup above — static capability comes from
+  // configuration, never from ID sniffing.
+  const staticProvider = PROVIDERS[providerId as ProviderId];
+  if (staticProvider?.supportsVision === false) return false;
+
   return staticProvider?.supportsVision === true;
 }
+

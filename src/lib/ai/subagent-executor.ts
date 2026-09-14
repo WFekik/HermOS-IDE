@@ -73,7 +73,7 @@ import { decrypt } from "@/lib/encryption";
 import { db } from "@/lib/db";
 import { buildDiscoveryBlock } from "./discovery";
 import { refreshProviderModels } from "@/lib/provider-fetch";
-import { assertUrlAllowed } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { truncateHistory, pruneOldToolOutputs, estimateTokens } from "@/lib/ai/context";
 import { getSecuritySettings } from "@/lib/security-settings";
 import { scrubHistoryForWire, scrubPromptString } from "@/lib/security-scrub";
@@ -1186,26 +1186,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Fetch with no artificial timeout — the response can take as long as needed.
- * SSRF-gated: the URL (which derives from the user-editable provider baseUrl)
- * is validated against the shared policy before sending, and the final URL is
- * re-validated after any redirects were followed.
+ * SSRF-gated fetch — delegates to the shared fetchWithSsrf utility.
+ * Validates the URL at every redirect hop, strips auth headers on cross-origin
+ * redirects, and correctly converts POST→GET on 301/302/303 per RFC 7231.
  */
 function fetchWithTimeout(
   url: string,
-  init: RequestInit,
+  init: RequestInit = {},
 ): Promise<Response> {
-  return (async () => {
-    await assertUrlAllowed(url);
-    const resp = await fetch(url, {
-      ...init,
-      signal: init.signal ?? undefined,
-    });
-    if (resp.redirected) {
-      await assertUrlAllowed(resp.url);
-    }
-    return resp;
-  })();
+  return fetchWithSsrf(url, init);
 }
 
 async function* streamOpenAICompatible(

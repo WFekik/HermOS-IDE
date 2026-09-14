@@ -81,6 +81,7 @@ import { ApiRequestError } from "@/lib/api-client";
 import { subscribeWatch } from "@/lib/watch-client";
 import { cn } from "@/lib/utils";
 import { pickFolder } from "@/lib/tauri";
+import { useTranslation } from "@/hooks/use-translation";
 
 // WorkspacePanel — exported entry point.
 //
@@ -111,6 +112,7 @@ export function WorkspacePanel() {
 }
 
 function WorkspacePanelInner() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const isDesktop = useIsDesktop();
 
@@ -191,9 +193,11 @@ function WorkspacePanelInner() {
           void queryClient.invalidateQueries({ queryKey: workspaceKeys.list });
           void queryClient.invalidateQueries({ queryKey: workspaceKeys.info });
           void queryClient.invalidateQueries({ queryKey: workspaceKeys.tree });
-          toast.success(`Opened: ${wsData.name ?? selected}`);
+          toast.success(
+            t("folder_opened_name", { name: wsData.name ?? selected }),
+          );
         } else {
-          toast.error("Failed to open folder as workspace");
+          toast.error(t("open_folder_as_workspace_failed"));
         }
       }
     } catch (err) {
@@ -341,7 +345,7 @@ function WorkspacePanelInner() {
   const openMut = useMutation({
     mutationFn: (name: string) => openWorkspace(name),
     onSuccess: (info) => {
-      toast.success(`Folder "${info.name}" opened`);
+      toast.success(t("folder_opened_name", { name: info.name }));
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.all });
       // Switch workspace and update selectedProjectId + active conversation.
       if (info?.id) {
@@ -355,7 +359,7 @@ function WorkspacePanelInner() {
       }
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Failed to open folder");
+      toast.error(e instanceof Error ? e.message : t("folder_open_failed"));
     },
   });
 
@@ -363,14 +367,14 @@ function WorkspacePanelInner() {
     mutationFn: ({ path, content }: { path: string; content: string }) =>
       putFile(path, content),
     onSuccess: (_data, vars) => {
-      toast.success("File saved");
+      toast.success(t("file_saved"));
       void queryClient.invalidateQueries({
         queryKey: workspaceKeys.file(vars.path),
       });
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.tree });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Save failed");
+      toast.error(e instanceof Error ? e.message : t("save_failed"));
     },
   });
 
@@ -386,7 +390,7 @@ function WorkspacePanelInner() {
     }) => createFile(path, type, content),
     onSuccess: (_data, vars) => {
       toast.success(
-        vars.type === "dir" ? "Folder created" : "File created",
+        vars.type === "dir" ? t("folder_created") : t("file_created"),
       );
       // Reveal parent dir in the tree and select the new file.
       const parent = vars.path.split("/").slice(0, -1).join("/");
@@ -401,21 +405,21 @@ function WorkspacePanelInner() {
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.tree });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Create failed");
+      toast.error(e instanceof Error ? e.message : t("create_failed"));
     },
   });
 
   const deleteMut = useMutation({
     mutationFn: (path: string) => deleteFile(path),
     onSuccess: (_data, path) => {
-      toast.success("Deleted");
+      toast.success(t("deleted"));
       if (useAppStore.getState().openFiles.includes(path)) {
         closeFileTab(path);
       }
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.tree });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Delete failed");
+      toast.error(e instanceof Error ? e.message : t("delete_failed"));
     },
   });
 
@@ -423,7 +427,7 @@ function WorkspacePanelInner() {
     mutationFn: ({ from, to }: { from: string; to: string }) =>
       renamePath(from, to),
     onSuccess: (_data, vars) => {
-      toast.success("Renamed");
+      toast.success(t("renamed"));
       // If the renamed file was open as a tab, swap the path in the tab
       // bar. The simplest correct behaviour is to close the old tab and
       // open the new one (preserving order is non-trivial with the
@@ -439,7 +443,7 @@ function WorkspacePanelInner() {
       });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Rename failed");
+      toast.error(e instanceof Error ? e.message : t("rename_failed"));
     },
   });
 
@@ -522,7 +526,7 @@ function WorkspacePanelInner() {
   }) => {
     if (result.blocked) {
       toast.warning(
-        `Blocked: ${result.reason ?? "command not allowed"}`,
+        t("blocked_reason", { reason: result.reason ?? "command not allowed" }),
       );
     }
   };
@@ -540,37 +544,37 @@ function WorkspacePanelInner() {
             className="truncate text-xs font-medium min-w-0"
             title={wsName ?? undefined}
           >
-            {wsName ?? "No folder open"}
+            {wsName ?? t("no_folder_open")}
           </span>
           {treeQuery.data && (
             <Badge
               variant="outline"
-              className="ml-0.5 h-4 px-1 text-[9px] font-mono text-muted-foreground shrink-0"
+              className="ms-0.5 h-4 px-1 text-[9px] font-mono text-muted-foreground shrink-0"
             >
-              {countNodes(treeData)} files
+              {t("files_count", { count: countNodes(treeData) })}
             </Badge>
           )}
           {treeQuery.isFetching && !treeQuery.isLoading && (
             <Loader2 className="size-3 animate-spin text-muted-foreground shrink-0" />
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-0.5 ml-1">
+        <div className="flex shrink-0 items-center gap-0.5 ms-1">
           <HeaderIconButton
-            label="New file"
+            label={t("new_file")}
             onClick={() => handleHeaderNew("file")}
             disabled={!hasWs}
           >
             <FilePlus className="size-3.5" />
           </HeaderIconButton>
           <HeaderIconButton
-            label="New folder"
+            label={t("new_folder")}
             onClick={() => handleHeaderNew("dir")}
             disabled={!hasWs}
           >
             <FolderPlus className="size-3.5" />
           </HeaderIconButton>
           <HeaderIconButton
-            label="Refresh"
+            label={t("refresh")}
             onClick={refreshAll}
             disabled={!hasWs}
           >
@@ -579,7 +583,7 @@ function WorkspacePanelInner() {
             />
           </HeaderIconButton>
           <HeaderIconButton
-            label={treeCollapsed ? "Show file tree" : "Hide file tree"}
+            label={treeCollapsed ? t("show_file_tree") : t("hide_file_tree")}
             onClick={() => setTreeCollapsed((v) => !v)}
             disabled={!hasWs}
           >
@@ -675,7 +679,7 @@ function WorkspacePanelInner() {
 
       <CommandBar
         disabled={!hasWs}
-        disabledReason="Open a folder to run commands"
+        disabledReason={t("open_folder_to_run_commands")}
         cwdLabel={wsName ?? undefined}
         onResult={onResult}
       />
@@ -852,6 +856,7 @@ function SplitEditorContainer({
   onActivateRight: () => void;
   treeData: FileNode[];
 }) {
+  const { t } = useTranslation();
   const [pickerOpen, setPickerOpen] = React.useState(false);
 
   // If the right pane has no file, show the empty state with a "Pick file"
@@ -879,10 +884,10 @@ function SplitEditorContainer({
             >
               <Columns2 className="size-7 text-muted-foreground/40" />
               <p className="text-xs text-muted-foreground">
-                No file on the right side
+                {t("no_file_right_side")}
               </p>
               <p className="text-[11px] text-muted-foreground/70">
-                Pick a file to compare or refer to side by side.
+                {t("pick_file_side_by_side_desc")}
               </p>
               <Button
                 size="sm"
@@ -893,7 +898,7 @@ function SplitEditorContainer({
                   setPickerOpen(true);
                 }}
               >
-                <Search className="size-3.5" /> Pick file
+                <Search className="size-3.5" /> {t("pick_file")}
               </Button>
               <Button
                 size="sm"
@@ -901,7 +906,7 @@ function SplitEditorContainer({
                 className="mt-1 h-7 gap-1 text-[11px] text-muted-foreground"
                 onClick={onCloseSplit}
               >
-                <X className="size-3" /> Close split
+                <X className="size-3" /> {t("close_split")}
               </Button>
             </div>
           </ResizablePanel>
@@ -960,6 +965,7 @@ function SplitFilePicker({
   treeData: FileNode[];
   onPick: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -987,21 +993,21 @@ function SplitFilePicker({
         <DialogHeader className="px-4 py-3 border-b">
           <DialogTitle className="text-sm font-semibold flex items-center gap-2">
             <Columns2 className="size-4 text-brand" />
-            Pick a file for the right side
+            {t("pick_file_right_side_title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Choose a file to display alongside the current editor.
+            {t("choose_file_split_desc")}
           </DialogDescription>
         </DialogHeader>
         <div className="border-b p-3">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute start-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter files by name or path…"
-              className="h-8 pl-7 text-xs"
+              placeholder={t("filter_files_placeholder")}
+              className="h-8 ps-7 text-xs"
               spellCheck={false}
               autoComplete="off"
             />
@@ -1010,7 +1016,7 @@ function SplitFilePicker({
         <ScrollArea className="max-h-[320px]">
           {filtered.length === 0 ? (
             <div className="p-6 text-center text-xs text-muted-foreground">
-              No matching files.
+              {t("no_matching_files")}
             </div>
           ) : (
             <ul className="py-1">
@@ -1019,11 +1025,11 @@ function SplitFilePicker({
                   <button
                     type="button"
                     onClick={() => onPick(f.path)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent transition-colors"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs hover:bg-accent transition-colors"
                   >
                     <PickerFileIcon name={f.name} />
                     <span className="truncate font-mono">{f.name}</span>
-                    <span className="ml-auto truncate text-[10px] text-muted-foreground/80">
+                    <span className="ms-auto truncate text-[10px] text-muted-foreground/80">
                       {f.path}
                     </span>
                   </button>
@@ -1108,11 +1114,12 @@ function FileTabBar({
   splitEditorFile: string | null;
   splitEditorActive: "left" | "right";
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="flex h-9 shrink-0 items-stretch border-b bg-muted/20 overflow-x-auto hermos-tabs-scroll"
       role="tablist"
-      aria-label="Open files"
+      aria-label={t("open_files")}
     >
       {openFiles.map((p) => {
         const isActive = p === activeFileTab;
@@ -1153,7 +1160,7 @@ function FileTabBar({
                     ? "border-brand/40 bg-brand/10 text-brand"
                     : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
                 )}
-                aria-label={isLeft ? "Left side" : "Right side"}
+                aria-label={isLeft ? t("left_side") : t("right_side")}
               >
                 {isLeft ? "L" : "R"}
               </Badge>
@@ -1165,8 +1172,8 @@ function FileTabBar({
                 e.stopPropagation();
                 onClose(p);
               }}
-              className="ml-1 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-              aria-label={`Close ${name}`}
+              className="ms-1 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              aria-label={t("close_file_name", { name })}
             >
               <X className="size-3" />
             </button>
@@ -1179,7 +1186,7 @@ function FileTabBar({
 
 function cnTab(isActive: boolean, focused = false): string {
   const base =
-    "group flex h-9 shrink-0 items-center gap-1.5 border-r border-border/60 px-3 cursor-pointer transition-colors max-w-[16rem]";
+    "group flex h-9 shrink-0 items-center gap-1.5 border-e border-border/60 px-3 cursor-pointer transition-colors max-w-[16rem]";
   if (isActive) {
     return cn(
       base,
@@ -1196,13 +1203,14 @@ function cnTab(isActive: boolean, focused = false): string {
 // Empty state — no workspace open
 
 function NoWorkspace({ onOpen }: { onOpen: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-6">
       <div className="text-center">
         <FolderOpen className="mx-auto size-9 text-muted-foreground/40" />
-        <p className="mt-2 text-sm font-medium">No folder open</p>
+        <p className="mt-2 text-sm font-medium">{t("no_folder_open")}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Open a workspace folder to browse, edit, and run files.
+          {t("open_folder_browse_desc")}
         </p>
         <Button
           size="sm"
@@ -1210,7 +1218,7 @@ function NoWorkspace({ onOpen }: { onOpen: () => void }) {
           className="mt-3 gap-1"
           onClick={onOpen}
         >
-          <FolderOpen className="size-3.5" /> Open folder
+          <FolderOpen className="size-3.5" /> {t("open_folder")}
         </Button>
       </div>
     </div>
@@ -1234,6 +1242,7 @@ function CreateNodeDialog({
   onSubmit: (name: string) => Promise<void>;
   submitting: boolean;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -1245,7 +1254,7 @@ function CreateNodeDialog({
     }
   }, [open]);
 
-  const title = type === "dir" ? "New folder" : "New file";
+  const title = type === "dir" ? t("new_folder") : t("new_file");
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -1259,12 +1268,12 @@ function CreateNodeDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {dir
-              ? `Create inside ${dir}/`
-              : "Create at the workspace root."}
+              ? t("create_inside_dir", { dir })
+              : t("create_in_root")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          <Label htmlFor="create-name">Name</Label>
+          <Label htmlFor="create-name">{t("name")}</Label>
           <Input
             id="create-name"
             ref={inputRef}
@@ -1288,7 +1297,7 @@ function CreateNodeDialog({
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button
             onClick={() => void submit()}
@@ -1302,7 +1311,7 @@ function CreateNodeDialog({
             ) : (
               <FileText className="size-4" />
             )}
-            Create
+            {t("create")}
           </Button>
         </DialogFooter>
       </DialogContent>

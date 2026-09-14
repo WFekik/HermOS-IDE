@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { apiStream, apiPost, ApiRequestError } from "@/lib/api-client";
 import { toast } from "sonner";
+import { t } from "@/lib/i18n";
 import { sanitizeStreamingDelta } from "@/lib/sanitize-content";
 import type { AttachmentDTO, ChatRequest, ChatStreamEvent, MessageDTO } from "@/lib/types";
 
@@ -401,13 +402,15 @@ export function useChatStream(): UseChatStreamReturn {
           const actionDesc = evt.action
             ? `${evt.action}${evt.target ? ` (${evt.target})` : ""}`
             : evt.toolName || "action";
+          // Live read: captured `store` goes stale on mid-run language switch.
+          const lang = useAppStore.getState().language;
 
-          toast("Permission Requested", {
+          toast(t("permission_requested", lang), {
             id: `perm-${approvalId}`,
             description: `${sessionTitle} · ${actionDesc}`,
             duration: 30000,
             action: {
-              label: "Review",
+              label: t("review", lang),
               onClick: () => {
                 void useAppStore.getState().selectConversation(convId);
               },
@@ -450,13 +453,15 @@ export function useChatStream(): UseChatStreamReturn {
             store.pendingConversations.find((p) => p.id === convId);
           const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
           const questionSummary = evt.question || questions[0]?.question || "Agent needs your input";
+          // Live read: captured `store` goes stale on mid-run language switch.
+          const lang = useAppStore.getState().language;
 
-          toast("Agent Question", {
+          toast(t("agent_question", lang), {
             id: `quest-${evt.questionId}`,
             description: `${sessionTitle} · ${questionSummary}`,
             duration: 30000,
             action: {
-              label: "Answer",
+              label: t("answer", lang),
               onClick: () => {
                 void useAppStore.getState().selectConversation(convId);
               },
@@ -525,6 +530,29 @@ export function useChatStream(): UseChatStreamReturn {
           // queue-injected subagent report rows delivered at iteration
           // boundaries / run teardown — never mid-stream.
           void store.refreshMessages(convId);
+
+          if (convId !== store.activeConversationId) {
+            const session =
+              store.conversations.find((c) => c.id === convId) ||
+              store.pendingConversations.find((p) => p.id === convId);
+            const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
+            // Read language live at toast time — the captured `store` snapshot
+            // goes stale if the user switches language mid-run. Toast id is
+            // per-conversation (overwrites across runs by design; concurrent
+            // runs for one conversation are deduped upstream).
+            const liveLang = useAppStore.getState().language;
+            toast.success(t("agent_finished_task", liveLang), {
+              id: `done-${convId}`,
+              description: sessionTitle,
+              duration: 10000,
+              action: {
+                label: t("go_to_session", liveLang),
+                onClick: () => {
+                  void useAppStore.getState().selectConversation(convId);
+                },
+              },
+            });
+          }
         }
         break;
       }

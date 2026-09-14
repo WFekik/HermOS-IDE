@@ -33,9 +33,10 @@ import { aggregateMessageStats } from "@/lib/message-stats";
 import type { ProviderId } from "@/lib/types";
 import { formatModelDisplayName } from "@/components/ide/model-selector";
 import { ProviderLogo } from "@/components/brand/provider-logo";
-import { DEFAULT_OPENAI_FALLBACK_MODEL } from "@/lib/ai/providers";
+import { useTranslation } from "@/hooks/use-translation";
 
 export function StatusBar() {
+  const { t } = useTranslation();
   const isStreaming = useAppStore((s) => s.isStreaming);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const composerMode = useAppStore((s) => s.composerMode);
@@ -71,13 +72,20 @@ export function StatusBar() {
   const cost = { value: costValue, unknown: costUnknown };
 
   // Context window: look up the current model's max context window from the
-  // provider catalog. Uses lookupContextWindow fallback so the circle renders.
+  // provider catalog. Resolves dynamically (selected model, else first
+  // configured non-"auto" model). With nothing configured the lookup is
+  // skipped and the circle renders its unknown-state fallback — never a
+  // guessed model ID.
   const { contextWindow } = React.useMemo(() => {
     const provider = providers.find((p) => p.id === selectedProvider);
-    const concreteModel = (selectedModel && selectedModel !== "auto")
-      ? selectedModel
-      : (provider?.models.find((m) => m.id !== "auto")?.id || DEFAULT_OPENAI_FALLBACK_MODEL);
+    const concreteModel =
+      selectedModel && selectedModel !== "auto"
+        ? selectedModel
+        : provider?.models.find((m) => m.id !== "auto")?.id;
 
+    if (!concreteModel) {
+      return { contextWindow: undefined as number | undefined };
+    }
     const modelInfo = provider?.models.find((m) => m.id === concreteModel);
     const cw = modelInfo?.contextWindow ?? lookupContextWindow(concreteModel);
 
@@ -88,10 +96,10 @@ export function StatusBar() {
 
   const currentProvider = providers.find((p) => p.id === selectedProvider);
   const providerLabel = currentProvider?.name ?? selectedProvider;
-  const modelLabel = selectedModel && selectedModel !== "auto" ? formatModelDisplayName(selectedModel) : "—";
+  const modelLabel = selectedModel ? formatModelDisplayName(selectedModel, t) : "—";
 
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
-  const themeLabel = theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System";
+  const themeLabel = theme === "light" ? t("status_theme_light") : theme === "dark" ? t("status_theme_dark") : t("status_theme_system");
 
   const fmtTokens = fmtTokensFn;
 
@@ -129,17 +137,17 @@ export function StatusBar() {
     <footer
       className="h-6 shrink-0 flex items-stretch border-t bg-background px-2 text-[11px] font-mono text-muted-foreground select-none"
       role="contentinfo"
-      aria-label="Status bar"
+      aria-label={t("status_bar")}
     >
       {/* Left group */}
       <div className="flex items-center gap-1.5 min-w-0">
         <StatusBarItem
           onClick={() => setRightPanelTab("files")}
-          tooltip={activeWorkspace ? `Workspace: ${activeWorkspace.name}` : "No workspace open"}
+          tooltip={activeWorkspace ? t("status_workspace_tooltip", { name: activeWorkspace.name }) : t("status_no_workspace_open")}
         >
           <Folder className={cn("size-3", activeWorkspace ? "text-brand" : "text-muted-foreground")} />
           <span className="max-w-[140px] truncate text-foreground/80">
-            {activeWorkspace ? activeWorkspace.name : "no workspace"}
+            {activeWorkspace ? activeWorkspace.name : t("status_no_workspace")}
           </span>
         </StatusBarItem>
 
@@ -148,7 +156,7 @@ export function StatusBar() {
             <Separator orientation="vertical" className="h-3 hidden lg:block" />
             <StatusBarItem
               onClick={() => setRightPanelTab("files")}
-              tooltip={`Open file: ${activeFile}`}
+              tooltip={t("status_open_file_tooltip", { file: activeFile })}
               className="hidden lg:flex"
             >
               <FileText className="size-3 text-muted-foreground" />
@@ -159,10 +167,10 @@ export function StatusBar() {
 
         <Separator orientation="vertical" className="h-3 hidden lg:block" />
         <StatusBarItem
-          tooltip={`Agent mode: ${composerMode}`}
+          tooltip={t("status_agent_mode_tooltip", { mode: t(composerMode) || composerMode })}
           className="hidden lg:flex"
         >
-          <span className="capitalize text-foreground/80">{composerMode}</span>
+          <span className="capitalize text-foreground/80">{t(composerMode) || composerMode}</span>
         </StatusBarItem>
 
         {contextTrimmed && (
@@ -182,12 +190,12 @@ export function StatusBar() {
         {isStreaming ? (
           <div className="flex items-center gap-1.5 text-brand">
             <StreamingDots />
-            <span>Agent working…</span>
+            <span>{t("status_agent_working")}</span>
           </div>
         ) : activeConversationId ? (
-          <span className="text-muted-foreground/70">Ready</span>
+          <span className="text-muted-foreground/70">{t("status_ready")}</span>
         ) : (
-          <span className="text-muted-foreground/70">No conversation</span>
+          <span className="text-muted-foreground/70">{t("status_no_conversation")}</span>
         )}
       </div>
 
@@ -198,7 +206,7 @@ export function StatusBar() {
             setSettingsTab("providers");
             setSettingsOpen(true);
           }}
-          tooltip={`Provider: ${providerLabel} · Model: ${modelLabel}`}
+          tooltip={t("status_provider_model_tooltip", { provider: providerLabel, model: modelLabel })}
         >
           <ProviderLogo providerId={selectedProvider} modelId={selectedModel} size={14} />
           <span className="text-brand">{providerLabel}</span>
@@ -210,8 +218,8 @@ export function StatusBar() {
         <StatusBarItem
           tooltip={
             cost.unknown
-              ? `Cumulative Session Tokens Sum (Σ): ${fmtTokens(tokensIn)} in · ${fmtTokens(tokensOut)} out (all turns combined)\nEstimated cost: unknown (rate not configured)`
-              : `Cumulative Session Tokens Sum (Σ): ${fmtTokens(tokensIn)} in · ${fmtTokens(tokensOut)} out (${fmtTokens(totalTokens)} total across all turns)\nEstimated session cost: ${costStr}`
+              ? t("status_tokens_cost_unknown", { in: fmtTokens(tokensIn), out: fmtTokens(tokensOut) })
+              : t("status_tokens_cost", { in: fmtTokens(tokensIn), out: fmtTokens(tokensOut), total: fmtTokens(totalTokens), cost: costStr })
           }
           className="hidden lg:flex"
         >
@@ -239,7 +247,7 @@ export function StatusBar() {
         <Separator orientation="vertical" className="h-3 hidden lg:block" />
         <StatusBarItem
           onClick={cycle}
-          tooltip={`Theme: ${themeLabel} (click to cycle)`}
+          tooltip={t("status_theme_tooltip", { theme: themeLabel })}
           className="hidden lg:flex"
         >
           <ThemeIcon className="size-3" />
@@ -249,7 +257,7 @@ export function StatusBar() {
         <Separator orientation="vertical" className="h-3" />
         <StatusBarItem
           onClick={toggleShortcutsOpen}
-          tooltip="Keyboard shortcuts (⌘/)"
+          tooltip={t("status_keyboard_shortcuts_tooltip")}
         >
           <HelpCircle className="size-3" />
         </StatusBarItem>
@@ -263,11 +271,12 @@ export function StatusBar() {
  * working" streaming indicator in the center of the status bar.
  */
 function StreamingDots() {
+  const { t } = useTranslation();
   return (
     <div
       className="flex items-center gap-[3px]"
       role="status"
-      aria-label="Agent working"
+      aria-label={t("status_agent_working")}
     >
       {[0, 1, 2].map((i) => (
         <motion.span
@@ -337,6 +346,7 @@ function ContextTrimmedBadge({
   keptTokens: number;
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -350,18 +360,21 @@ function ContextTrimmedBadge({
                 "text-amber-600 dark:text-amber-400 font-medium",
                 "hover:bg-accent/70 hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               )}
-              aria-label={`Context trimmed: ${dropped} message${dropped === 1 ? "" : "s"} dropped. Click for details.`}
+              aria-label={t("context_trimmed_aria", { dropped, s: dropped === 1 ? "" : "s" })}
             >
               <Scissors className="size-3 text-amber-600 dark:text-amber-400" />
               <span>
-                {dropped} msg{dropped === 1 ? "" : "s"} dropped (~
-                {keptTokens > 0 ? `${(keptTokens / 1000).toFixed(0)}k` : "0"} tok)
+                {t("context_trimmed_label", {
+                  dropped,
+                  s: dropped === 1 ? "" : "s",
+                  tokens: keptTokens > 0 ? `${(keptTokens / 1000).toFixed(0)}k` : "0",
+                })}
               </span>
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-[11px] font-mono">
-          History trimmed to fit context window (click details)
+          {t("context_trimmed_tooltip")}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -373,20 +386,13 @@ function ContextTrimmedBadge({
           <Scissors className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
           <div className="space-y-1.5">
             <p className="font-medium text-foreground">
-              Conversation history was trimmed
+              {t("context_trimmed_title")}
             </p>
             <p className="text-muted-foreground leading-relaxed">
-              The conversation exceeded the model&apos;s context window.
-              <span className="font-mono text-amber-700 dark:text-amber-400">
-                {" "}
-                {dropped}{" "}
-              </span>
-              older message{dropped === 1 ? " was " : "s were "}
-              dropped from the middle to fit. The first message and the
-              last 6 messages are always kept.
+              {t("context_trimmed_desc", { dropped, s: dropped === 1 ? "" : "s" })}
             </p>
             <p className="text-muted-foreground/80 font-mono text-[10px]">
-              Kept ~{keptTokens.toLocaleString()} tokens
+              {t("context_trimmed_kept", { tokens: keptTokens.toLocaleString() })}
             </p>
             <div className="flex justify-end pt-1">
               <Button
@@ -398,7 +404,7 @@ function ContextTrimmedBadge({
                   onDismiss();
                 }}
               >
-                Dismiss
+                {t("dismiss")}
               </Button>
             </div>
           </div>
@@ -453,6 +459,7 @@ interface ContextCircleProps {
  * estimate is never mistaken for an unlabeled measured value.
  */
 function ContextCircle({ used, max, promptTokens, completionTokens, cacheReads, cacheWrites, estimated }: ContextCircleProps) {
+  const { t } = useTranslation();
   const remaining = max && used != null ? Math.max(0, max - used) : undefined;
   const measured = used != null && used > 0;
   const pct = measured && max && max > 0 ? Math.min(used! / max, 1) : 0;
@@ -462,50 +469,56 @@ function ContextCircle({ used, max, promptTokens, completionTokens, cacheReads, 
   const fillColor = getContextCircleColor(pct);
 
   const title = measured && max
-    ? `Usage: ${estimated ? "~" : ""}${fmtTokensFn(used!)} / ${fmtTokensFn(max)} (${(pct * 100).toFixed(0)}% of the effective input budget${estimated ? " — estimated" : ""})`
-    : "Usage: not reported by provider";
+    ? t("usage_reported_budget", {
+        est: estimated ? "~" : "",
+        used: fmtTokensFn(used!),
+        max: fmtTokensFn(max),
+        pct: (pct * 100).toFixed(0),
+        estSuffix: estimated ? t("usage_estimated_suffix") : "",
+      })
+    : t("usage_not_reported_provider");
 
   const detail = (
     <div className="w-64 space-y-1.5 text-xs font-mono">
       <div className="flex items-center justify-between text-foreground">
-        <span className="text-muted-foreground">Context window</span>
+        <span className="text-muted-foreground">{t("context_window")}</span>
         <span>
-          {measured && used != null ? `${estimated ? "~" : ""}${fmtTokensFn(used)} / ${max ? fmtTokensFn(max) : "?"}` : "—"} {remaining !== undefined ? `(${fmtTokensFn(remaining)} left)` : ""}
+          {measured && used != null ? `${estimated ? "~" : ""}${fmtTokensFn(used)} / ${max ? fmtTokensFn(max) : "?"}` : "—"} {remaining !== undefined ? t("context_left", { remaining: fmtTokensFn(remaining) }) : ""}
         </span>
       </div>
       <Separator className="bg-border/60" />
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1 text-muted-foreground">
-          <span aria-hidden className="text-[10px]">↑</span> Prompt tokens
+          <span aria-hidden className="text-[10px]">↑</span> {t("prompt_tokens")}
         </span>
-        <span>{promptTokens > 0 ? `${estimated ? "~" : ""}${fmtTokensFn(promptTokens)}` : "not reported"}</span>
+        <span>{promptTokens > 0 ? `${estimated ? "~" : ""}${fmtTokensFn(promptTokens)}` : t("not_reported")}</span>
       </div>
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1 text-muted-foreground">
-          <span aria-hidden className="text-[10px]">↓</span> Completion tokens
+          <span aria-hidden className="text-[10px]">↓</span> {t("completion_tokens")}
         </span>
         <span>{fmtTokensFn(completionTokens)}</span>
       </div>
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1 text-muted-foreground">
-          <span aria-hidden className="text-[10px]">←</span> Cache read
+          <span aria-hidden className="text-[10px]">←</span> {t("cache_read")}
         </span>
         <span>{cacheReads > 0 ? fmtTokensFn(cacheReads) : "0"}</span>
       </div>
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1 text-muted-foreground">
-          <span aria-hidden className="text-[10px]">→</span> Cache write
+          <span aria-hidden className="text-[10px]">→</span> {t("cache_write")}
         </span>
         <span>{cacheWrites > 0 ? fmtTokensFn(cacheWrites) : "0"}</span>
       </div>
       {estimated && (
         <p className="pt-1 text-[10px] text-muted-foreground/70">
-          Latest reading is a live estimate (~) — this provider did not report usage for the last request.
+          {t("usage_reading_live_estimate")}
         </p>
       )}
       {!measured && (
         <p className="pt-1 text-[10px] text-muted-foreground/70">
-          This provider did not report usage. The ring stays empty until measured data arrives.
+          {t("usage_not_reported_empty")}
         </p>
       )}
     </div>

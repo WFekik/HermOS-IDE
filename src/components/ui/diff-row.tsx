@@ -45,10 +45,10 @@ export function DiffRow({ line }: { line: SharedDiffLine }) {
         line.type === "del" && "bg-red-500/10",
       )}
     >
-      <span className="w-10 shrink-0 select-none border-r border-border/50 px-2 text-right tabular-nums text-muted-foreground/60">
+      <span className="w-10 shrink-0 select-none border-e border-border/50 px-2 text-end tabular-nums text-muted-foreground/60">
         {line.oldNo ?? ""}
       </span>
-      <span className="w-10 shrink-0 select-none border-r border-border/50 px-2 text-right tabular-nums text-muted-foreground/60">
+      <span className="w-10 shrink-0 select-none border-e border-border/50 px-2 text-end tabular-nums text-muted-foreground/60">
         {line.newNo ?? ""}
       </span>
       <span
@@ -63,7 +63,7 @@ export function DiffRow({ line }: { line: SharedDiffLine }) {
       </span>
       <span
         className={cn(
-          "flex-1 min-w-0 whitespace-pre-wrap break-words pl-2 pr-3",
+          "flex-1 min-w-0 whitespace-pre-wrap break-words ps-2 pe-3",
           line.type === "add" && "text-emerald-700 dark:text-emerald-400",
           line.type === "del" && "text-red-700 dark:text-red-400",
           line.type === "context" && "text-foreground/80",

@@ -140,7 +140,7 @@ export function Minimap({
         }
       }}
       className={cn(
-        "absolute right-0 top-0 z-10 h-full w-[60px] cursor-pointer select-none border-l border-border/60 bg-muted/20",
+        "absolute end-0 top-0 z-10 h-full w-[60px] cursor-pointer select-none border-s border-border/60 bg-muted/20",
         "px-1 py-0.5",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/40",
         className,

@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { FileCode2, Bug, FileSearch, FlaskConical } from "lucide-react";
 import { HermOSLogo } from "@/components/brand/hermos-logo";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
 
@@ -14,6 +15,8 @@ interface EmptyStateProps {
 }
 
 interface SuggestionCardDef {
+  /** Stable translation key — used to look up title, description, and prompt in the i18n dictionary. */
+  key: "scaffold_feature" | "fix_bug" | "explain_code" | "write_tests";
   title: string;
   description: string;
   prompt: string;
@@ -22,6 +25,7 @@ interface SuggestionCardDef {
 
 const SUGGESTIONS: SuggestionCardDef[] = [
   {
+    key: "scaffold_feature",
     title: "Scaffold a feature",
     description: "Generate a new module with tests and docs.",
     prompt:
@@ -29,6 +33,7 @@ const SUGGESTIONS: SuggestionCardDef[] = [
     icon: FileCode2,
   },
   {
+    key: "fix_bug",
     title: "Fix a bug",
     description: "Describe the symptom; the agent will investigate.",
     prompt:
@@ -36,6 +41,7 @@ const SUGGESTIONS: SuggestionCardDef[] = [
     icon: Bug,
   },
   {
+    key: "explain_code",
     title: "Explain code",
     description: "Point at a file and get a clear breakdown.",
     prompt:
@@ -43,6 +49,7 @@ const SUGGESTIONS: SuggestionCardDef[] = [
     icon: FileSearch,
   },
   {
+    key: "write_tests",
     title: "Write tests",
     description: "Generate unit tests for existing functions.",
     prompt:
@@ -58,6 +65,7 @@ const SUGGESTIONS: SuggestionCardDef[] = [
  * Clicking a card fills the composer draft via onPick.
  */
 export function EmptyState({ onPick, className }: EmptyStateProps) {
+  const { t } = useTranslation();
   const activeFileTab = useAppStore((s) => s.activeFileTab);
   const hasActiveFile = Boolean(activeFileTab);
   const requestOpenFolderDialog = useAppStore((s) => s.requestOpenFolderDialog);
@@ -67,15 +75,17 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
   const suggestions = SUGGESTIONS;
 
   const handlePick = React.useCallback(
-    (s: SuggestionCardDef) => {
-      if (s.title === "Explain code" && !hasActiveFile) {
+    (cardKey: string, fallbackPrompt: string) => {
+      if (cardKey === "explain_code" && !hasActiveFile) {
         setRightPanelTab("files");
         requestOpenFolderDialog();
         return;
       }
-      onPick(s.prompt);
+      const promptKey = `${cardKey}_prompt`;
+      const prompt = t(promptKey) !== promptKey ? t(promptKey) : fallbackPrompt;
+      onPick(prompt);
     },
-    [hasActiveFile, onPick, requestOpenFolderDialog, setRightPanelTab],
+    [hasActiveFile, onPick, requestOpenFolderDialog, setRightPanelTab, t],
   );
 
   return (
@@ -92,33 +102,36 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
         <HermOSLogo size={48} className="mx-auto mb-5 opacity-90" />
 
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-          What should we build today?
+          {t("empty_state_title")}
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          An agent that reads, writes, and runs code in your workspace.
+          {t("empty_state_subtitle")}
         </p>
 
-        <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
+        <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-start">
           {suggestions.map((s, i) => {
             const Icon = s.icon;
+            const titleText = t(s.key);
+            const descText = t(`${s.key}_desc`);
+
             return (
               <motion.button
-                key={s.title}
+                key={s.key}
                 type="button"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: 0.05 + i * 0.05 }}
-                onClick={() => handlePick(s)}
-                className="group rounded-xl border bg-card p-3.5 text-left hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-sm transition-all"
+                onClick={() => handlePick(s.key, s.prompt)}
+                className="group rounded-xl border bg-card p-3.5 text-start hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-sm transition-all"
               >
                 <div className="flex items-start gap-3">
                   <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-brand transition-colors group-hover:bg-brand/10">
                     <Icon className="size-4" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-foreground">{s.title}</div>
+                    <div className="text-sm font-semibold text-foreground">{titleText}</div>
                     <div className="mt-0.5 text-xs text-muted-foreground line-clamp-2">
-                      {s.description}
+                      {descText}
                     </div>
                   </div>
                 </div>
@@ -128,14 +141,14 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
         </div>
 
         <div className="mt-6 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
-          <span>Press</span>
+          <span>{t("press")}</span>
           <kbd className="inline-flex items-center rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
             {isMac ? "⌘" : "Ctrl"}
           </kbd>
           <kbd className="inline-flex items-center rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
             K
           </kbd>
-          <span>to open the command palette</span>
+          <span>{t("open_command_palette")}</span>
         </div>
       </motion.div>
     </div>

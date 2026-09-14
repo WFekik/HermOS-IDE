@@ -1,2 +1,22 @@
+# NOTE: `* text=auto` intentionally NOT enabled here — enabling it
+# renormalizes ~150 files (CRLF warnings) and must ship as a dedicated
+# normalization commit, not mixed with feature changes.
 *.sh text eol=lf
 *.mjs text eol=lf
+# Explicit binary: never normalize line endings for images, icons, fonts, archives.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary

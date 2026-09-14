@@ -56,6 +56,11 @@ export const PERMISSION_ACTIONS: PermissionActionDef[] = [
     description: "Execute allowlisted shell commands in the workspace.",
   },
   {
+    action: "command.outside_workspace",
+    label: "Run outside workspace commands",
+    description: "Execute commands targeting directories outside the workspace root (explicitly confirmed by user).",
+  },
+  {
     action: "browser.open",
     label: "Open URLs in the browser",
     description: "Open a URL in the integrated browser session.",
@@ -74,7 +79,7 @@ export const PERMISSION_ACTIONS: PermissionActionDef[] = [
     action: "web.fetch",
     label: "Fetch web pages",
     description: "Agent-initiated HTTP fetch of a URL.",
-    readonly: true,
+    readonly: false,
   },
   {
     action: "web.search",
@@ -114,11 +119,12 @@ export const DEFAULT_CONFIG: PermissionsConfig = {
   rules: [
     { action: "file.read", mode: "allow" },
     { action: "file.write", mode: "allow" },
-    { action: "command.run", mode: "allow" },
+    { action: "command.run", mode: "ask" },
+    { action: "command.outside_workspace", mode: "ask" },
     { action: "browser.open", mode: "ask" },
     { action: "browser.click", mode: "ask" },
     { action: "browser.type", mode: "ask" },
-    { action: "web.fetch", mode: "allow" },
+    { action: "web.fetch", mode: "ask" },
     { action: "web.search", mode: "allow" },
     { action: "mcp.call", mode: "ask" },
     { action: "subagent.spawn", mode: "allow" },

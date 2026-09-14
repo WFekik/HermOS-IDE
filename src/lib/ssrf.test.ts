@@ -3,7 +3,7 @@ import type * as SsrfModule from "./ssrf";
 
 vi.mock("dns/promises", () => ({
   lookup: vi.fn(async (host: string) => {
-    if (host === "example.com") {
+    if (host === "example.com" || host === "redirected.example.com") {
       return [{ address: "93.184.216.34", family: 4 }];
     }
     if (host === "internal.local") {
@@ -204,5 +204,109 @@ describe("checkUrlHost — strict mode (SSRF_BLOCK_PRIVATE=true)", () => {
   it("blocks hostnames that resolve to any private address", async () => {
     const m = await loadSsrf("strict");
     expect(await m.checkUrlHost("http://mixed.local/")).toMatch(/private\/internal/);
+  });
+});
+
+describe("fetchWithSsrf", () => {
+  it("converts POST to GET on 301/302/303 redirects and strips auth across origins", async () => {
+    const { fetchWithSsrf } = await import("@/lib/ai/ssrf-fetch");
+
+    let callCount = 0;
+    const capturedInits: RequestInit[] = [];
+
+    const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      callCount++;
+      capturedInits.push(init ?? {});
+      if (callCount === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://redirected.example.com/api" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      const resp = await fetchWithSsrf("https://example.com/api", {
+        method: "POST",
+        body: JSON.stringify({ data: 123 }),
+        headers: {
+          "authorization": "Bearer secret-token",
+          "x-api-key": "secret-key",
+          "content-type": "application/json",
+        },
+      });
+
+      expect(resp.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      // Second hop should be converted to GET with no body
+      expect(capturedInits[1].method).toBe("GET");
+      expect(capturedInits[1].body).toBeUndefined();
+
+      // Second hop is cross-origin -> auth headers stripped
+      const secondHeaders = new Headers(capturedInits[1].headers);
+      expect(secondHeaders.get("authorization")).toBeNull();
+      expect(secondHeaders.get("x-api-key")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects when redirect limit is exceeded", async () => {
+    const { fetchWithSsrf } = await import("@/lib/ai/ssrf-fetch");
+
+    const mockFetch = vi.fn(async () => {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://example.com/redirect" },
+      });
+    });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      await expect(
+        fetchWithSsrf("https://example.com/start", { method: "GET" }),
+      ).rejects.toThrow(/Exceeded maximum allowed redirects/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("propagates the caller AbortSignal to every redirect hop", async () => {
+    const { fetchWithSsrf } = await import("@/lib/ai/ssrf-fetch");
+
+    const capturedInits: RequestInit[] = [];
+    const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      capturedInits.push(init ?? {});
+      if (capturedInits.length === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://redirected.example.com/api" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    try {
+      const controller = new AbortController();
+      const resp = await fetchWithSsrf("https://example.com/api", {
+        method: "GET",
+        signal: controller.signal,
+      });
+      expect(resp.status).toBe(200);
+      expect(capturedInits).toHaveLength(2);
+      // The signal must survive the hop (spread via {...currentInit}) so a
+      // mid-redirect abort cancels the downstream request under undici.
+      expect(capturedInits[0].signal).toBe(controller.signal);
+      expect(capturedInits[1].signal).toBe(controller.signal);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

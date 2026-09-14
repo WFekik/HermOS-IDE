@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import {
   permissionsKeys,
   PERMISSION_ACTIONS,
@@ -57,6 +58,7 @@ export function PermissionsSettings() {
 }
 
 function PermissionsSettingsInner() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: permissionsKeys.all,
@@ -84,11 +86,11 @@ function PermissionsSettingsInner() {
       const serialized = JSON.stringify(data.config);
       setDraft(data.config);
       setLastLoaded(serialized);
-      toast.success("Permissions saved");
+      toast.success(t("permissions_saved"));
       void queryClient.invalidateQueries({ queryKey: permissionsKeys.all });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Failed to save permissions");
+      toast.error(e instanceof Error ? e.message : t("failed_save_permissions"));
     },
   });
 
@@ -111,7 +113,7 @@ function PermissionsSettingsInner() {
 
   const handleReset = () => {
     setDraft(DEFAULT_CONFIG);
-    toast.info("Reverted to default config — click Save to persist");
+    toast.info(t("reverted_default_config"));
   };
 
   if (query.isLoading || !draft) {
@@ -128,7 +130,7 @@ function PermissionsSettingsInner() {
               <p>
                 {query.error instanceof Error
                   ? query.error.message
-                  : "Failed to load permissions config."}
+                  : t("failed_load_permissions")}
               </p>
               <Button
                 size="sm"
@@ -136,7 +138,7 @@ function PermissionsSettingsInner() {
                 className="mt-2 h-7 text-xs"
                 onClick={() => void query.refetch()}
               >
-                Retry
+                {t("try_again")}
               </Button>
             </div>
           </div>
@@ -153,15 +155,15 @@ function PermissionsSettingsInner() {
 
       <div className="space-y-2">
         <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Action rules
+          {t("action_rules")}
         </div>
         <div className="overflow-hidden rounded-md border">
           <table className="w-full text-xs">
             <thead className="bg-muted/40">
               <tr>
-                <th className="px-3 py-2 text-left font-medium">Action</th>
-                <th className="px-3 py-2 text-left font-medium">Description</th>
-                <th className="px-3 py-2 text-right font-medium">Mode</th>
+                <th className="px-3 py-2 text-start font-medium">{t("action_header")}</th>
+                <th className="px-3 py-2 text-start font-medium">{t("description_header")}</th>
+                <th className="px-3 py-2 text-end font-medium">{t("mode_header")}</th>
               </tr>
             </thead>
             <tbody>
@@ -185,19 +187,18 @@ function PermissionsSettingsInner() {
                                 variant="outline"
                                 className="h-4 px-1 text-[9px] text-muted-foreground"
                               >
-                                read-only
+                                {t("read_only")}
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent side="top">
-                              Read-only actions are auto-allowed when
-                              &ldquo;Auto-allow read-only&rdquo; is on.
+                              {t("readonly_auto_allow_tooltip")}
                             </TooltipContent>
                           </Tooltip>
                         )}
                       </div>
                     </td>
                     <td className="px-3 py-2 align-top text-muted-foreground">
-                      {def.description}
+                      {(() => { const k = `perm_desc_${def.action.replace(/\./g, "_")}`; const v = t(k); return v !== k ? v : def.description; })()}
                     </td>
                     <td className="px-3 py-2 align-top">
                       <div className="flex justify-end">
@@ -222,20 +223,17 @@ function PermissionsSettingsInner() {
                 htmlFor="auto-readonly"
                 className="text-xs font-medium"
               >
-                Auto-allow read-only actions
+                {t("auto_allow_readonly")}
               </Label>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                When on, <code className="font-mono">file.read</code>,{" "}
-                <code className="font-mono">web.fetch</code>, and{" "}
-                <code className="font-mono">web.search</code> are allowed
-                even if the default mode is Ask or Deny.
+                {t("auto_allow_readonly_desc")}
               </p>
             </div>
             <Switch
               id="auto-readonly"
               checked={draft.autoAllowReadonly}
               onCheckedChange={setAutoAllowReadonly}
-              aria-label="Auto-allow read-only actions"
+              aria-label={t("auto_allow_readonly")}
             />
           </div>
         </div>
@@ -252,7 +250,7 @@ function PermissionsSettingsInner() {
           ) : (
             <Save className="size-3.5" />
           )}
-          Save
+          {t("save_changes")}
         </Button>
         <Button
           size="sm"
@@ -262,16 +260,16 @@ function PermissionsSettingsInner() {
           disabled={saveMut.isPending}
         >
           <RotateCcw className="size-3.5" />
-          Reset to defaults
+          {t("reset_to_defaults")}
         </Button>
         {dirty && (
           <span className="text-[11px] text-amber-600 dark:text-amber-400">
-            Unsaved changes
+            {t("unsaved_changes")}
           </span>
         )}
         {!dirty && lastLoaded && (
           <span className="inline-flex items-center gap-1 text-[11px] text-brand">
-            <Check className="size-3" /> In sync with server
+            <Check className="size-3" /> {t("in_sync_with_server")}
           </span>
         )}
       </div>
@@ -280,22 +278,15 @@ function PermissionsSettingsInner() {
 }
 
 function Header() {
+  const { t } = useTranslation();
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">
         <ShieldCheck className="size-4 text-brand" />
-        <h3 className="text-base font-semibold">Permissions</h3>
+        <h3 className="text-base font-semibold">{t("permissions_and_safety")}</h3>
       </div>
       <p className="text-sm text-muted-foreground">
-        Control what agents are allowed to do. Changes apply to all agents in
-        your workspace.
-      </p>
-      <p className="flex items-start gap-1 text-[11px] text-muted-foreground">
-        <BookOpen className="mt-0.5 size-3 shrink-0" />
-        <span>
-          Allow runs without prompting, Ask requires approval per invocation,
-          Deny blocks the action outright.
-        </span>
+        {t("permissions_desc")}
       </p>
     </div>
   );
@@ -308,10 +299,11 @@ function ModeToggle({
   value: PermissionMode;
   onChange: (m: PermissionMode) => void;
 }) {
+  const { t } = useTranslation();
   const modes: { value: PermissionMode; label: string }[] = [
-    { value: "allow", label: "Allow" },
-    { value: "ask", label: "Ask" },
-    { value: "deny", label: "Deny" },
+    { value: "allow", label: t("mode_allow") },
+    { value: "ask", label: t("mode_ask") },
+    { value: "deny", label: t("mode_deny") },
   ];
   return (
     <div

@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { DiffRow, type SharedDiffLine } from "@/components/ui/diff-row";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
  * git-diff-view.tsx — renders a unified git diff (multiple files with
@@ -69,6 +70,7 @@ interface ParsedFile {
 type DiffLine = SharedDiffLine;
 
 export function GitDiffView({ diff, className }: GitDiffViewProps) {
+  const { t } = useTranslation();
   const files = React.useMemo(() => parseUnifiedDiff(diff), [diff]);
   const [expandAll, setExpandAll] = React.useState(true);
 
@@ -80,7 +82,7 @@ export function GitDiffView({ diff, className }: GitDiffViewProps) {
           className,
         )}
       >
-        No changes to display.
+        {t("no_changes_to_display")}
       </div>
     );
   }
@@ -89,14 +91,14 @@ export function GitDiffView({ diff, className }: GitDiffViewProps) {
     <div className={cn("flex flex-col h-full min-h-0 rounded-md border bg-card overflow-hidden", className)}>
       <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5 shrink-0 text-xs">
         <span className="font-mono text-[11px] text-muted-foreground">
-          {files.length} file{files.length === 1 ? "" : "s"} changed
+          {t("files_changed_count", { count: files.length })}
         </span>
         <button
           type="button"
           onClick={() => setExpandAll((v) => !v)}
           className="text-[11px] font-medium text-brand hover:underline"
         >
-          {expandAll ? "Collapse all" : "Expand all"}
+          {expandAll ? t("collapse_all") : t("expand_all")}
         </button>
       </div>
       <ScrollArea className="flex-1 min-h-0 w-full overflow-auto">
@@ -152,7 +154,7 @@ function FileDiff({ file, forceOpen }: { file: ParsedFile; forceOpen?: boolean }
           <KindIcon className={cn("size-3.5 shrink-0", headerColor)} />
           <span
             className={cn(
-              "flex-1 min-w-0 truncate font-mono text-[11px] text-left",
+              "flex-1 min-w-0 truncate font-mono text-[11px] text-start",
               headerColor,
             )}
             title={file.displayPath}

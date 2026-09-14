@@ -43,6 +43,7 @@ export const KNOWN_PERMISSION_ACTIONS: ReadonlySet<PermissionAction> = new Set<P
   "file.read",
   "file.write",
   "command.run",
+  "command.outside_workspace",
   "browser.open",
   "browser.click",
   "browser.type",
@@ -147,9 +148,14 @@ export async function evaluateToolPermission(
   }
 
   if (mode === "architect") {
+    if (toolName === "create_artifact") {
+      const resolved = config ?? (await getPermissions(userId));
+      return evaluatePermission(resolved, "file.write");
+    }
     if (
       action === "file.write" ||
       action === "command.run" ||
+      action === "command.outside_workspace" ||
       action === "browser.open" ||
       action === "browser.click" ||
       action === "browser.type" ||

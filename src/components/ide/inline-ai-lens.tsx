@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { apiPost } from "@/lib/api-client";
 import { toast } from "sonner";
+import { useTranslation } from "@/hooks/use-translation";
 
 export interface InlineAiLensProps {
   path: string;
@@ -26,6 +27,7 @@ export function InlineAiLens({
   onAccept,
   onClose,
 }: InlineAiLensProps) {
+  const { t } = useTranslation();
   const [instruction, setInstruction] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState<string | null>(null);
@@ -50,7 +52,7 @@ export function InlineAiLens({
         setResult(res.modifiedCode);
       }
     } catch (err) {
-      toast.error("Inline edit failed", {
+      toast.error(t("inline_edit_failed"), {
         description: err instanceof Error ? err.message : "Error generating edits",
       });
     } finally {
@@ -72,7 +74,7 @@ export function InlineAiLens({
       <div className="flex items-center justify-between gap-2 pb-2">
         <div className="flex items-center gap-1.5 font-medium text-xs text-brand">
           <Sparkles className="size-3.5" />
-          <span>Inline AI Lens</span>
+          <span>{t("inline_ai_lens")}</span>
           {startLine && endLine && (
             <Badge variant="outline" className="h-4 text-[10px] font-mono">
               L{startLine}-L{endLine}
@@ -95,7 +97,7 @@ export function InlineAiLens({
             autoFocus
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
-            placeholder="Ask AI to edit, refactor, or add comments (Ctrl+I)..."
+            placeholder={t("inline_ai_placeholder")}
             className="h-8 text-xs bg-background/80"
             disabled={loading}
           />
@@ -109,7 +111,7 @@ export function InlineAiLens({
               <Loader2 className="size-3 animate-spin" />
             ) : (
               <>
-                <Wand2 className="size-3" /> Edit
+                <Wand2 className="size-3" /> {t("edit")}
               </>
             )}
           </Button>
@@ -117,7 +119,7 @@ export function InlineAiLens({
       ) : (
         <div className="space-y-2">
           <div className="rounded border bg-muted/40 p-2 font-mono text-xs overflow-x-auto max-h-40">
-            <div className="text-[10px] text-muted-foreground mb-1 font-sans">Proposed Edits:</div>
+            <div className="text-[10px] text-muted-foreground mb-1 font-sans">{t("proposed_edits")}</div>
             <pre className="text-foreground/90 whitespace-pre-wrap">{result}</pre>
           </div>
           <div className="flex items-center justify-end gap-2">
@@ -127,7 +129,7 @@ export function InlineAiLens({
               className="h-7 text-xs gap-1"
               onClick={() => setResult(null)}
             >
-              <RotateCw className="size-3" /> Retry
+              <RotateCw className="size-3" /> {t("retry")}
             </Button>
             <Button
               variant="ghost"
@@ -135,7 +137,7 @@ export function InlineAiLens({
               className="h-7 text-xs gap-1"
               onClick={onClose}
             >
-              <X className="size-3" /> Reject
+              <X className="size-3" /> {t("reject")}
             </Button>
             <Button
               size="sm"
@@ -145,7 +147,7 @@ export function InlineAiLens({
                 onClose();
               }}
             >
-              <Check className="size-3" /> Accept
+              <Check className="size-3" /> {t("accept")}
             </Button>
           </div>
         </div>

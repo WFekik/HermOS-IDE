@@ -39,7 +39,13 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   let ws = await getActiveWorkspace(user.id);
   if (!ws) ws = await ensureDefaultWorkspace(user.id);
 
-  const exec = await runCommandWs(user.id, ws.name, parsed.data.command);
+  // Intentional: the human terminal stays workspace-confined (no
+  // userAllowedOutsideWorkspace). Outside-workspace execution is an
+  // agent-only path gated by command.outside_workspace + explicit user Allow
+  // in executor.ts; the interactive terminal never sets that flag.
+  const exec = await runCommandWs(user.id, ws.name, parsed.data.command, {
+    rootDir: ws.rootDir,
+  });
   const result: TerminalResponse = {
     ok: exec.ok,
     stdout: exec.stdout,

@@ -18,8 +18,11 @@ import {
   Compass,
   Folder,
   FilePlus2,
+  HelpCircle,
+  Check,
 } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import type { LiveToolCall } from "@/stores/app-store";
 import { CodeBlock } from "@/components/ide/code-block";
 import { ToolCallCard, ToolResultBody, safeParse, FileTypeIcon, extractFilePath } from "@/components/ide/tool-call-card";
@@ -70,6 +73,7 @@ interface MessageRendererProps {
 }
 
 export function MessageRenderer({ message }: MessageRendererProps) {
+  const { t } = useTranslation();
   // Reconstruct segments dynamically for assistant messages when they are missing or empty,
   // to ensure they are rendered natively and cleanly in separate sequential blocks
   let segments = message.segments;
@@ -150,7 +154,6 @@ const HIDDEN_TOOLS = new Set([
   "todo_read",
   "todo_clear",
   "command_stop",
-  "ask_question",
 ]);
 
 export function mergeSegments(
@@ -218,6 +221,7 @@ function SegmentedMessageRenderer({
   message: UIMessage;
   reconstructedSegments?: any[];
 }) {
+  const { t } = useTranslation();
   const rawSegments = reconstructedSegments ?? message.segments ?? [];
   const liveToolCalls = message.liveToolCalls ?? [];
   const toolCallById = React.useMemo(
@@ -294,12 +298,13 @@ function SegmentedMessageRenderer({
               onOpenChange={(v) => setThinkingExpanded(seg.id, v)}
               isLive={isLiveThinking}
               content={sanitized}
-              emptyLabel="Thinking…"
+              emptyLabel={t("thinking_indication")}
             />
           );
         }
         if (seg.kind === "text") {
-          const sanitized = cachedSanitize(seg.content ?? "");
+          const rawContent = message.role === "user" ? formatUserMessageForDisplay(seg.content ?? "") : (seg.content ?? "");
+          const sanitized = cachedSanitize(rawContent);
           const showCursor = streaming && seg === last;
           return (
             <div key={seg.id} className="overflow-hidden">
@@ -312,6 +317,9 @@ function SegmentedMessageRenderer({
         if (!tc) return null;
         if (HIDDEN_TOOLS.has(tc.name)) return null;
 
+        if (tc.name === "ask_question") {
+          return <QuestionCallBlock key={seg.id} tc={tc} />;
+        }
         if (tc.name === "spawn_subagent") {
           return <SubagentBlock key={seg.id} tc={tc} />;
         }
@@ -328,16 +336,16 @@ function SegmentedMessageRenderer({
         );
       })}
       {message.attachments && message.attachments.length > 0 && (
-        <div className="space-y-1">
+        <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
           {message.attachments.map((att) => (
-            <AttachmentBlock key={att.id} att={att} />
+            <AttachmentBlock key={att.id} att={att} isUser={message.role === "user"} />
           ))}
         </div>
       )}
       {isThinking && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground overflow-hidden">
           <Brain className="size-3.5 text-brand animate-pulse shrink-0" />
-          <span className="truncate">Thinking…</span>
+          <span className="truncate">{t("thinking_indication")}</span>
         </div>
       )}
       {message.error && (
@@ -350,10 +358,18 @@ function SegmentedMessageRenderer({
 }
 
 function FlatMessageRenderer({ message }: { message: UIMessage }) {
+  const { t } = useTranslation();
   const thinkingExpanded = useAppStore((s) => s.thinkingExpanded);
   const setThinkingExpanded = useAppStore((s) => s.setThinkingExpanded);
 
-  const extracted = extractThinkingAndContent(message.content ?? "", message.thinking);
+  const rawContent = React.useMemo(
+    () =>
+      message.role === "user"
+        ? formatUserMessageForDisplay(message.content ?? "")
+        : (message.content ?? ""),
+    [message.id, message.content, message.role],
+  );
+  const extracted = extractThinkingAndContent(rawContent, message.thinking);
   let thinking = extracted.thinking ? cachedSanitizeThinking(extracted.thinking) : undefined;
   if (thinking && (thinking.length <= 3 || !/[a-zA-Z0-9]/.test(thinking))) {
     thinking = undefined;
@@ -381,7 +397,7 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
           onOpenChange={(v) => setThinkingExpanded(message.id, v)}
           isLive={!!isThinking}
           content={thinking ?? ""}
-          emptyLabel="Analyzing your request…"
+          emptyLabel={t("analyzing_request")}
         />
       )}
       {hasToolCalls && (
@@ -411,6 +427,9 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
               );
             }
             const tc = group.tc;
+            if (tc.name === "ask_question") {
+              return <QuestionCallBlock key={tc.id} tc={tc} />;
+            }
             if (tc.name === "spawn_subagent") {
               return <SubagentBlock key={tc.id} tc={tc} />;
             }
@@ -427,9 +446,9 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
       <MarkdownContent content={sanitized} streaming={!!message.streaming} />
       {message.streaming && sanitized !== "" && <StreamingCursor />}
       {message.attachments && message.attachments.length > 0 && (
-        <div className="space-y-1 mt-2">
+        <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
           {message.attachments.map((att) => (
-            <AttachmentBlock key={att.id} att={att} />
+            <AttachmentBlock key={att.id} att={att} isUser={message.role === "user"} />
           ))}
         </div>
       )}
@@ -450,7 +469,7 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
 function StreamingCursor() {
   return (
     <span
-      className="inline-flex items-center gap-[2px] align-baseline ml-0.5"
+      className="inline-flex items-center gap-[2px] align-baseline ms-0.5"
       aria-hidden
     >
       {[0, 1, 2].map((i) => (
@@ -469,6 +488,70 @@ function StreamingCursor() {
     </span>
   );
 }
+
+/**
+ * Allowlist for model-controlled markdown image link targets.
+ * Returns the href when safe to wrap in `<a target="_blank">`, else null
+ * (caller renders the inert `<img>` without the link wrapper).
+ * Allows http(s)/blob/data:image/internal/relative-image-paths; rejects
+ * `javascript:`/`data:text/html`/`vbscript:` and other URI schemes.
+ */
+export function isSafeMarkdownImageHref(src: unknown): string | null {
+  const raw = typeof src === "string" ? src.trim() : "";
+  if (!raw) return null;
+  // Reject protocol-relative URLs (//evil.com/x.png inherits the page scheme
+  // and loads off-origin without user consent).
+  if (raw.startsWith("//")) return null;
+  const lower = raw.toLowerCase();
+  if (
+    lower.startsWith("https://") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("blob:") ||
+    lower.startsWith("data:image/") ||
+    raw.startsWith("/api/attachments/") ||
+    raw.startsWith("/")
+  ) {
+    return raw;
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return null;
+  if (/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)(\?[^\s]*)?(#[^\s]*)?$/i.test(raw)) {
+    return raw;
+  }
+  return null;
+}
+
+const markdownImageRenderer = ({ src, alt }: { src?: unknown; alt?: unknown }) => {
+  // Bounded thumbnail that never blows out the chat column, but links to
+  // the full image so diagrams stay readable (reuses the browser tab
+  // instead of a second lightbox implementation).
+  const safeHref = isSafeMarkdownImageHref(src);
+  const imgEl = (
+    <img
+      src={src as string}
+      alt={(alt as string) || "Image"}
+      className="max-h-64 w-auto max-w-full object-contain hover:scale-[1.02] transition-transform"
+      loading="lazy"
+    />
+  );
+  if (!safeHref) {
+    return (
+      <span className="inline-block my-1 max-w-sm overflow-hidden rounded-md border border-border/70 shadow-xs">
+        {imgEl}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={safeHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={typeof alt === "string" && alt ? `${alt} — open full size` : "Open full size"}
+      className="inline-block my-1 max-w-sm overflow-hidden rounded-md border border-border/70 shadow-xs hover:border-brand/50 transition-colors"
+    >
+      {imgEl}
+    </a>
+  );
+};
 
 const markdownComponents: Components = {
   pre({ children }) {
@@ -540,7 +623,7 @@ const markdownComponents: Components = {
   table({ children }) {
     return (
       <div className="my-3 overflow-x-auto rounded-lg border bg-card/40 shadow-xs">
-        <table className="w-full text-xs text-left border-collapse">{children}</table>
+        <table className="w-full text-xs text-start border-collapse">{children}</table>
       </div>
     );
   },
@@ -552,15 +635,15 @@ const markdownComponents: Components = {
   },
   th({ children }) {
     return (
-      <th className="border-r last:border-r-0 px-3 py-2 text-left font-semibold text-foreground bg-muted/30">{children}</th>
+      <th className="border-e last:border-e-0 px-3 py-2 text-start font-semibold text-foreground bg-muted/30">{children}</th>
     );
   },
   td({ children }) {
-    return <td className="border-r last:border-r-0 px-3 py-1.5 text-foreground/90 leading-relaxed">{children}</td>;
+    return <td className="border-e last:border-e-0 px-3 py-1.5 text-foreground/90 leading-relaxed">{children}</td>;
   },
   blockquote({ children }) {
     return (
-      <blockquote className="my-2 border-l-2 border-brand/40 pl-3 text-muted-foreground italic">
+      <blockquote className="my-2 border-s-2 border-brand/40 ps-3 text-muted-foreground italic">
         {children}
       </blockquote>
     );
@@ -579,10 +662,10 @@ const markdownComponents: Components = {
     return <del className="line-through opacity-80">{children}</del>;
   },
   ul({ children }) {
-    return <ul className="my-1.5 list-disc pl-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ul>;
+    return <ul className="my-1.5 list-disc ps-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ul>;
   },
   ol({ children }) {
-    return <ol className="my-1.5 list-decimal pl-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ol>;
+    return <ol className="my-1.5 list-decimal ps-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ol>;
   },
   li({ children }) {
     return <li className="leading-[1.7]">{children}</li>;
@@ -604,6 +687,7 @@ const markdownComponents: Components = {
   hr() {
     return <hr className="my-4 border-border" />;
   },
+  img: markdownImageRenderer,
 };
 
 /**
@@ -921,39 +1005,335 @@ export function preprocessContent(content: string): string {
   return processed;
 }
 
-function AttachmentBlock({ att }: { att: AttachmentDTO }) {
+export function cleanUserMessageContent(content: string): string {
+  if (!content) return "";
+  // Display-only strip of the system-appended attachment block. The marker is
+  // appended verbatim as "\n\n## Attached files\n" + previews (see
+  // executor.ts / queue/route.ts): only strip it when the trailing block
+  // actually contains a system preview token, so a user literally typing
+  // "## Attached files" keeps their text.
+  const marker = "\n\n## Attached files\n";
+  let base = content;
+  const idx = content.lastIndexOf(marker);
+  if (idx !== -1) {
+    const tail = content.slice(idx + marker.length);
+    if (/\[Image:|\[File:|\[Attachment:?/i.test(tail)) {
+      base = content.slice(0, idx);
+    }
+  }
+  return base
+    // System previews always quote the filename ("name.ext"), so quoted-first
+    // patterns tolerate ) in filenames; unquoted fallback stays conservative.
+    .replace(/\[Image:\s*(?:"[^"]+"|[^\]]+?)\s*\([^)]*\)[^\]]*\]/gi, "")
+    .replace(/\[Attachment:?\s*(?:"[^"]+"|[^\]]+?)\s*(\([^)]*\))?[^\]]*\]/gi, "")
+    .replace(/\[File:\s*(?:"[^"]+"|[^\]]+?)\s*\([^)]*\)[\s\S]*?```[\s\S]*?```(\.\.\.\[truncated\])?\]/gi, "")
+    .trim();
+}
+
+/**
+ * Formats user prompt text for bubble display.
+ * A leading `/word` is treated as a slash command only when the command token
+ * starts with a letter and is followed by end-of-text or whitespace — so
+ * `/boost Fix…` and `/plan …` format, but `/path/to/file` and `/123` pass
+ * through untouched.
+ */
+export function formatUserMessageForDisplay(content: string): string {
+  const cleaned = cleanUserMessageContent(content);
+  const match = cleaned.match(/^\/([a-zA-Z][a-zA-Z0-9_-]*)([\s\S]*)$/);
+  if (match) {
+    const cmd = match[1];
+    const rest = match[2];
+    if (rest.length === 0 || /^\s/.test(rest)) {
+      return `⚡ **${cmd}**${rest}`;
+    }
+  }
+  return cleaned;
+}
+
+interface QuestionResult {
+  answers?: Array<{
+    selectedOptions?: unknown;
+    selected?: unknown;
+    text?: string;
+    answer?: string;
+  }>;
+  selectedOptions?: unknown;
+  selected?: unknown;
+  text?: string;
+  answer?: string;
+  value?: string;
+  timedOut?: boolean;
+  cancelled?: boolean;
+  error?: string;
+}
+
+function QuestionCallBlock({ tc }: { tc: LiveToolCall }) {
+  const { t } = useTranslation();
+  const qArgs = React.useMemo<Record<string, unknown>>(() => {
+    if (tc.parsedArgs && typeof tc.parsedArgs === "object") return tc.parsedArgs as Record<string, unknown>;
+    if (typeof tc.args === "string") {
+      try {
+        return (JSON.parse(tc.args) as Record<string, unknown>) || {};
+      } catch {
+        return {};
+      }
+    }
+    if (tc.args && typeof tc.args === "object") return tc.args as Record<string, unknown>;
+    return {};
+  }, [tc.parsedArgs, tc.args]);
+
+  const questions: Array<{ question: string; options: string[] }> = React.useMemo(() => {
+    const rawList: unknown[] =
+      Array.isArray(qArgs.questions) && qArgs.questions.length > 0
+        ? qArgs.questions
+        : qArgs.question || qArgs.title || qArgs.prompt
+          ? [{ question: qArgs.question || qArgs.title || qArgs.prompt, options: qArgs.options }]
+          : [];
+
+    return rawList.map((item: unknown) => {
+      const obj = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const qText = String(obj.question || obj.title || obj.prompt || obj.text || "Question");
+      const opts = Array.isArray(obj.options)
+        ? obj.options
+            .map((o: unknown) => {
+              if (typeof o === "string") return o;
+              if (typeof o === "number") return String(o);
+              if (o && typeof o === "object") {
+                const optObj = o as Record<string, unknown>;
+                return String(optObj.label || optObj.value || optObj.text || optObj.title || "");
+              }
+              return String(o ?? "");
+            })
+            .filter((s: string) => s.trim().length > 0)
+        : [];
+      return { question: qText, options: opts };
+    });
+  }, [qArgs]);
+
+  const res = React.useMemo<QuestionResult>(() => {
+    if (typeof tc.result === "string") {
+      try {
+        return (JSON.parse(tc.result) as QuestionResult) || { text: tc.result };
+      } catch {
+        return { text: tc.result };
+      }
+    }
+    if (tc.result && typeof tc.result === "object") return tc.result as QuestionResult;
+    return {};
+  }, [tc.result]);
+
+  // Deep answer check: String({}) === "[object Object]" is truthy, so a
+  // shallow String() check marks answers=[{}] as answered. Only the known
+  // answer fields count; empty objects / whitespace-only strings do not.
+  const isMeaningfulAnswerValue = (v: unknown): boolean => {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (typeof v === "number") return String(v).trim().length > 0;
+    if (Array.isArray(v)) return v.some(isMeaningfulAnswerValue);
+    if (typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      return (
+        isMeaningfulAnswerValue(o.selectedOptions) ||
+        isMeaningfulAnswerValue(o.selected) ||
+        isMeaningfulAnswerValue(o.text) ||
+        isMeaningfulAnswerValue(o.value) ||
+        isMeaningfulAnswerValue(o.answer) ||
+        isMeaningfulAnswerValue(o.label)
+      );
+    }
+    return false;
+  };
+  const hasNonEmptyList = (v: unknown): boolean =>
+    Array.isArray(v) && v.some(isMeaningfulAnswerValue);
+  const hasNonEmptyText = (v: unknown): boolean =>
+    typeof v === "string" && v.trim().length > 0;
+  const isAnswered = Boolean(
+    res &&
+      (hasNonEmptyList(res.answers) ||
+        hasNonEmptyList(res.selectedOptions) ||
+        hasNonEmptyList(res.selected) ||
+        hasNonEmptyText(res.text) ||
+        hasNonEmptyText(res.value) ||
+        hasNonEmptyText(res.answer)),
+  );
+  const isTimedOut = Boolean(res?.timedOut);
+  // Separate user-cancel from tool failure: "error" status / ok:false means
+  // the tool errored, not that the user cancelled. cancelled/timedOut are
+  // explicit result flags.
+  const isCancelled = Boolean(res?.cancelled);
+  const isFailed = Boolean(
+    !isAnswered && !isCancelled && !isTimedOut && (tc.status === "error" || tc.ok === false),
+  );
+
+  return (
+    <div className="my-2 rounded-lg border border-border/70 bg-card/60 p-3 shadow-xs space-y-2">
+      <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-2">
+        <div className="flex items-center gap-2">
+          <HelpCircle className="size-4 text-brand" />
+          <span className="text-xs font-semibold text-foreground">{t("clarification_question")}</span>
+        </div>
+        <div>
+          {isAnswered ? (
+            <Badge variant="outline" className="text-[10px] border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-3 me-1" />
+              {t("answered")}
+            </Badge>
+          ) : isTimedOut ? (
+            <Badge variant="outline" className="text-[10px] border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              {t("timed_out")}
+            </Badge>
+          ) : isCancelled ? (
+            <Badge variant="outline" className="text-[10px] border-muted-foreground/40 text-muted-foreground">
+              {t("cancelled")}
+            </Badge>
+          ) : isFailed ? (
+            <Badge variant="outline" className="text-[10px] border-destructive/40 bg-destructive/10 text-destructive">
+              {t("failed")}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] border-brand/40 bg-brand/10 text-brand">
+              {t("awaiting_answer")}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {questions.map((q, idx) => {
+          const ansItem = res.answers?.[idx];
+          const rawSelected = ansItem?.selectedOptions ?? ansItem?.selected ?? (idx === 0 ? (res.selectedOptions ?? res.selected) : undefined);
+          const selectedList: string[] = Array.isArray(rawSelected)
+            ? rawSelected
+                .map((s: unknown) => {
+                  if (typeof s === "object" && s) {
+                    const sObj = s as Record<string, unknown>;
+                    return String(sObj.label || sObj.value || sObj.text || "");
+                  }
+                  if (typeof s === "string") return s;
+                  if (typeof s === "number") return String(s);
+                  return "";
+                })
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0)
+            : typeof rawSelected === "string" && rawSelected.trim().length > 0
+              ? [rawSelected.trim()]
+              : [];
+          const answerText = ansItem?.text ?? ansItem?.answer ?? (idx === 0 ? (res.text ?? res.answer) : undefined);
+
+          return (
+            <div key={idx} className="space-y-1 text-xs">
+              <div className="font-medium text-foreground">{q.question}</div>
+              {selectedList.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {selectedList.map((opt: string, optIdx: number) => (
+                    <span
+                      key={optIdx}
+                      className="inline-flex items-center gap-1 rounded bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand border border-brand/30"
+                    >
+                      <Check className="size-2.5" />
+                      {opt}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {answerText && (
+                <div className="rounded bg-muted/50 p-2 text-muted-foreground text-[11px] italic mt-1">
+                  "{String(answerText)}"
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AttachmentBlock({ att, isUser }: { att: AttachmentDTO; isUser?: boolean }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
+  const closeRef = React.useRef<HTMLButtonElement>(null);
   const isImage = att.type.startsWith("image/");
   const src = `/api/attachments/${att.id}`;
   const ext = att.name.split(".").pop()?.toLowerCase() ?? "";
+  // Lightbox a11y: Escape closes, initial focus lands on Close, focus
+  // returns to the thumbnail on teardown.
+  React.useEffect(() => {
+    if (!expanded) return;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [expanded]);
   if (isImage) {
     return (
-      <div className="my-2 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="group relative block max-w-xs rounded-lg overflow-hidden border border-border/60 hover:border-brand/40 transition-colors cursor-pointer"
-        >
-          <img
-            src={src}
-            alt={att.name}
-            className="max-h-48 w-full object-cover group-hover:scale-[1.02] transition-transform"
-            loading="lazy"
-          />
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
-        </button>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-[11px] text-muted-foreground truncate">{att.name}</span>
-          <span className="text-[10px] text-muted-foreground tabular-nums">{formatBytes(att.size)}</span>
-          <a
-            href={src}
-            download={att.name}
-            className="ml-auto shrink-0 rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            title="Download"
+      <div className={cn("overflow-hidden inline-block", isUser ? "my-1" : "my-2")}>
+        <div className="relative group inline-block">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="group relative block rounded-lg overflow-hidden border border-border/70 bg-muted/20 hover:border-brand/50 transition-all cursor-pointer shadow-xs"
+            title={att.name}
           >
-            <Download className="size-3" />
-          </a>
+            <img
+              src={src}
+              alt={att.name}
+              className="size-24 object-cover group-hover:scale-105 transition-transform"
+              loading="lazy"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+          </button>
+          {!isUser && (
+            <div className="flex items-center gap-1.5 mt-1 max-w-24">
+              <span className="text-[10px] text-muted-foreground truncate">{att.name}</span>
+            </div>
+          )}
+          {isUser && <span className="sr-only">{att.name} ({formatBytes(att.size)})</span>}
         </div>
+
+        {expanded && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+            onClick={() => setExpanded(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={att.name}
+          >
+            <div
+              className="relative max-w-3xl max-h-[85vh] overflow-hidden rounded-xl bg-card p-3 shadow-2xl border border-border"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img
+                src={src}
+                alt={att.name}
+                className="max-h-[70vh] w-auto object-contain rounded-lg mx-auto"
+              />
+              <div className="flex items-center justify-between px-2 pt-2.5 text-xs text-muted-foreground">
+                <span className="truncate max-w-xs">{att.name} ({formatBytes(att.size)})</span>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={src}
+                    download={att.name}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted hover:bg-muted/80 text-foreground transition-colors text-xs font-medium"
+                  >
+                    <Download className="size-3" />
+                    <span>{t("download")}</span>
+                  </a>
+                  <button
+                    ref={closeRef}
+                    type="button"
+                    onClick={() => setExpanded(false)}
+                    className="px-2.5 py-1 rounded-md hover:bg-muted text-foreground transition-colors cursor-pointer text-xs"
+                  >
+                    {t("close")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1026,7 +1406,7 @@ function ThinkingBlock({
   onOpenChange,
   isLive,
   content,
-  emptyLabel = "Thinking…",
+  emptyLabel,
 }: {
   open: boolean | undefined;
   onOpenChange: (v: boolean) => void;
@@ -1034,6 +1414,7 @@ function ThinkingBlock({
   content: string;
   emptyLabel?: string;
 }) {
+  const { t } = useTranslation();
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   // Stick-to-bottom: auto-pin the newest reasoning while tokens land, but
   // NEVER yank the view — once the user scrolls up the inner box is theirs;
@@ -1089,7 +1470,7 @@ function ThinkingBlock({
       <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
         <ChevronRight className={cn("size-3 shrink-0 transition-transform [[data-state=open]_&]:rotate-90")} />
         <Brain className={cn("size-3.5 shrink-0", isLive ? "text-brand animate-pulse" : "text-brand")} />
-        <span className="truncate">{isLive ? "Thinking…" : "Reasoning"}</span>
+        <span className="truncate">{isLive ? (emptyLabel || t("thinking_indication")) : t("reasoning")}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1.5">
         <div
@@ -1162,6 +1543,7 @@ export { MarkdownContent };
  * appears when expanded.
  */
 export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToolCall }) {
+  const { t } = useTranslation();
   const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   const setActiveArtifactPath = useAppStore((s) => s.setActiveArtifactPath);
   const addArtifact = useAppStore((s) => s.addArtifact);
@@ -1228,9 +1610,9 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
           setRightPanelOpen(true);
         } : () => setOpen((v) => !v)}
         aria-expanded={isNoToggle || isArtifactOp ? undefined : open}
-        aria-label={isNoToggle || isArtifactOp ? undefined : open ? "Collapse" : "Expand"}
+        aria-label={isNoToggle || isArtifactOp ? undefined : open ? t("collapse") : t("expand")}
         className={cn(
-          "flex w-full items-center gap-1.5 py-1 text-left text-xs rounded-sm px-1 transition-colors",
+          "flex w-full items-center gap-1.5 py-1 text-start text-xs rounded-sm px-1 transition-colors",
           !isNoToggle && "hover:bg-accent/20 cursor-pointer",
           isNoToggle && "cursor-default",
         )}
@@ -1269,7 +1651,7 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
             </code>
             {isCreatedFile && (
               <Badge variant="outline" className="h-3.5 px-1 text-[8px] font-mono border-0 bg-emerald-500/15 text-emerald-400 shrink-0">
-                <FilePlus2 className="size-2 mr-0.5" />
+                <FilePlus2 className="size-2 me-0.5" />
                 NEW
               </Badge>
             )}
@@ -1298,7 +1680,7 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
         {!isNoToggle && !isArtifactOp && (
           <ChevronRight
             className={cn(
-              "size-3 text-foreground/70 shrink-0 transition-transform ml-auto",
+              "size-3 text-foreground/70 shrink-0 transition-transform ms-auto",
               open && "rotate-90",
             )}
           />
@@ -1311,7 +1693,7 @@ export const FileOpBlock = React.memo(function FileOpBlock({ tc }: { tc: LiveToo
             animate={false}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="overflow-hidden pl-5"
+            className="overflow-hidden ps-5"
           >
             <div className="pt-1">
               <ToolResultBody tc={tc} />
@@ -1328,6 +1710,7 @@ interface SubagentBlockProps {
 }
 
 export function SubagentBlock({ tc }: SubagentBlockProps) {
+  const { t } = useTranslation();
   const subagents = useAppStore((s) => s.subagents);
   const setActiveSubagentId = useAppStore((s) => s.setActiveSubagentId);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -1339,7 +1722,15 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
       : typeof tc.result === "string"
         ? (safeParse(tc.result) ?? {})
         : (tc.result as Record<string, unknown>);
-  const subagentId = (parsedResult?.id as string | undefined) || (parsedResult?.subagentId as string | undefined) || (parsedArgs as any)?.id || (parsedArgs as any)?.subagentId;
+  const argsRec =
+    parsedArgs && typeof parsedArgs === "object"
+      ? (parsedArgs as Record<string, unknown>)
+      : undefined;
+  const subagentId =
+    (parsedResult?.id as string | undefined) ||
+    (parsedResult?.subagentId as string | undefined) ||
+    (typeof argsRec?.id === "string" ? argsRec.id : undefined) ||
+    (typeof argsRec?.subagentId === "string" ? argsRec.subagentId : undefined);
 
   const subagent = React.useMemo(() => {
     if (subagentId) {
@@ -1352,7 +1743,13 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
     return null;
   }, [subagents, subagentId, parsedArgs]);
 
-  const name = String(subagent?.name || (parsedArgs as any)?.name || "Subagent");
+  const argsName =
+    parsedArgs && typeof parsedArgs === "object"
+      ? (parsedArgs as Record<string, unknown>).name
+      : undefined;
+  const name = String(
+    subagent?.name || (typeof argsName === "string" ? argsName : "") || t("subagent"),
+  );
   const status = subagent?.status || "pending";
 
   // Subagent polling is handled by SubagentsPanel (single source of truth).
@@ -1381,22 +1778,22 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
     >
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {isExploreOrArchitect ? (
-          <Compass className="size-3.5 text-brand shrink-0" aria-label="Explore / Architect agent" />
+          <Compass className="size-3.5 text-brand shrink-0" aria-label={t("explore_architect_agent")} />
         ) : (
-          <Bot className="size-3.5 text-brand shrink-0" aria-label="General agent" />
+          <Bot className="size-3.5 text-brand shrink-0" aria-label={t("general_agent")} />
         )}
         <span className="font-semibold text-xs text-foreground truncate tracking-tight min-w-0" title={name}>
           {name}
         </span>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0 ml-3">
+      <div className="flex items-center gap-2 shrink-0 ms-3">
         {status === "running" ? (
           <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />
         ) : status === "completed" ? (
-          <span className="text-[10px] font-mono text-brand font-medium">completed</span>
+          <span className="text-[10px] font-mono text-brand font-medium">{t("completed")}</span>
         ) : status === "failed" ? (
-          <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">failed</span>
+          <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">{t("failed")}</span>
         ) : null}
 
         <ChevronRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
@@ -1406,6 +1803,7 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
 }
 
 export function SubagentMessageBlock({ tc }: SubagentBlockProps) {
+  const { t } = useTranslation();
   const subagents = useAppStore((s) => s.subagents);
 
   const parsedArgs = React.useMemo(() => tc.parsedArgs ?? safeParse(tc.args), [tc.parsedArgs, tc.args]);
@@ -1415,13 +1813,16 @@ export function SubagentMessageBlock({ tc }: SubagentBlockProps) {
       : typeof tc.result === "string"
         ? (safeParse(tc.result) ?? {})
         : (tc.result as Record<string, unknown>);
-  const subagentId = String((parsedArgs as any)?.id ?? "");
+  const subagentId =
+    parsedArgs && typeof parsedArgs === "object"
+      ? String((parsedArgs as Record<string, unknown>).id ?? "")
+      : "";
   const name = React.useMemo(() => {
     const resultName = String(parsedResult?.name ?? "");
     if (resultName) return resultName;
-    if (!subagentId) return "subagent";
+    if (!subagentId) return t("subagent");
     return subagents.find((sa) => sa.id === subagentId)?.name ?? subagentId;
-  }, [subagents, subagentId, parsedResult?.name]);
+  }, [subagents, subagentId, parsedResult?.name, t]);
   const resumed = parsedResult?.status === "resumed";
   const failed =
     tc.ok === false || typeof (parsedResult as { error?: unknown })?.error === "string";
@@ -1436,8 +1837,8 @@ export function SubagentMessageBlock({ tc }: SubagentBlockProps) {
     >
       <div className="h-px flex-1 bg-border/40" />
       <span className="min-w-0 truncate">
-        {failed ? `messaged ${name || "subagent"} — failed` : `messaged ${name}`}
-        {resumed ? " · resumed" : ""}
+        {failed ? t("messaged_agent_failed", { name: name || t("subagent") }) : t("messaged_agent", { name })}
+        {resumed ? ` · ${t("resumed")}` : ""}
       </span>
       <div className="h-px flex-1 bg-border/40" />
     </div>
@@ -1478,6 +1879,7 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
   isStreaming = false,
   kind = "read",
 }: ToolBatchBlockProps) {
+  const { t } = useTranslation();
   const isRunning = toolCalls.some((tc) => tc.status === "running");
   const userToggledRef = React.useRef(false);
   const activeWorkspace = useAppStore((s) => s.activeWorkspace);
@@ -1506,7 +1908,7 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
   const dirCount = toolCalls.filter((tc) => tc.name === "list_directory" || tc.name === "list_dir").length;
 
   if (kind === "search") {
-    label = `Searched ${totalCount} quer${totalCount === 1 ? "y" : "ies"}`;
+    label = t("searched_queries_count", { count: totalCount });
   } else {
     if (totalCount === 1) {
       const tc = toolCalls[0];
@@ -1514,23 +1916,23 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
         const args = tc.parsedArgs ?? safeParse(tc.args);
         const rawPath = typeof args?.path === "string" ? args.path : typeof args?.DirectoryPath === "string" ? args.DirectoryPath : "";
         const target = (!rawPath || rawPath === "." || rawPath === "./") ? (activeWorkspace?.name || "default") : rawPath;
-        label = "Analyzed";
+        label = t("tool_analyzed");
         subLabel = target;
       } else if (tc.name === "read_file" || tc.name === "view_file") {
         const args = tc.parsedArgs ?? safeParse(tc.args);
         const path = typeof args?.path === "string" ? args.path : typeof args?.AbsolutePath === "string" ? args.AbsolutePath : "file";
-        label = "Read";
+        label = t("tool_read");
         subLabel = path;
       } else {
-        label = "Analyzed";
+        label = t("tool_analyzed");
         subLabel = tc.name;
       }
     } else if (fileCount > 0 && dirCount > 0) {
-      label = `Read ${fileCount} file${fileCount === 1 ? "" : "s"} & analyzed ${dirCount} dir${dirCount === 1 ? "" : "s"}`;
+      label = t("read_files_and_analyzed_dirs", { fileCount, dirCount });
     } else if (dirCount > 0) {
-      label = `Analyzed ${dirCount} director${dirCount === 1 ? "y" : "ies"}`;
+      label = t("analyzed_dirs_count", { count: dirCount });
     } else {
-      label = `Read ${fileCount || totalCount} file${(fileCount || totalCount) === 1 ? "" : "s"}`;
+      label = t("read_files_count", { count: fileCount || totalCount });
     }
   }
 
@@ -1543,7 +1945,7 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
         type="button"
         onClick={handleToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        className="flex w-full items-center gap-2 px-2.5 py-1 text-start text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         {isRunning ? (
           <Loader2 className="size-3.5 animate-spin text-brand shrink-0" />
@@ -1558,8 +1960,8 @@ export const ToolBatchBlock = React.memo(function ToolBatchBlock({
             {subLabel}
           </span>
         )}
-        <span className="ml-auto flex items-center gap-1.5 shrink-0">
-          <span className="font-mono text-[10px] text-foreground font-medium">{totalCount} item{totalCount === 1 ? "" : "s"}</span>
+        <span className="ms-auto flex items-center gap-1.5 shrink-0">
+          <span className="font-mono text-[10px] text-foreground font-medium">{t("items_count", { count: totalCount })}</span>
           <ChevronRight
             className={cn("size-3 text-foreground/80 transition-transform", open && "rotate-90")}
           />

@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { fileNameIconKind, type FileNameIconKind } from "@/lib/tool-ui-shared";
+import { useTranslation } from "@/hooks/use-translation";
 import {
   type FileNode,
   baseName,
@@ -80,6 +81,7 @@ export interface FileTreeProps {
 }
 
 export function FileTree(props: FileTreeProps) {
+  const { t } = useTranslation();
   const {
     tree,
     selectedPath,
@@ -172,14 +174,14 @@ export function FileTree(props: FileTreeProps) {
   if (error) {
     return (
       <div className="p-4 text-center">
-        <p className="text-xs text-muted-foreground">Failed to load files.</p>
+        <p className="text-xs text-muted-foreground">{t("failed_to_load_files")}</p>
         <Button
           size="sm"
           variant="ghost"
           className="mt-2 h-7 text-xs"
           onClick={onRetry}
         >
-          Retry
+          {t("retry")}
         </Button>
       </div>
     );
@@ -188,7 +190,7 @@ export function FileTree(props: FileTreeProps) {
   if (tree.length === 0) {
     return (
       <div className="p-4 text-center text-xs text-muted-foreground">
-        Empty workspace.
+        {t("empty_workspace")}
       </div>
     );
   }
@@ -196,7 +198,7 @@ export function FileTree(props: FileTreeProps) {
   return (
     <>
       <div className="h-full min-h-0 overflow-y-auto overflow-x-auto">
-        <div className="py-1.5 pr-2">
+        <div className="py-1.5 pe-2">
           {tree.map((node) => (
             <TreeNode
               key={node.path}
@@ -227,23 +229,19 @@ export function FileTree(props: FileTreeProps) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete {pendingDelete?.type === "dir" ? "folder" : "file"}?
+              {pendingDelete?.type === "dir" ? t("delete_folder_q") : t("delete_file_q")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               <span className="block text-foreground/90 font-mono break-all">
                 {pendingDelete?.path}
               </span>
               <span className="mt-2 block">
-                This action cannot be undone. The{" "}
-                {pendingDelete?.type === "dir"
-                  ? "folder and everything inside it"
-                  : "file"}{" "}
-                will be removed from the workspace.
+                {pendingDelete?.type === "dir" ? t("delete_folder_warn") : t("delete_file_warn")}
               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={deleting}
@@ -254,11 +252,11 @@ export function FileTree(props: FileTreeProps) {
             >
               {deleting ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Deleting…
+                  <Loader2 className="size-4 animate-spin" /> {t("deleting")}
                 </>
               ) : (
                 <>
-                  <Trash2 className="size-4" /> Delete
+                  <Trash2 className="size-4" /> {t("delete")}
                 </>
               )}
             </AlertDialogAction>
@@ -290,6 +288,7 @@ interface TreeNodeProps {
 }
 
 const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
+  const { t } = useTranslation();
   const {
     node,
     depth,
@@ -372,7 +371,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
             onClick={handleClick}
             onKeyDown={handleKeyDown}
             className={cn(
-              "group flex h-7 cursor-pointer items-center gap-1 rounded-sm pr-2 text-xs touch-manipulation",
+              "group flex h-7 cursor-pointer items-center gap-1 rounded-sm pe-2 text-xs touch-manipulation",
               "outline-none focus-visible:ring-1 focus-visible:ring-ring/60",
               isActive
                 ? "bg-accent text-accent-foreground"
@@ -435,7 +434,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
             {!isRenaming && statusChar && (
               <span
                 className={cn(
-                  "ml-1.5 px-1 rounded-[3px] text-[9px] font-bold font-mono border select-none scale-90 origin-left shrink-0",
+                  "ms-1.5 px-1 rounded-[3px] text-[9px] font-bold font-mono border select-none scale-90 origin-start shrink-0",
                   statusBadgeColor === "text-emerald-600 dark:text-emerald-400"
                     ? "bg-emerald-500/10 border-emerald-500/20"
                     : statusBadgeColor === "text-sky-600 dark:text-sky-400"
@@ -449,14 +448,14 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
                 )}
                 title={
                   gitStatus === "A"
-                    ? "Added"
+                    ? t("git_status_added")
                     : gitStatus === "M"
-                    ? "Modified"
+                    ? t("git_status_modified")
                     : gitStatus === "D"
-                    ? "Deleted"
+                    ? t("git_status_deleted")
                     : gitStatus === "R"
-                    ? "Renamed"
-                    : "Untracked"
+                    ? t("git_status_renamed")
+                    : t("git_status_untracked")
                 }
               >
                 {statusChar}
@@ -464,7 +463,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
             )}
 
             {!isRenaming && isDir && hasChildren && (
-              <span className="ml-auto text-[10px] text-muted-foreground/70 font-mono">
+              <span className="ms-auto text-[10px] text-muted-foreground/70 font-mono">
                 {node.children!.length}
               </span>
             )}
@@ -477,31 +476,31 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
               else onSelectFile(node.path);
             }}
           >
-            {isDir ? (isOpen ? "Collapse" : "Expand") : "Open"}
+            {isDir ? (isOpen ? t("collapse") : t("expand")) : t("open")}
           </ContextMenuItem>
           {isDir && onCreateIn && (
             <>
               <ContextMenuItem
                 onSelect={() => onCreateIn(node.path, "file")}
               >
-                <FileText className="size-3.5" /> New file
+                <FileText className="size-3.5" /> {t("new_file")}
               </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => onCreateIn(node.path, "dir")}
               >
-                <FolderIcon className="size-3.5" /> New folder
+                <FolderIcon className="size-3.5" /> {t("new_folder")}
               </ContextMenuItem>
             </>
           )}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => onStartRename(node)}>
-            <Pencil className="size-3.5" /> Rename
+            <Pencil className="size-3.5" /> {t("rename")}
           </ContextMenuItem>
           <ContextMenuItem
             variant="destructive"
             onSelect={() => onDeleteRequest(node.path, node.type)}
           >
-            <Trash2 className="size-3.5" /> Delete
+            <Trash2 className="size-3.5" /> {t("delete")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

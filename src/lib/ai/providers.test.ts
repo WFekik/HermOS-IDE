@@ -4,10 +4,9 @@ import {
   listProviders,
   getProvider,
   resolveModel,
+  modelSupportsVision,
   DEFAULT_PROVIDER,
   DEFAULT_MODEL,
-  DEFAULT_FALLBACK_MODEL,
-  DEFAULT_OPENAI_FALLBACK_MODEL,
 } from "./providers";
 import { extractCapabilities, extractPricing } from "@/lib/provider-fetch";
 import { getModelRate } from "@/lib/provider-models";
@@ -30,8 +29,16 @@ describe("Provider Catalog", () => {
     it("should export central provider and model default constants", () => {
       expect(DEFAULT_PROVIDER).toBe("puter");
       expect(DEFAULT_MODEL).toBe("auto");
-      expect(DEFAULT_FALLBACK_MODEL).toBe("claude-3-5-sonnet");
-      expect(DEFAULT_OPENAI_FALLBACK_MODEL).toBe("gpt-4o");
+    });
+
+    it("should not hardcode any concrete model ID", async () => {
+      // Guards the no-hardcoded-models invariant: providers.ts must not name
+      // a model family. Dynamic resolution (auto sentinel, live lists, store
+      // config) is the only source of model IDs.
+      const fs = await import("fs");
+      const src = fs.readFileSync("src/lib/ai/providers.ts", "utf8");
+      expect(src).not.toMatch(/DEFAULT_FALLBACK_MODEL/);
+      expect(src).not.toMatch(/VISION_MODEL_PATTERNS|NON_VISION_MODEL_PATTERNS/);
     });
   });
 
@@ -426,6 +433,31 @@ describe("Provider Catalog", () => {
       const flatTools = body.tools as any[];
       expect(flatTools[0].strict).toBe(true);
     });
+
+    it("pins Responses array-content wire format: text→input_text, image_url→input_image", () => {
+      const body = buildResponsesRequestBody({
+        model: "muse-spark",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "describe this" },
+              { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+              { type: "input_text", text: "already-normalized" },
+            ],
+          },
+        ],
+        stream: false,
+      });
+      const input = body.input as any[];
+      expect(input).toHaveLength(1);
+      expect(input[0].type).toBe("message");
+      expect(input[0].role).toBe("user");
+      expect(input[0].content[0]).toEqual({ type: "input_text", text: "describe this" });
+      expect(input[0].content[1]).toEqual({ type: "input_image", image_url: "data:image/png;base64,AAA" });
+      // Already-normalized blocks pass through untouched.
+      expect(input[0].content[2]).toEqual({ type: "input_text", text: "already-normalized" });
+    });
   });
 
   describe("Responses text dedup helper", () => {
@@ -491,4 +523,45 @@ describe("Provider Catalog", () => {
       expect(both.max_output_tokens).toBe(25);
     });
   });
+
+  describe("modelSupportsVision", () => {
+    it("follows the provider catalog flag regardless of model ID content", () => {
+      // Capability-driven: the model ID string never influences the result.
+      // Opaque fixture IDs prove no name sniffing takes place.
+      expect(modelSupportsVision("openai", "any-model-alpha")).toBe(true);
+      expect(modelSupportsVision("anthropic", "any-model-beta")).toBe(true);
+      expect(modelSupportsVision("unknown-provider-xyz", "any-model-alpha")).toBe(false);
+      expect(modelSupportsVision("openai")).toBe(true);
+    });
+
+    it("does not branch on model family names", () => {
+      // Previously regex-sniffed families; now all follow the catalog flag.
+      // Deliberately evocative fixture strings must behave identically.
+      const trickyIds = [
+        "texty-chat-model",
+        "flashy-omni-4o-thing",
+        "coder-thing-vl-max",
+        "vision-thing-9000",
+      ];
+      for (const id of trickyIds) {
+        expect(modelSupportsVision("openrouter", id)).toBe(true);
+      }
+    });
+
+    it("respects runtime store provider override if configured", () => {
+      const denyProvider = [{ id: "zen", supportsVision: false }];
+      expect(modelSupportsVision("zen", "any-model", denyProvider)).toBe(false);
+
+      const allowModel = [
+        { id: "zen", modelsConfig: [{ id: "any-model", visionEnabled: true }] },
+      ];
+      expect(modelSupportsVision("zen", "any-model", allowModel)).toBe(true);
+
+      const denyModel = [
+        { id: "zen", modelsConfig: [{ id: "any-model", visionEnabled: false }] },
+      ];
+      expect(modelSupportsVision("zen", "any-model", denyModel)).toBe(false);
+    });
+  });
 });
+

@@ -25,10 +25,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { toast } from "sonner";
 import type { PluginDTO } from "@/lib/types";
 
 export function PluginsPanel() {
+  const { t } = useTranslation();
   const plugins = useAppStore((s) => s.plugins);
   const install = useAppStore((s) => s.installPlugin);
   const toggle = useAppStore((s) => s.togglePlugin);
@@ -50,33 +52,33 @@ export function PluginsPanel() {
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <div className="flex items-center gap-2">
           <Puzzle className="size-4 text-brand" />
-          <span className="text-sm font-medium">Plugins</span>
+          <span className="text-sm font-medium">{t("plugins")}</span>
           <Badge variant="secondary" className="text-[10px]">{plugins.length}</Badge>
         </div>
         <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setAddOpen(true)}>
-          <Plus className="size-3.5" /> Add
+          <Plus className="size-3.5" /> {t("add")}
         </Button>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-3 space-y-3">
           <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Search className="absolute start-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search plugins…"
+              placeholder={t("search_plugins_placeholder")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="h-8 pl-8 text-xs"
+              className="h-8 ps-8 text-xs"
             />
           </div>
 
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-              Installed
+              {t("installed")}
             </div>
             {filtered.length === 0 ? (
               <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                {query ? "No matches" : "No plugins installed. Use the Add button to install one from a URL or local manifest."}
+                {query ? t("no_matches") : t("no_plugins_installed")}
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -87,7 +89,7 @@ export function PluginsPanel() {
                     onToggle={(v) => toggle(p.id, v)}
                     onDelete={() => {
                       remove(p.id);
-                      toast.success(`${p.name} removed`);
+                      toast.success(t("plugin_removed").replace("{name}", p.name));
                     }}
                   />
                 ))}
@@ -103,7 +105,7 @@ export function PluginsPanel() {
         onCreate={async (opts) => {
           const created = await install(opts);
           if (created) {
-            toast.success(`${created.name} added`);
+            toast.success(t("plugin_added").replace("{name}", created.name));
             setAddOpen(false);
           }
         }}
@@ -121,6 +123,7 @@ function PluginRow({
   onToggle: (v: boolean) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <motion.div
       layout
@@ -141,13 +144,17 @@ function PluginRow({
           {plugin.description || plugin.source}
         </div>
       </div>
-      <Switch checked={plugin.enabled} onCheckedChange={onToggle} aria-label={`Toggle ${plugin.name}`} />
+      <Switch
+        checked={plugin.enabled}
+        onCheckedChange={onToggle}
+        aria-label={t("toggle_plugin").replace("{name}", plugin.name)}
+      />
       <Button
         size="sm"
         variant="ghost"
         className="h-6 w-6 p-0 hover:text-destructive"
         onClick={onDelete}
-        aria-label="Remove"
+        aria-label={t("remove")}
       >
         <Trash2 className="size-3" />
       </Button>
@@ -171,6 +178,7 @@ function AddPluginDialog({
     manifest?: Record<string, unknown>;
   }) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [type, setType] = React.useState<"plugin" | "skill">("plugin");
@@ -188,7 +196,7 @@ function AddPluginDialog({
 
   const submit = async () => {
     if (!name.trim()) {
-      toast.error("Name is required");
+      toast.error(t("name_required"));
       return;
     }
     let parsedManifest: Record<string, unknown> | undefined;
@@ -196,7 +204,7 @@ function AddPluginDialog({
       try {
         parsedManifest = JSON.parse(manifest) as Record<string, unknown>;
       } catch {
-        toast.error("Manifest JSON is invalid");
+        toast.error(t("manifest_json_invalid"));
         return;
       }
     }
@@ -219,22 +227,22 @@ function AddPluginDialog({
     <Dialog open={open} onOpenChange={(o) => !submitting && onOpenChange(o)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add plugin</DialogTitle>
+          <DialogTitle>{t("add_plugin")}</DialogTitle>
           <DialogDescription>
-            Register a local plugin or skill. Provide a name and optional manifest JSON.
+            {t("add_plugin_desc")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="plug-name">Name</Label>
-            <Input id="plug-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-plugin" />
+            <Label htmlFor="plug-name">{t("name")}</Label>
+            <Input id="plug-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("plugin_name_placeholder")} />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="plug-desc">Description</Label>
-            <Input id="plug-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it does" />
+            <Label htmlFor="plug-desc">{t("description_header")}</Label>
+            <Input id="plug-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("plugin_desc_placeholder")} />
           </div>
           <div className="grid gap-1.5">
-            <Label>Type</Label>
+            <Label>{t("type")}</Label>
             <Select value={type} onValueChange={(v) => setType(v as "plugin" | "skill")}>
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -246,7 +254,7 @@ function AddPluginDialog({
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="plug-manifest">Manifest JSON (optional)</Label>
+            <Label htmlFor="plug-manifest">{t("manifest_json_optional")}</Label>
             <textarea
               id="plug-manifest"
               value={manifest}
@@ -258,10 +266,10 @@ function AddPluginDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
+            {t("cancel")}
           </Button>
           <Button onClick={submit} disabled={submitting}>
-            {submitting ? "Adding…" : "Add"}
+            {submitting ? t("adding") : t("add")}
           </Button>
         </DialogFooter>
       </DialogContent>

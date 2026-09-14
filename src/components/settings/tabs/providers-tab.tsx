@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { ProviderId, ProviderInfo, ProviderKeyDTO, SaveKeyRequest } from "@/lib/types";
@@ -30,6 +31,7 @@ import { ProviderLogo } from "@/components/brand/provider-logo";
  * skeleton (see SettingsDialog in settings-dialog.tsx).
  */
 export function ProvidersTab() {
+  const { t } = useTranslation();
   const providers = useAppStore((s) => s.providers);
   const providerKeys = useAppStore((s) => s.providerKeys);
   const saveKey = useAppStore((s) => s.saveProviderKey);
@@ -142,9 +144,9 @@ export function ProvidersTab() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
         <div>
-          <h3 className="text-base font-semibold">Providers (BYOK)</h3>
+          <h3 className="text-base font-semibold">{t("providers_byok")}</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Connect AI models via your own API keys or custom OpenAI-compatible endpoints.
+            {t("providers_byok_desc")}
           </p>
         </div>
         <Button
@@ -153,29 +155,29 @@ export function ProvidersTab() {
           onClick={() => setAddCustomOpen(true)}
         >
           <Save className="size-3.5" />
-          Add Custom Provider
+          {t("add_custom_provider")}
         </Button>
       </div>
 
       {/* Search & Filter Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
         <div className="relative flex-1">
-          <Search className="size-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Search className="size-3.5 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2" />
           <Input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search providers (OpenRouter, Anthropic, Ollama, DeepSeek)..."
-            className="h-8 pl-8 text-xs bg-muted/30"
+            placeholder={t("search_providers_placeholder")}
+            className="h-8 ps-8 text-xs bg-muted/30"
           />
         </div>
         <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
           {(
             [
-              { id: "all", label: "All", count: counts.all },
-              { id: "configured", label: "Connected", count: counts.configured },
-              { id: "free", label: "Free Tier", count: counts.free },
-              { id: "custom", label: "Custom", count: counts.custom },
+              { id: "all", label: t("filter_all"), count: counts.all },
+              { id: "configured", label: t("filter_connected"), count: counts.configured },
+              { id: "free", label: t("filter_free_tier"), count: counts.free },
+              { id: "custom", label: t("filter_custom"), count: counts.custom },
             ] as const
           ).map((tab) => (
             <button
@@ -190,7 +192,7 @@ export function ProvidersTab() {
               )}
             >
               <span>{tab.label}</span>
-              <span className="text-[10px] opacity-70 font-mono">({tab.count})</span>
+              <span className="text-[10px] opacity-70 font-mono">(<bdi>{tab.count}</bdi>)</span>
             </button>
           ))}
         </div>
@@ -199,14 +201,14 @@ export function ProvidersTab() {
       {addCustomOpen && (
         <div className="rounded-xl border border-brand/40 bg-brand/[0.02] p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">Add OpenAI-compatible Provider</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-brand">{t("add_openai_provider")}</h4>
             <Button size="icon" variant="ghost" className="size-6 text-muted-foreground" onClick={() => setAddCustomOpen(false)}>
               <XCircle className="size-4" />
             </Button>
           </div>
           <div className="grid sm:grid-cols-2 gap-2.5">
             <div className="grid gap-1">
-              <Label className="text-xs">Provider Name</Label>
+              <Label className="text-xs">{t("provider_name")}</Label>
               <Input
                 placeholder="e.g. Ollama Local, vLLM Prod, LM Studio"
                 value={customName}
@@ -215,7 +217,7 @@ export function ProvidersTab() {
               />
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">Base URL</Label>
+              <Label className="text-xs">{t("base_url")}</Label>
               <Input
                 placeholder="https://api.example.com/v1 or http://localhost:11434/v1"
                 value={customUrl}
@@ -225,7 +227,7 @@ export function ProvidersTab() {
             </div>
           </div>
           <div className="grid gap-1">
-            <Label className="text-xs">API Key (optional / placeholder for local endpoints)</Label>
+            <Label className="text-xs">{t("api_key_optional")}</Label>
             <Input
               type="password"
               placeholder="sk-..."
@@ -236,11 +238,11 @@ export function ProvidersTab() {
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAddCustomOpen(false)}>
-              Cancel
+              {t("cancel")}
             </Button>
             <Button size="sm" className="h-7 text-xs bg-brand text-white hover:bg-brand/90 gap-1" onClick={handleAddCustom} disabled={adding}>
               {adding ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
-              Save Provider
+              {t("save_provider")}
             </Button>
           </div>
         </div>
@@ -248,9 +250,9 @@ export function ProvidersTab() {
 
       {filteredProviders.length === 0 ? (
         <div className="rounded-xl border border-dashed p-8 text-center space-y-2">
-          <p className="text-xs text-muted-foreground">No providers found matching &ldquo;{searchQuery}&rdquo;</p>
+          <p className="text-xs text-muted-foreground">{t("no_providers_found")} &ldquo;{searchQuery}&rdquo;</p>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setSearchQuery(""); setFilterCategory("all"); }}>
-            Reset filters
+            {t("reset_filters")}
           </Button>
         </div>
       ) : (
@@ -265,6 +267,7 @@ export function ProvidersTab() {
 }
 
 function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?: ProviderKeyDTO }) {
+  const { t } = useTranslation();
   const save = useAppStore((s) => s.saveProviderKey);
   const remove = useAppStore((s) => s.removeProviderKey);
   const test = useAppStore((s) => s.testProviderKey);
@@ -352,25 +355,25 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
             <ProviderLogo providerId={provider.id} size={18} />
             <span className="text-sm font-medium">{provider.name}</span>
             {provider.free && provider.requiresKey ? (
-              <Badge variant="outline" className="text-[10px] h-4 border-amber-500/40 text-amber-600">token required</Badge>
+              <Badge variant="outline" className="text-[10px] h-4 border-amber-500/40 text-amber-600">{t("token_required")}</Badge>
             ) : provider.free ? (
-              <Badge variant="secondary" className="text-[10px] h-4">free</Badge>
+              <Badge variant="secondary" className="text-[10px] h-4">{t("filter_free_tier")}</Badge>
             ) : null}
             {featured && (
               <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/40">
-                Featured
+                {t("featured")}
               </Badge>
             )}
             {keyInfo?.hasKey && (
               <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/40">
-                <CheckCircle2 className="size-2.5" /> configured
+                <CheckCircle2 className="size-2.5" /> {t("filter_connected")}
               </Badge>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-1">{provider.description}</p>
+          <p className="text-xs text-muted-foreground mt-1">{(() => { const k = `provider_desc_${provider.id}`; const v = t(k); return v !== k ? v : provider.description; })()}</p>
           {keyInfo?.keyHint && (
             <p className="text-[11px] font-mono text-muted-foreground mt-1">
-              Key: {keyInfo.keyHint}
+              {t("key_hint_prefix", { hint: keyInfo.keyHint })}
             </p>
           )}
         </div>
@@ -381,7 +384,7 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
             rel="noreferrer"
             className="text-[11px] text-brand hover:underline inline-flex items-center gap-1 shrink-0"
           >
-            Docs <ExternalLink className="size-3" />
+            {t("docs")} <ExternalLink className="size-3" />
           </a>
         )}
       </div>
@@ -391,15 +394,15 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
           {keyInfo?.hasKey ? (
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[11px] gap-1.5">
-                <CheckCircle2 className="size-3" /> Connected
+                <CheckCircle2 className="size-3" /> {t("filter_connected")}
               </Badge>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={testKey} disabled={testing}>
                 {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                Test
+                {t("test_connection")}
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs hover:text-destructive" onClick={async () => { await remove(provider.id); toast.success("Puter disconnected"); }}>
+              <Button size="sm" variant="ghost" className="h-7 text-xs hover:text-destructive" onClick={async () => { await remove(provider.id); toast.success(t("puter_disconnected")); }}>
                 <Trash2 className="size-3.5" />
-                Disconnect
+                {t("remove_key")}
               </Button>
               {testResult && (
                 <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
@@ -423,12 +426,12 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="paste your Puter auth token"
+                  placeholder={t("puter_token_placeholder")}
                   className="h-8 text-xs font-mono flex-1"
                 />
                 <Button size="sm" className="h-8 bg-brand text-white hover:bg-brand/90" onClick={saveKey} disabled={saving}>
                   {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  Save
+                  {t("save")}
                 </Button>
               </div>
             </div>
@@ -439,7 +442,7 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
         <div className="mt-3 grid gap-2">
           <div className="grid gap-1">
             <Label htmlFor={`key-${provider.id}`} className="text-[11px]">
-              API key
+              {provider.requiresKey ? t("api_key_required") : t("api_key_optional")}
             </Label>
             <div className="flex gap-1.5">
               <Input
@@ -447,19 +450,19 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={keyInfo?.hasKey ? "•••••••• (saved)" : "paste your API key"}
+                placeholder={keyInfo?.hasKey ? `•••••••• (${t("saved")})` : t("paste_api_key")}
                 className="h-8 text-xs font-mono"
               />
               <Button size="sm" className="h-8 bg-brand text-white hover:bg-brand/90" onClick={saveKey} disabled={saving}>
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                Save
+                {t("save")}
               </Button>
             </div>
           </div>
           {(provider.id === "custom" || !provider.baseUrl) && (
             <div className="grid gap-1">
               <Label htmlFor={`base-${provider.id}`} className="text-[11px]">
-                Base URL (optional, OpenAI-compatible)
+                {t("base_url")}
               </Label>
               <Input
                 id={`base-${provider.id}`}
@@ -479,7 +482,7 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
               disabled={testing || !keyInfo?.hasKey}
             >
               {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              Test
+              {t("test_connection")}
             </Button>
             {keyInfo?.hasKey && (
               <Button
@@ -501,7 +504,7 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
                 }}
               >
                 {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                Remove
+                {t("remove_key")}
               </Button>
             )}
             {testResult && (

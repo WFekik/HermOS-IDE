@@ -41,6 +41,7 @@ import {
   Globe,
 } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { useTheme } from "@/components/theme/theme-provider";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -305,6 +306,7 @@ function HighlightedText({
  * ------------------------------------------------------------------ */
 
 export function CommandPalette() {
+  const { t } = useTranslation();
   const open = useAppStore((s) => s.commandOpen);
   const setOpen = useAppStore((s) => s.setCommandOpen);
 
@@ -328,10 +330,9 @@ export function CommandPalette() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogHeader className="sr-only">
-        <DialogTitle>Command Palette</DialogTitle>
+        <DialogTitle>{t("command_palette_title")}</DialogTitle>
         <DialogDescription>
-          Search for a command to run, or type a query to filter files
-          and conversations.
+          {t("command_palette_description")}
         </DialogDescription>
       </DialogHeader>
       <DialogContent className="overflow-hidden p-0" showCloseButton>
@@ -340,9 +341,9 @@ export function CommandPalette() {
           filter={fuzzyFilter}
           onKeyDown={handleKeyDown}
         >
-          <CommandInput placeholder="Type a command or search files, conversations…" />
+          <CommandInput placeholder={t("command_palette_placeholder")} />
           <CommandList>
-            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandEmpty>{t("command_palette_no_results")}</CommandEmpty>
 
             <RecentGroup close={close} />
             <ActionsGroup close={close} />
@@ -370,6 +371,7 @@ interface RecentCommand {
 }
 
 function RecentGroup({ close }: { close: () => void }) {
+  const { t } = useTranslation();
   const search = useCommandState((s) => s.search) as string;
   const recentCommands = useAppStore((s) => s.recentCommands);
 
@@ -393,7 +395,7 @@ function RecentGroup({ close }: { close: () => void }) {
 
   return (
     <>
-      <CommandGroup heading="Recent">
+      <CommandGroup heading={t("cp_group_recent")}>
         {items.map((cmd) => (
           <CommandItem
             key={`recent-${cmd.id}`}
@@ -418,6 +420,7 @@ function RecentGroup({ close }: { close: () => void }) {
  * Recent group to re-run a previously-executed command.
  */
 function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand> {
+  const { t } = useTranslation();
   const createConversation = useAppStore((s) => s.createConversation);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
@@ -429,17 +432,17 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
     const m = new Map<string, RecentCommand>();
     m.set("new-conversation", {
       id: "new-conversation",
-      label: "New conversation",
+      label: t("cmd_new_conversation"),
       icon: Plus,
       run: async () => {
         await createConversation();
-        toast.success("New conversation");
+        toast.success(t("cmd_new_conversation"));
         close();
       },
     });
     m.set("find-in-files", {
       id: "find-in-files",
-      label: "Find in files",
+      label: t("cmd_find_in_files"),
       icon: Search,
       run: () => {
         setFindInFilesOpen(true);
@@ -448,7 +451,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
     });
     m.set("go-to-line", {
       id: "go-to-line",
-      label: "Go to line",
+      label: t("cmd_go_to_line"),
       icon: Hash,
       run: () => {
         if (typeof window !== "undefined") {
@@ -459,7 +462,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
     });
     m.set("open-settings", {
       id: "open-settings",
-      label: "Open settings",
+      label: t("cmd_open_settings"),
       icon: SettingsIcon,
       run: () => {
         setSettingsTab("providers");
@@ -482,17 +485,17 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
       },
     });
     const panelCmds: RecentCommand[] = [
-      panelCmd("panel:outline", "Outline panel", ListTree, "outline"),
-      panelCmd("panel:mcp", "MCP servers", Plug, "mcp"),
-      panelCmd("panel:plugins", "Plugins", Puzzle, "plugins"),
-      panelCmd("panel:terminal", "Terminal", TerminalIcon, "terminal"),
-      panelCmd("panel:browser", "Browser preview", Globe, "browser"),
-      panelCmd("panel:files", "Files", FileText, "files"),
+      panelCmd("panel:outline", t("cmd_outline_panel"), ListTree, "outline"),
+      panelCmd("panel:mcp", t("cmd_mcp_servers"), Plug, "mcp"),
+      panelCmd("panel:plugins", t("cmd_plugins"), Puzzle, "plugins"),
+      panelCmd("panel:terminal", t("cmd_terminal"), TerminalIcon, "terminal"),
+      panelCmd("panel:browser", t("cmd_browser_preview"), Globe, "browser"),
+      panelCmd("panel:files", t("cmd_files"), FileText, "files"),
     ];
     for (const cmd of panelCmds) m.set(cmd.id, cmd);
     m.set("theme:light", {
       id: "theme:light",
-      label: "Theme: Light",
+      label: `${t("cp_group_theme")}: ${t("cmd_theme_light")}`,
       icon: Sun,
       run: () => {
         setTheme("light");
@@ -501,7 +504,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
     });
     m.set("theme:dark", {
       id: "theme:dark",
-      label: "Theme: Dark",
+      label: `${t("cp_group_theme")}: ${t("cmd_theme_dark")}`,
       icon: Moon,
       run: () => {
         setTheme("dark");
@@ -510,7 +513,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
     });
     m.set("theme:system", {
       id: "theme:system",
-      label: "Theme: System",
+      label: `${t("cp_group_theme")}: ${t("cmd_theme_system")}`,
       icon: Monitor,
       run: () => {
         setTheme("system");
@@ -518,7 +521,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
       },
     });
     return m;
-  }, [createConversation, setSettingsOpen, setSettingsTab, setRightPanelTab, setFindInFilesOpen, setTheme, close]);
+  }, [createConversation, setSettingsOpen, setSettingsTab, setRightPanelTab, setFindInFilesOpen, setTheme, close, t]);
 }
 
 /* ------------------------------------------------------------------ *
@@ -527,6 +530,7 @@ function useRecentCommandRegistry(close: () => void): Map<string, RecentCommand>
  * ------------------------------------------------------------------ */
 
 function ActionsGroup({ close }: { close: () => void }) {
+  const { t } = useTranslation();
   const createConversation = useAppStore((s) => s.createConversation);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
@@ -540,18 +544,18 @@ function ActionsGroup({ close }: { close: () => void }) {
 
   return (
     <>
-      <CommandGroup heading="Actions">
+      <CommandGroup heading={t("cp_group_actions")}>
         <CommandItem
           value="action new conversation create ⌘N"
           onSelect={async () => {
             pushRecentCommand("new-conversation");
             await createConversation();
-            toast.success("New conversation");
+            toast.success(t("cmd_new_conversation"));
             close();
           }}
         >
           <Plus className="size-4" />
-          <HighlightedText text="New conversation" query={q} />
+          <HighlightedText text={t("cmd_new_conversation")} query={q} />
           <CommandShortcut>⌘N</CommandShortcut>
         </CommandItem>
         <CommandItem
@@ -563,7 +567,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Search className="size-4" />
-          <HighlightedText text="Find in files" query={q} />
+          <HighlightedText text={t("cmd_find_in_files")} query={q} />
           <CommandShortcut>⌘⇧F</CommandShortcut>
         </CommandItem>
         <CommandItem
@@ -577,7 +581,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Hash className="size-4" />
-          <HighlightedText text="Go to line" query={q} />
+          <HighlightedText text={t("cmd_go_to_line")} query={q} />
           <CommandShortcut>⌘L</CommandShortcut>
         </CommandItem>
         <CommandItem
@@ -590,13 +594,13 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <SettingsIcon className="size-4" />
-          <HighlightedText text="Open settings" query={q} />
+          <HighlightedText text={t("cmd_open_settings")} query={q} />
         </CommandItem>
       </CommandGroup>
 
       <CommandSeparator />
 
-      <CommandGroup heading="Right panel">
+      <CommandGroup heading={t("cp_group_right_panel")}>
         <CommandItem
           value="panel outline symbols"
           onSelect={() => {
@@ -606,7 +610,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <ListTree className="size-4" />
-          <HighlightedText text="Outline" query={q} />
+          <HighlightedText text={t("cmd_outline_panel")} query={q} />
         </CommandItem>
         <CommandItem
           value="panel mcp servers"
@@ -617,7 +621,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Plug className="size-4" />
-          <HighlightedText text="MCP servers" query={q} />
+          <HighlightedText text={t("cmd_mcp_servers")} query={q} />
         </CommandItem>
         <CommandItem
           value="panel plugins"
@@ -628,7 +632,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Puzzle className="size-4" />
-          <HighlightedText text="Plugins" query={q} />
+          <HighlightedText text={t("cmd_plugins")} query={q} />
         </CommandItem>
         <CommandItem
           value="panel terminal shell"
@@ -639,7 +643,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <TerminalIcon className="size-4" />
-          <HighlightedText text="Terminal" query={q} />
+          <HighlightedText text={t("cmd_terminal")} query={q} />
         </CommandItem>
         <CommandItem
           value="panel browser preview web"
@@ -650,12 +654,12 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Globe className="size-4" />
-          <HighlightedText text="Browser" query={q} />
+          <HighlightedText text={t("cmd_browser_preview")} query={q} />
         </CommandItem>
       </CommandGroup>
 
       <CommandSeparator />
-      <CommandGroup heading="Theme">
+      <CommandGroup heading={t("cp_group_theme")}>
         <CommandItem
           value="theme light mode"
           onSelect={() => {
@@ -665,7 +669,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Sun className="size-4" />
-          <HighlightedText text="Light" query={q} />
+          <HighlightedText text={t("cmd_theme_light")} query={q} />
         </CommandItem>
         <CommandItem
           value="theme dark mode"
@@ -676,7 +680,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Moon className="size-4" />
-          <HighlightedText text="Dark" query={q} />
+          <HighlightedText text={t("cmd_theme_dark")} query={q} />
         </CommandItem>
         <CommandItem
           value="theme system auto"
@@ -687,7 +691,7 @@ function ActionsGroup({ close }: { close: () => void }) {
           }}
         >
           <Monitor className="size-4" />
-          <HighlightedText text="System" query={q} />
+          <HighlightedText text={t("cmd_theme_system")} query={q} />
         </CommandItem>
       </CommandGroup>
     </>
@@ -700,6 +704,7 @@ function ActionsGroup({ close }: { close: () => void }) {
  * ------------------------------------------------------------------ */
 
 function ConversationsGroup({ close }: { close: () => void }) {
+  const { t } = useTranslation();
   const search = useCommandState((s) => s.search) as string;
   const conversations = useAppStore((s) => s.conversations);
   const selectConversation = useAppStore((s) => s.selectConversation);
@@ -765,10 +770,10 @@ function ConversationsGroup({ close }: { close: () => void }) {
       <CommandGroup
         heading={
           loading
-            ? "Conversations · searching…"
+            ? t("cp_group_conversations_searching")
             : serverResults
-              ? "Conversations · server"
-              : "Conversations"
+              ? t("cp_group_conversations_server")
+              : t("cp_group_conversations")
         }
       >
         {items.map((c) => (
@@ -792,7 +797,7 @@ function ConversationsGroup({ close }: { close: () => void }) {
         ))}
         {items.length === 0 && loading && (
           <CommandItem disabled>
-            <span className="text-muted-foreground">Searching…</span>
+            <span className="text-muted-foreground">{t("cp_searching")}</span>
           </CommandItem>
         )}
       </CommandGroup>
@@ -806,6 +811,7 @@ function ConversationsGroup({ close }: { close: () => void }) {
  * ------------------------------------------------------------------ */
 
 function FilesGroup({ close }: { close: () => void }) {
+  const { t } = useTranslation();
   const search = useCommandState((s) => s.search) as string;
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const pushRecentCommand = useAppStore((s) => s.pushRecentCommand);
@@ -904,10 +910,10 @@ function FilesGroup({ close }: { close: () => void }) {
   return (
     <>
       <CommandSeparator />
-      <CommandGroup heading={visible.isRecent ? "Files · recent" : "Files"}>
+      <CommandGroup heading={visible.isRecent ? t("cp_group_files_recent") : t("cp_group_files")}>
         {visible.items.length === 0 ? (
           <CommandItem disabled value="__no-files__">
-            <span className="text-muted-foreground">No matching files</span>
+            <span className="text-muted-foreground">{t("cp_no_matching_files")}</span>
           </CommandItem>
         ) : (
           visible.items.slice(0, MAX_FILES).map((f) => {
@@ -942,9 +948,9 @@ function FilesGroup({ close }: { close: () => void }) {
                       <Badge
                         variant="outline"
                         className="shrink-0 border-brand/40 bg-brand/10 px-1 text-[8px] font-mono uppercase leading-none text-brand"
-                        aria-label="Recent file"
+                        aria-label={t("cp_recent_file_badge")}
                       >
-                        Recent
+                        {t("cp_recent_file_badge")}
                       </Badge>
                     )}
                   </div>

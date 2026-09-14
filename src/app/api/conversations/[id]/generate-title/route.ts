@@ -18,12 +18,12 @@ import {
   TITLE_MAX_OUTPUT_TOKENS,
 } from "@/lib/ai/provider-payloads";
 import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import {
   withErrorHandler,
   notFound,
   ok,
 } from "@/app/api/_lib/helpers";
-import { assertUrlAllowed, checkUrlHost } from "@/lib/ssrf";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +38,7 @@ async function generateTitle(
   const useResponses = isResponsesRequired(providerId, baseUrl, model);
   const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
   const url = useResponses ? responsesUrl : completionsUrl;
-  await assertUrlAllowed(url);
+  // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
 
   const messages = [
     {
@@ -76,7 +76,7 @@ async function generateTitle(
         temperature: 0.3,
       };
 
-  let res = await fetch(url, {
+  let res = await fetchWithSsrf(url, {
     method: "POST",
     headers: freshHeaders(),
     body: JSON.stringify(body),
@@ -93,7 +93,7 @@ async function generateTitle(
       temperature: 0.3,
       stream: false,
     });
-    res = await fetch(fallbackUrl, {
+    res = await fetchWithSsrf(fallbackUrl, {
       method: "POST",
       headers: freshHeaders(),
       body: JSON.stringify(fallbackBody),
@@ -101,17 +101,13 @@ async function generateTitle(
   } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
     clearResponsesRequired(baseUrl, model);
     const fallbackUrl = resolveProviderUrls(baseUrl).completionsUrl;
-    res = await fetch(fallbackUrl, {
+    res = await fetchWithSsrf(fallbackUrl, {
       method: "POST",
       headers: freshHeaders(),
       body: JSON.stringify({ model, messages, max_tokens: TITLE_MAX_OUTPUT_TOKENS, temperature: 0.3 }),
     });
   }
 
-  if (res.redirected) {
-    const reason = await checkUrlHost(res.url);
-    if (reason) throw new Error(`URL blocked by SSRF policy after redirect: ${reason}`);
-  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     const err = new Error(`Title generation failed: ${res.status} ${text.slice(0, 200)}`);

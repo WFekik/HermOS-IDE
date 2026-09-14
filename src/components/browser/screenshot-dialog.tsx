@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
  * ScreenshotDialog — shows the latest screenshot (a base64 PNG data URL)
@@ -32,6 +33,7 @@ export function ScreenshotDialog({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   const fileName = React.useMemo(() => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     return `hermos-screenshot-${stamp}.png`;
@@ -41,9 +43,9 @@ export function ScreenshotDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl p-0 overflow-hidden gap-0">
         <DialogHeader className="px-4 py-3 border-b">
-          <DialogTitle>Browser screenshot</DialogTitle>
+          <DialogTitle>{t("browser_screenshot")}</DialogTitle>
           <DialogDescription className="text-xs">
-            The most recent frame captured from the live browser session.
+            {t("browser_screenshot_desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -59,20 +61,20 @@ export function ScreenshotDialog({
                 {error}
               </p>
               <Button size="sm" variant="outline" onClick={onRetry}>
-                Retry
+                {t("retry")}
               </Button>
             </div>
           )}
           {!loading && !error && dataUrl && (
             <img
               src={dataUrl}
-              alt="Browser screenshot"
+              alt={t("browser_screenshot")}
               className="block h-auto w-full"
             />
           )}
           {!loading && !error && !dataUrl && (
             <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">
-              No screenshot available.
+              {t("no_screenshot_available")}
             </div>
           )}
         </div>
@@ -84,7 +86,7 @@ export function ScreenshotDialog({
               download={fileName}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-xs font-medium text-brand-foreground hover:bg-brand/90"
             >
-              <Download className="size-3.5" /> Download
+              <Download className="size-3.5" /> {t("download")}
             </a>
           )}
           <Button
@@ -93,7 +95,7 @@ export function ScreenshotDialog({
             className="h-8"
             onClick={() => onOpenChange(false)}
           >
-            Close
+            {t("close")}
           </Button>
         </DialogFooter>
       </DialogContent>

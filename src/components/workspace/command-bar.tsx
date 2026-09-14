@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { runCommand, type CommandResult } from "@/components/workspace/types";
+import { useTranslation } from "@/hooks/use-translation";
 
 export interface CommandBarProps {
   disabled?: boolean;
@@ -32,6 +33,7 @@ export function CommandBar({
   cwdLabel,
   onResult,
 }: CommandBarProps) {
+  const { t } = useTranslation();
   const [input, setInput] = React.useState("");
   const [running, setRunning] = React.useState(false);
   const [outputs, setOutputs] = React.useState<OutputState[]>([]);
@@ -96,7 +98,7 @@ export function CommandBar({
             <button
               type="button"
               className="flex items-center gap-1 hover:text-foreground"
-              aria-label={open ? "Hide output" : "Show output"}
+              aria-label={open ? t("hide_output") : t("show_output")}
               disabled={outputs.length === 0 && !running}
             >
               <ChevronDown
@@ -105,7 +107,7 @@ export function CommandBar({
                   open && "rotate-180",
                 )}
               />
-              <span>Output</span>
+              <span>{t("output")}</span>
               <span className="text-[10px] text-muted-foreground/60">
                 ({outputs.length})
               </span>
@@ -113,7 +115,7 @@ export function CommandBar({
                 <Badge
                   variant="outline"
                   className={cn(
-                    "ml-1 h-3.5 px-1 text-[9px] font-mono",
+                    "ms-1 h-3.5 px-1 text-[9px] font-mono",
                     lastOutput.result.exitCode === 0
                       ? "border-brand/40 text-brand"
                       : "border-destructive/40 text-destructive",
@@ -132,7 +134,7 @@ export function CommandBar({
                 setOutputs([]);
                 setOpen(false);
               }}
-              aria-label="Clear output"
+              aria-label={t("clear_output")}
             >
               <X className="size-3" />
             </button>
@@ -147,7 +149,7 @@ export function CommandBar({
               {running && (
                 <div className="flex items-center gap-2 text-zinc-400">
                   <Loader2 className="size-3 animate-spin text-brand" />
-                  <span>running: {input || (lastOutput?.command ?? "")}</span>
+                  <span>{t("running_prefix")}{input || (lastOutput?.command ?? "")}</span>
                 </div>
               )}
             </div>
@@ -170,12 +172,12 @@ export function CommandBar({
           className="h-7 flex-1 border-0 bg-transparent px-0 font-mono text-xs shadow-none focus-visible:ring-0"
           placeholder={
             disabled
-              ? disabledReason ?? "open a folder to run commands"
+              ? disabledReason ?? t("open_folder_to_run_commands")
               : running
-                ? "running…"
-                : "run a command in the workspace"
+                ? t("running_ellipsis")
+                : t("run_command_in_workspace")
           }
-          aria-label="Workspace command"
+          aria-label={t("workspace_command")}
           title={disabled ? disabledReason : undefined}
         />
         <Button
@@ -184,14 +186,14 @@ export function CommandBar({
           className="h-7 gap-1 px-2 text-[11px] bg-brand text-brand-foreground hover:bg-brand/90 shrink-0"
           onClick={() => void run(input)}
           disabled={disabled || running || !input.trim()}
-          aria-label="Run command"
+          aria-label={t("run_command")}
         >
           {running ? (
             <Loader2 className="size-3 animate-spin" />
           ) : (
             <Play className="size-3" />
           )}
-          Run
+          {t("run")}
         </Button>
       </div>
     </div>
@@ -199,6 +201,7 @@ export function CommandBar({
 }
 
 function CommandOutput({ output }: { output: OutputState }) {
+  const { t } = useTranslation();
   const { result } = output;
   const exitCode = result.exitCode ?? 0;
   return (
@@ -235,7 +238,7 @@ function CommandOutput({ output }: { output: OutputState }) {
         </pre>
       )}
       {!result.blocked && !result.stdout && !result.stderr && (
-        <pre className="text-muted-foreground text-[11px] italic">(no output produced)</pre>
+        <pre className="text-muted-foreground text-[11px] italic">{t("no_output_produced")}</pre>
       )}
       {result.cwd && (
         <div className="pt-0.5 text-[10px] text-muted-foreground/70">

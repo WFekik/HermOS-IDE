@@ -4,7 +4,7 @@ import { existsSync, realpathSync, statSync, mkdirSync, readdirSync, unlinkSync 
 import { spawn, execSync } from "child_process";
 import { db } from "@/lib/db";
 import type { TerminalResponse } from "@/lib/types";
-import { WORKSPACES_ROOT, AGENT_TEMP_ROOT, safeUserId } from "@/lib/paths";
+import { WORKSPACES_ROOT, AGENT_TEMP_ROOT, safeUserId, ensureHermosTempDir } from "@/lib/paths";
 import { TRUNCATION_DIR, truncationUserDir } from "@/lib/truncate";
 import { getSandboxRunner } from "@/lib/sandbox";
 
@@ -226,6 +226,39 @@ export function clearRealBaseCache(): void {
   realBaseCache.clear();
 }
 
+/**
+ * Shared symlink-aware containment check — single source of truth for
+ * `safePathFromRoot` and `resolveAgentPath` (tools.ts). Logical
+ * `isSubpathOrEqual` plus realpath validation of the target (or nearest
+ * existing ancestor for not-yet-created files). Prevents
+ * `ws.rootDir/link → /etc` escapes where a logical prefix check alone is
+ * symlink-blind. Fail-open only when the base itself is missing (mirrors
+ * prior behavior; callers still re-validate via `safePath`).
+ */
+export function isAbsoluteInsideBase(abs: string, base: string): boolean {
+  if (!isSubpathOrEqual(abs, base)) return false;
+  try {
+    const realBase = getCachedRealBase(base);
+    if (!realBase) return true;
+    if (existsSync(/* turbopackIgnore: true */ abs)) {
+      const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
+      if (!isSubpathOrEqual(realAbs, realBase)) return false;
+    } else {
+      let checkDir = path.dirname(abs);
+      while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
+        checkDir = path.dirname(checkDir);
+      }
+      if (existsSync(checkDir)) {
+        const realCheck = realpathSync(checkDir);
+        if (!isSubpathOrEqual(realCheck, realBase)) return false;
+      }
+    }
+  } catch {
+    /* ignore stat/permission failures — keep logical result */
+  }
+  return true;
+}
+
 const WIN32_ABSOLUTE_OR_UNC_RE = /^[a-zA-Z]:[\\/]|^\\\\[^\\]/;
 const POSIX_SYSTEM_ROOTS_RE = /^\/(?:etc|var|usr|bin|sbin|home|root|opt|dev|proc|sys|tmp|private|Library|System|Users|Applications|Volumes|mnt|media|srv)(?:\/|$)/;
 const LEADING_DOT_SLASH_RE = /^(\.\/)+/;
@@ -257,26 +290,9 @@ export function safePathFromRoot(rootDir: string, rel: string): string | null {
   if (path.isAbsolute(rel)) {
     const abs = path.resolve(rel);
     if (isSubpathOrEqual(abs, base)) {
-      const realBase = getCachedRealBase(base);
-      if (realBase) {
-        try {
-          if (existsSync(/* turbopackIgnore: true */ abs)) {
-            const realAbs = realpathSync(/* turbopackIgnore: true */ abs);
-            if (!isSubpathOrEqual(realAbs, realBase)) return null;
-          } else {
-            let checkDir = path.dirname(abs);
-            while (!existsSync(checkDir) && checkDir !== base && path.dirname(checkDir) !== checkDir) {
-              checkDir = path.dirname(checkDir);
-            }
-            if (existsSync(checkDir)) {
-              const realCheck = realpathSync(checkDir);
-              if (!isSubpathOrEqual(realCheck, realBase)) return null;
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-      }
+      // Logically inside: enforce symlink check fail-closed (do NOT fall
+      // through to relative handling on realpath escape).
+      if (!isAbsoluteInsideBase(abs, base)) return null;
       return abs;
     }
     // Windows drive-letter paths (C:\...) or UNC paths (\\server\...) outside base must be rejected.
@@ -1508,6 +1524,7 @@ export interface CommandSafetyResult {
   reason?: string;
   command?: string;
   cwd?: string;
+  isOutsideWorkspace?: boolean;
 }
 
 /** Check if a cd target contains unverifiable shell expansions or wildcards. */
@@ -1736,11 +1753,13 @@ export function resolveCommandSafety(
           : kind === "expansion"
             ? `cd target contains unverifiable shell expansion characters: "${target}" (segment: "${segment}")`
             : `bare cd without a target would leave the workspace root (segment: "${segment}")`,
+    isOutsideWorkspace: kind === "escape" || kind === "bare",
   });
 
   const refuseNestedShell = (segment: string): CommandSafetyResult => ({
     ok: false,
     reason: `nested shell with an execution flag (-c, -lc, -ic, -xc, -Command, -EncodedCommand, /c, /k) can escape the workspace root (segment: "${segment}")`,
+    isOutsideWorkspace: true,
   });
 
   let remaining = command;
@@ -2043,6 +2062,7 @@ export function startBackgroundCommand(
   opts?: {
     onProgress?: (text: string) => void;
     rootDir?: string;
+    userAllowedOutsideWorkspace?: boolean;
   },
 ): { ok: boolean; commandId: string; error?: string } {
   const disabled = commandsDisabledMessage();
@@ -2062,16 +2082,29 @@ export function startBackgroundCommand(
   const initialCwd = opts?.rootDir ?? rootDirCache.get(`${userId}:${wsName}`) ?? path.join(userRoot(userId), wsName);
   const tempDir = ensureAgentTempDir(userId);
   const truncDir = truncationUserDir(userId);
-  const safe = resolveCommandSafety(rawCommand, initialCwd, [tempDir]);
+  const hermosTemp = ensureHermosTempDir();
+  const safe = resolveCommandSafety(rawCommand, initialCwd, [tempDir, hermosTemp]);
   if (!safe.ok) {
-    return { ok: false, commandId: "", error: safe.reason ?? "Command refused by the sandbox." };
+    if (opts?.userAllowedOutsideWorkspace && safe.isOutsideWorkspace) {
+      console.warn(
+        `[workspace] Outside-workspace background command explicitly allowed: cwd=${initialCwd} preview=${rawCommand.slice(0, 200)}`,
+      );
+    } else {
+      return { ok: false, commandId: "", error: safe.reason ?? "Command refused by the sandbox." };
+    }
   }
-  const command = safe.command ?? "";
-  const cwd = safe.cwd ?? initialCwd;
+  const isOutsideAllowed = Boolean(opts?.userAllowedOutsideWorkspace && safe.isOutsideWorkspace);
+  // NOTE: rawCommand is used verbatim only after explicit user Allow (see audit
+  // "command_outside_workspace_allowed" in executor.ts). Sanitized `safe.command`
+  // is used for all in-workspace paths.
+  const command = isOutsideAllowed ? rawCommand : (safe.command ?? "");
+  const cwd = isOutsideAllowed ? initialCwd : (safe.cwd ?? initialCwd);
   if (!command) return { ok: false, commandId: "", error: "Empty command." };
-  const cwdError = assertCwdInsideWorkspace(initialCwd, cwd, [tempDir]);
-  if (cwdError) {
-    return { ok: false, commandId: "", error: cwdError };
+  if (!opts?.userAllowedOutsideWorkspace) {
+    const cwdError = assertCwdInsideWorkspace(initialCwd, cwd, [tempDir, hermosTemp]);
+    if (cwdError) {
+      return { ok: false, commandId: "", error: cwdError };
+    }
   }
 
   // Built-in pseudo-commands (intercepted BEFORE spawning the shell so they
@@ -2315,11 +2348,14 @@ export async function runCommandWs(
     conversationId?: string;
     /** Called with each stdout/stderr chunk for real-time progress. */
     onProgress?: (chunk: string) => void;
+    rootDir?: string;
+    userAllowedOutsideWorkspace?: boolean;
   },
 ): Promise<ExecResult> {
-  const initialCwd = await resolveRootDir(userId, wsName);
+  const initialCwd = opts?.rootDir ?? (await resolveRootDir(userId, wsName));
   const tempDir = ensureAgentTempDir(userId);
   const truncDir = truncationUserDir(userId);
+  const hermosTemp = ensureHermosTempDir();
   const disabled = commandsDisabledMessage();
   if (disabled) {
     return {
@@ -2333,22 +2369,32 @@ export async function runCommandWs(
       cwd: initialCwd,
     };
   }
-  const safe = resolveCommandSafety(rawCommand, initialCwd, [tempDir]);
+  const safe = resolveCommandSafety(rawCommand, initialCwd, [tempDir, hermosTemp]);
   if (!safe.ok) {
-    const reason = safe.reason ?? "Command refused by the sandbox.";
-    return {
-      ok: false,
-      blocked: true,
-      reason,
-      stdout: "",
-      stderr: reason + "\n",
-      exitCode: 126,
-      command: rawCommand,
-      cwd: initialCwd,
-    };
+    if (opts?.userAllowedOutsideWorkspace && safe.isOutsideWorkspace) {
+      console.warn(
+        `[workspace] Outside-workspace command explicitly allowed: cwd=${initialCwd} preview=${rawCommand.slice(0, 200)}`,
+      );
+    } else {
+      const reason = safe.reason ?? "Command refused by the sandbox.";
+      return {
+        ok: false,
+        blocked: true,
+        reason,
+        stdout: "",
+        stderr: reason + "\n",
+        exitCode: 126,
+        command: rawCommand,
+        cwd: initialCwd,
+      };
+    }
   }
-  const command = safe.command ?? "";
-  const cwd = safe.cwd ?? initialCwd;
+  const isOutsideAllowed = Boolean(opts?.userAllowedOutsideWorkspace && safe.isOutsideWorkspace);
+  // NOTE: rawCommand is used verbatim only after explicit user Allow (see audit
+  // "command_outside_workspace_allowed" in executor.ts). Sanitized `safe.command`
+  // is used for all in-workspace paths.
+  const command = isOutsideAllowed ? rawCommand : (safe.command ?? "");
+  const cwd = isOutsideAllowed ? initialCwd : (safe.cwd ?? initialCwd);
   if (!command) {
     return {
       ok: false,
@@ -2361,18 +2407,20 @@ export async function runCommandWs(
       cwd,
     };
   }
-  const cwdError = assertCwdInsideWorkspace(initialCwd, cwd, [tempDir]);
-  if (cwdError) {
-    return {
-      ok: false,
-      blocked: true,
-      reason: cwdError,
-      stdout: "",
-      stderr: cwdError + "\n",
-      exitCode: 126,
-      command: rawCommand,
-      cwd,
-    };
+  if (!opts?.userAllowedOutsideWorkspace) {
+    const cwdError = assertCwdInsideWorkspace(initialCwd, cwd, [tempDir, hermosTemp]);
+    if (cwdError) {
+      return {
+        ok: false,
+        blocked: true,
+        reason: cwdError,
+        stdout: "",
+        stderr: cwdError + "\n",
+        exitCode: 126,
+        command: rawCommand,
+        cwd,
+      };
+    }
   }
   // No command length limit — let the agent run any command.
 

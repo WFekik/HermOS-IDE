@@ -586,10 +586,42 @@ export function buildResponsesRequestBody({
         });
       }
     } else {
-      input.push({
-        role: m.role,
-        content: m.content,
-      });
+      if (Array.isArray(m.content)) {
+        type ContentBlock = { type?: unknown; text?: unknown; image_url?: unknown };
+        const blocks = (m.content as unknown[]).map((b: unknown) => {
+          if (b && typeof b === "object") {
+            const blk = b as ContentBlock;
+            if (blk.type === "text") {
+              return {
+                type: "input_text",
+                text: typeof blk.text === "string" ? blk.text : "",
+              };
+            }
+            if (blk.type === "image_url") {
+              const url =
+                blk.image_url && typeof blk.image_url === "object"
+                  ? String((blk.image_url as Record<string, unknown>).url || "")
+                  : "";
+              return { type: "input_image", image_url: url };
+            }
+            return blk;
+          }
+          // Non-object blocks would 400 upstream if passed through raw —
+          // normalize to text instead. Wire format for valid inputs unchanged
+          // (pinned by providers.test.ts: string messages stay {role, content}).
+          return { type: "input_text", text: String(b ?? "") };
+        });
+        input.push({
+          type: "message",
+          role: m.role,
+          content: blocks,
+        });
+      } else {
+        input.push({
+          role: m.role,
+          content: m.content,
+        });
+      }
     }
   }
 

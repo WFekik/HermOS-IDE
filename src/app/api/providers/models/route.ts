@@ -16,7 +16,7 @@ import { providerIdSchema, thinkingLevelSchema } from "@/lib/validation";
 import { parseModelsColumn, mergeReasoningCapability, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
 import { extractCapabilities, extractPricing, extractReasoningCapabilities } from "@/lib/provider-fetch";
 import { normalizeThinkingLevel } from "@/lib/reasoning";
-import { assertUrlAllowed } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import type { ModelReasoningCapabilities } from "@/lib/reasoning";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
@@ -160,11 +160,11 @@ async function fetchProviderModels(
 
     if (provider === "anthropic") {
       const url = baseUrl.replace(/\/$/, "") + "/models";
-      await assertUrlAllowed(url);
+      // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15_000);
       try {
-        const resp = await fetch(url, {
+        const resp = await fetchWithSsrf(url, {
           headers: {
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
@@ -172,10 +172,6 @@ async function fetchProviderModels(
           },
           signal: controller.signal,
         });
-        // SSRF per-hop re-validation: the user-editable baseUrl could 302 to a
-        // private/metadata address. Re-check final URL after redirects (fail-closed
-        // on DNS, see ssrf.ts). For full per-hop coverage see provider-fetch.ts.
-        if (resp.redirected) await assertUrlAllowed(resp.url);
         if (!resp.ok) {
           return { ok: true, models: [] };
         }
@@ -201,11 +197,11 @@ async function fetchProviderModels(
     // OpenAI-compatible (openrouter, openai, groq, mistral, together, custom, puter, nvidia, zen)
     const url = resolveModelsUrl(baseUrl);
     if (!url) return { ok: true, models: [] };
-    await assertUrlAllowed(url);
+    // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const resp = await fetch(url, {
+      const resp = await fetchWithSsrf(url, {
         headers: buildProviderHeaders({
           providerId: provider,
           baseUrl,
@@ -215,8 +211,6 @@ async function fetchProviderModels(
         }),
         signal: controller.signal,
       });
-      // SSRF per-hop re-validation: re-check final URL after any redirects.
-      if (resp.redirected) await assertUrlAllowed(resp.url);
       if (!resp.ok) {
         // If the provider doesn't implement /models (e.g. 404), return empty list cleanly
         return { ok: true, models: [] };

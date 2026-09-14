@@ -7,6 +7,15 @@ import { PROXY_CSP } from "@/lib/csp";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Redirect cap for the browser preview proxy. Midway between
+ * PROVIDER_MAX_REDIRECTS (3, ssrf-fetch.ts) and AGENT_WEB_MAX_REDIRECTS (10,
+ * tools.ts): preview pages redirect (consent, locale) but are rendered HTML,
+ * not API calls. This loop already validates every hop via checkUrlHost, so
+ * it is per-hop safe like fetchWithSsrf — kept separate because it streams
+ * HTML rewriting with route-specific 502 mapping. Keep all three caps at
+ * their single sources.
+ */
 const MAX_REDIRECTS = 5;
 const PROXY_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MB size limit to prevent memory DoS

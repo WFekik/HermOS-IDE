@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/lib/api-client";
+import { useTranslation } from "@/hooks/use-translation";
 
 interface ChatExportButtonProps {
   conversationId: string | null;
@@ -68,6 +69,7 @@ export function ChatExportButton({
   title,
   className,
 }: ChatExportButtonProps) {
+  const { t } = useTranslation();
   const [busy, setBusy] = React.useState(false);
   const linkRef = React.useRef<HTMLAnchorElement | null>(null);
 
@@ -82,7 +84,7 @@ export function ChatExportButton({
   const disabled = !conversationId || busy;
 
   const runExport = React.useCallback(async () => {
-    const { conversationId: id, title: t, busy: b } = propsRef.current;
+    const { conversationId: id, title: tTitle, busy: b } = propsRef.current;
     if (!id || b) return;
 
     setBusy(true);
@@ -116,7 +118,7 @@ export function ChatExportButton({
       objectUrl = URL.createObjectURL(blob);
 
       // Try to read a filename from Content-Disposition; fall back to slug.
-      let filename = `${slugifyTitle(t)}.md`;
+      let filename = `${slugifyTitle(tTitle)}.md`;
       const cd = res.headers.get("content-disposition");
       if (cd) {
         const match = cd.match(/filename="?([^";]+)"?/i);
@@ -133,10 +135,10 @@ export function ChatExportButton({
       }
       link.click();
 
-      toast.success("Conversation exported", { description: filename });
+      toast.success(t("conversation_exported"), { description: filename });
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Failed to export conversation";
+        err instanceof Error ? err.message : t("failed_export_conversation");
       toast.error(message);
     } finally {
       // Revoke the object URL on the next tick so the download has time
@@ -146,7 +148,7 @@ export function ChatExportButton({
       }
       setBusy(false);
     }
-  }, []);
+  }, [t]);
 
   // Listen for the global ⌘E shortcut dispatching an
   // `hermos:export-conversation` event. We re-use the same runExport
@@ -189,7 +191,7 @@ export function ChatExportButton({
             className={className}
             onClick={onExport}
             disabled={disabled}
-            aria-label="Export conversation as Markdown"
+            aria-label={t("export_conversation_markdown")}
             type="button"
           >
             {busy ? (
@@ -197,13 +199,13 @@ export function ChatExportButton({
             ) : (
               <Download className="size-3.5" />
             )}
-            <span className="hidden sm:inline">Export</span>
+            <span className="hidden sm:inline">{t("export")}</span>
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-[11px]">
           {disabled && !conversationId
-            ? "No active conversation"
-            : "Export as Markdown (⌘E)"}
+            ? t("no_active_conversation")
+            : t("export_as_markdown_shortcut")}
         </TooltipContent>
       </Tooltip>
       {/* Hidden anchor used to trigger the download. */}

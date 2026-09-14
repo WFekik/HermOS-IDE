@@ -5,6 +5,7 @@ import { ArrowLeft, Bot, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import { MessageRenderer } from "@/components/ide/message-renderer";
 import type { Subagent, SubagentMessage } from "@/lib/ai/subagents";
 import type { UIMessage } from "@/stores/app-store";
@@ -15,6 +16,7 @@ interface SubagentChatPanelProps {
 }
 
 export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps) {
+  const { t } = useTranslation();
   const [subagent, setSubagent] = React.useState<Subagent | null>(null);
   const [messages, setMessages] = React.useState<SubagentMessage[] | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -48,11 +50,11 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
       setError(null);
     } catch (err) {
       if (seq !== fetchSeqRef.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load subagent details");
+      setError(err instanceof Error ? err.message : t("failed_load_subagent_details"));
     } finally {
       if (showLoading && seq === fetchSeqRef.current) setLoading(false);
     }
-  }, [subagentId]);
+  }, [subagentId, t]);
 
   // Initial load
   React.useEffect(() => {
@@ -187,13 +189,13 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
           variant="ghost"
           className="size-7 p-0 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={onBack}
-          aria-label="Back to subagents list"
+          aria-label={t("back_to_subagents")}
         >
           <ArrowLeft className="size-4" />
         </Button>
         <div className="min-w-0 flex-1 flex flex-col justify-center">
           <span className="text-xs font-semibold truncate text-foreground leading-tight animate-fade-in" title={subagent?.name}>
-            {subagent?.name || "Subagent Session"}
+            {subagent?.name || t("subagent_session")}
           </span>
           <span className="text-[10px] text-muted-foreground truncate leading-normal" title={subagent?.task}>
             {subagent?.task}
@@ -222,13 +224,13 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
               className="h-7 gap-1 text-xs"
               onClick={() => void fetchHistory(true)}
             >
-              Retry
+              {t("retry")}
             </Button>
           </div>
         ) : uiMessages.length === 0 && !liveContent && !liveThinking ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-center text-muted-foreground">
             <Bot className="size-7 text-muted-foreground/30 mb-2 animate-pulse" />
-            <p className="text-xs font-medium">Initialising subagent workspace...</p>
+            <p className="text-xs font-medium">{t("initialising_subagent_workspace")}</p>
           </div>
         ) : (
           <div className="space-y-2 py-2">
@@ -260,7 +262,7 @@ const SubagentMessageRow = React.memo(
     if (isUser) {
       return (
         <div className="py-1 animate-slide-in">
-          <div className="text-right prose-xs max-w-none text-xs text-zinc-800 dark:text-zinc-200">
+          <div className="w-full rounded-xl border border-border/50 bg-background/60 px-3 py-2 text-start text-xs text-foreground shadow-2xs [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
             <MessageRenderer message={message} />
           </div>
         </div>
@@ -409,7 +411,8 @@ function mapSubagentMessages(messages: SubagentMessage[]): UIMessage[] {
 /* ------------------------------ Status Badge ------------------------------ */
 
 function StatusBadge({ status }: { status: string }) {
-  const label = status;
+  const { t } = useTranslation();
+  const label = t(status) || status;
   return (
     <span
       className={cn(
@@ -422,7 +425,7 @@ function StatusBadge({ status }: { status: string }) {
       )}
     >
       {status === "running" && (
-        <span className="mr-1 size-1.5 rounded-full bg-brand animate-pulse shrink-0" />
+        <span className="me-1 size-1.5 rounded-full bg-brand animate-pulse shrink-0" />
       )}
       {label}
     </span>

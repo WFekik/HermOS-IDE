@@ -38,6 +38,7 @@ import {
 import { useAppStore } from "@/stores/app-store";
 import { apiGet, ApiRequestError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
  * FindInFilesPanel
@@ -115,6 +116,7 @@ function groupByPath(matches: GrepMatch[]): FileGroup[] {
 }
 
 export function FindInFilesPanel() {
+  const { t } = useTranslation();
   const open = useAppStore((s) => s.findInFilesOpen);
   const setOpen = useAppStore((s) => s.setFindInFilesOpen);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -150,7 +152,7 @@ export function FindInFilesPanel() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const t = setTimeout(() => {
+    const tTimer = setTimeout(() => {
       const params: Record<string, unknown> = {
         q,
         maxResults,
@@ -169,11 +171,11 @@ export function FindInFilesPanel() {
           if (cancelled) return;
           setResults([]);
           if (e instanceof ApiRequestError && (e.status === 404 || e.status === 405)) {
-            setError("Workspace search is not available.");
+            setError(t("search_not_available_err"));
           } else if (e instanceof ApiRequestError) {
-            setError(e.message || "Search failed.");
+            setError(e.message || t("search_failed_err"));
           } else {
-            setError("Search failed.");
+            setError(t("search_failed_err"));
           }
         })
         .finally(() => {
@@ -182,9 +184,9 @@ export function FindInFilesPanel() {
     }, DEBOUNCE_MS);
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(tTimer);
     };
-  }, [query, useRegex, filePattern, maxResults, open]);
+  }, [query, useRegex, filePattern, maxResults, open, t]);
 
   // Keyboard: Esc is handled by Dialog. ⌘F inside the dialog focuses the
   // search input (browser default for ⌘F is hijacked to prevent clashing
@@ -192,8 +194,8 @@ export function FindInFilesPanel() {
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   React.useEffect(() => {
     if (!open) return;
-    const t = setTimeout(() => searchInputRef.current?.focus(), 60);
-    return () => clearTimeout(t);
+    const tTimer = setTimeout(() => searchInputRef.current?.focus(), 60);
+    return () => clearTimeout(tTimer);
   }, [open]);
 
   const handleOpenFile = React.useCallback(
@@ -221,11 +223,10 @@ export function FindInFilesPanel() {
         <DialogHeader className="px-4 pt-4 pb-3 border-b shrink-0">
           <DialogTitle className="text-sm font-semibold flex items-center gap-2">
             <Search className="size-3.5 text-brand" />
-            Find in files
+            {t("find_in_files")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Search across every file in the active workspace. Click a result
-            to open it in the editor.
+            {t("find_in_files_desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -233,29 +234,29 @@ export function FindInFilesPanel() {
         <div className="flex flex-col sm:flex-row gap-2 px-4 py-3 border-b shrink-0 bg-muted/30">
           <div className="relative flex-1 min-w-0">
             <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+              className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
             />
             <Input
               ref={searchInputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search in files…"
-              className="h-8 pl-8 text-sm"
+              placeholder={t("search_in_files_placeholder")}
+              className="h-8 ps-8 text-sm"
               spellCheck={false}
               autoComplete="off"
-              aria-label="Search query"
+              aria-label={t("search_query_aria")}
             />
             <button
               type="button"
               onClick={() => setUseRegex((v) => !v)}
               aria-label={
-                useRegex ? "Search using a regular expression (on)" : "Search using a regular expression (off)"
+                useRegex ? t("regex_search_on") : t("regex_search_off")
               }
               aria-pressed={useRegex}
-              title={useRegex ? "Regex: on — special characters are pattern syntax" : "Regex: off — literal text search"}
+              title={useRegex ? t("regex_title_on") : t("regex_title_off")}
               className={cn(
-                "absolute right-8 top-1/2 -translate-y-1/2 rounded-sm px-1 py-0.5 font-mono text-[11px] leading-none transition-colors",
+                "absolute end-8 top-1/2 -translate-y-1/2 rounded-sm px-1 py-0.5 font-mono text-[11px] leading-none transition-colors",
                 useRegex
                   ? "bg-brand/15 text-brand hover:bg-brand/25"
                   : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -270,8 +271,8 @@ export function FindInFilesPanel() {
                   setQuery("");
                   searchInputRef.current?.focus();
                 }}
-                aria-label="Clear search"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                aria-label={t("clear_search")}
+                className="absolute end-1.5 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               >
                 <X className="size-3.5" />
               </button>
@@ -285,7 +286,7 @@ export function FindInFilesPanel() {
               className="h-8 w-28 sm:w-32 text-xs font-mono"
               spellCheck={false}
               autoComplete="off"
-              aria-label="File pattern (glob)"
+              aria-label={t("file_pattern_aria")}
             />
             <Select
               value={String(maxResults)}
@@ -294,7 +295,7 @@ export function FindInFilesPanel() {
               <SelectTrigger
                 size="sm"
                 className="h-8 w-[5.5rem] text-xs"
-                aria-label="Max results"
+                aria-label={t("max_results_aria")}
               >
                 <SelectValue />
               </SelectTrigger>
@@ -316,30 +317,30 @@ export function FindInFilesPanel() {
               {!hasQuery ? (
                 <EmptyState
                   icon={<Search className="size-7 text-muted-foreground/40" />}
-                  title="Type to search"
-                  description="Search across your workspace files."
+                  title={t("type_to_search")}
+                  description={t("type_to_search_desc")}
                 />
               ) : loading ? (
                 <ResultsSkeleton />
               ) : error ? (
                 <EmptyState
                   icon={<AlertCircle className="size-7 text-amber-500" />}
-                  title="Search unavailable"
+                  title={t("search_unavailable")}
                   description={error}
                 />
               ) : groups.length === 0 ? (
                 <EmptyState
                   icon={<Search className="size-7 text-muted-foreground/40" />}
-                  title="No results found"
+                  title={t("no_results_found")}
                   description={
                     <>
-                      No matches for{" "}
+                      {t("no_matches_for")}{" "}
                       <code className="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">
                         {query.trim()}
                       </code>
                       {filePattern.trim() && (
                         <>
-                          {" "}in{" "}
+                          {" "}{t("in")}{" "}
                           <code className="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">
                             {filePattern.trim()}
                           </code>
@@ -366,7 +367,12 @@ export function FindInFilesPanel() {
         <DialogFooter className="px-4 py-2.5 border-t bg-muted/30 flex-row items-center justify-between sm:justify-between shrink-0">
           <span className="text-[11px] font-mono text-muted-foreground tabular-nums">
             {hasQuery && !loading && !error && results
-              ? `${totalMatches} ${totalMatches === 1 ? "result" : "results"} in ${totalFiles} ${totalFiles === 1 ? "file" : "files"}`
+              ? t("results_in_files", {
+                  matches: totalMatches,
+                  matchesLabel: totalMatches === 1 ? t("result_singular") : t("results_plural"),
+                  files: totalFiles,
+                  filesLabel: totalFiles === 1 ? t("file_singular") : t("files_plural"),
+                })
               : "\u00A0"}
           </span>
           <Button
@@ -375,7 +381,7 @@ export function FindInFilesPanel() {
             className="h-7 text-xs"
             onClick={() => setOpen(false)}
           >
-            Close
+            {t("close")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -396,6 +402,7 @@ function FileGroupRow({
   group: FileGroup;
   onOpenFile: (path: string, line?: number, column?: number) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
   const visible = expanded
     ? group.matches
@@ -407,8 +414,8 @@ function FileGroupRow({
       <button
         type="button"
         onClick={() => onOpenFile(group.path)}
-        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 hover:bg-accent/60 transition-colors text-left"
-        aria-label={`Open ${group.path}`}
+        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 hover:bg-accent/60 transition-colors text-start"
+        aria-label={t("open_file_path", { path: group.path })}
       >
         <FileText className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="font-mono text-[11px] text-brand truncate min-w-0">
@@ -416,12 +423,12 @@ function FileGroupRow({
         </span>
         <Badge
           variant="outline"
-          className="ml-auto shrink-0 text-[9px] h-4 px-1 font-mono tabular-nums"
+          className="ms-auto shrink-0 text-[9px] h-4 px-1 font-mono tabular-nums"
         >
           {group.matches.length}
         </Badge>
       </button>
-      <ul className="mt-0.5 ml-5 space-y-0.5">
+      <ul className="mt-0.5 ms-5 space-y-0.5">
         {visible.map((m, i) => (
           <li key={`${m.path}:${m.line}:${i}`}>
             <MatchRow match={m} onOpenFile={onOpenFile} />
@@ -432,20 +439,20 @@ function FileGroupRow({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="ml-5 mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+          className="ms-5 mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
         >
           <ChevronRight className="size-3" />
-          Show {hiddenCount} more
+          {t("show_n_more", { count: hiddenCount })}
         </button>
       )}
       {expanded && group.matches.length > PREVIEW_PER_FILE && (
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="ml-5 mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+          className="ms-5 mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
         >
           <ChevronDown className="size-3" />
-          Collapse
+          {t("collapse")}
         </button>
       )}
     </div>
@@ -464,6 +471,7 @@ function MatchRow({
   match: GrepMatch;
   onOpenFile: (path: string, line?: number, column?: number) => void;
 }) {
+  const { t } = useTranslation();
   const before = match.preview.slice(0, match.matchStart);
   const hit = match.preview.slice(match.matchStart, match.matchEnd);
   const after = match.preview.slice(match.matchEnd);
@@ -472,10 +480,10 @@ function MatchRow({
     <button
       type="button"
       onClick={() => onOpenFile(match.path, match.line, match.column)}
-      className="group flex w-full items-start gap-2 rounded-md px-2 py-1 hover:bg-accent/60 transition-colors text-left"
-      aria-label={`Open ${match.path} at line ${match.line}`}
+      className="group flex w-full items-start gap-2 rounded-md px-2 py-1 hover:bg-accent/60 transition-colors text-start"
+      aria-label={t("open_at_line", { path: match.path, line: match.line })}
     >
-      <span className="font-mono text-[10px] text-muted-foreground/80 w-10 shrink-0 text-right pt-px tabular-nums select-none">
+      <span className="font-mono text-[10px] text-muted-foreground/80 w-10 shrink-0 text-end pt-px tabular-nums select-none">
         {match.line}
       </span>
       <span className="font-mono text-[11px] leading-snug min-w-0 flex-1 whitespace-pre-wrap break-all">
@@ -519,9 +527,9 @@ function ResultsSkeleton() {
           <div className="flex items-center gap-2 px-2">
             <Skeleton className="size-3.5 rounded" />
             <Skeleton className="h-3 w-40" />
-            <Skeleton className="h-4 w-6 ml-auto" />
+            <Skeleton className="h-4 w-6 ms-auto" />
           </div>
-          <div className="ml-5 space-y-1">
+          <div className="ms-5 space-y-1">
             {Array.from({ length: 3 }).map((_, ri) => (
               <div
                 key={ri}
@@ -567,11 +575,12 @@ export function FindInFilesTriggerTooltip({
 }: {
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent side="bottom" className="text-[11px]">
-        Find in files (⌘⇧F)
+        {t("find_in_files_shortcut")}
       </TooltipContent>
     </Tooltip>
   );

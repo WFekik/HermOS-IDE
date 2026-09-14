@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import type { Subagent } from "@/stores/app-store";
 
 /* ------------------------------------------------------------------ *
@@ -62,6 +63,7 @@ interface TaskBucket {
 }
 
 export function TaskProgress() {
+  const { t } = useTranslation();
   const officeRunning = useAppStore((s) => s.officeGenerating);
   const officeLastPath = useAppStore((s) => s.officeLastPath);
   const officeLastType = useAppStore((s) => s.officeLastType);
@@ -104,12 +106,10 @@ export function TaskProgress() {
     if (officeRunning) {
       const label =
         officeLastType === "presentation"
-          ? "Generating presentation…"
+          ? t("generating_presentation")
           : officeLastType === "pdf"
-            ? "Generating PDF…"
-            : officeLastType === "document"
-              ? "Generating document…"
-              : "Generating document…";
+            ? t("generating_pdf")
+            : t("generating_document");
       out.push({
         id: "office",
         icon: FileText,
@@ -122,8 +122,8 @@ export function TaskProgress() {
       out.push({
         id: "checkpoint",
         icon: Save,
-        label: "Creating checkpoint…",
-        detail: "Snapshotting the workspace",
+        label: t("creating_checkpoint"),
+        detail: t("snapshotting_workspace"),
         running: true,
       });
     }
@@ -131,9 +131,7 @@ export function TaskProgress() {
       out.push({
         id: "subagents",
         icon: Bot,
-        label: `${runningSubagents.length} subagent${
-          runningSubagents.length === 1 ? "" : "s"
-        } running…`,
+        label: t("subagents_running_count", { count: runningSubagents.length }),
         detail: runningSubagents.map((s) => s.name).join(", "),
         running: true,
       });
@@ -146,6 +144,7 @@ export function TaskProgress() {
     checkpointCreating,
     anySubagentRunning,
     runningSubagents,
+    t,
   ]);
 
   const summaryLabel = React.useMemo(() => {
@@ -153,8 +152,8 @@ export function TaskProgress() {
     if (buckets.length === 1) return buckets[0].label;
     // Multiple buckets — show a count summary.
     const runningCount = buckets.filter((b) => b.running).length;
-    return `${runningCount} task${runningCount === 1 ? "" : "s"} running…`;
-  }, [buckets]);
+    return t("tasks_running_count", { count: runningCount });
+  }, [buckets, t]);
 
   const handleJumpToSubagents = () => {
     setRightPanelTab("subagents");
@@ -168,7 +167,7 @@ export function TaskProgress() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.97 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-          className="fixed z-50 right-3 bottom-9 max-w-[320px] w-[calc(100vw-1.5rem)] sm:w-auto"
+          className="fixed z-50 end-3 bottom-9 max-w-[320px] w-[calc(100vw-1.5rem)] sm:w-auto"
           role="status"
           aria-live="polite"
           aria-label={summaryLabel}
@@ -181,7 +180,7 @@ export function TaskProgress() {
               role="button"
               tabIndex={0}
               aria-expanded={expanded}
-              aria-label={expanded ? "Collapse task details" : "Expand task details"}
+              aria-label={expanded ? t("collapse") : t("expand")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
@@ -196,7 +195,7 @@ export function TaskProgress() {
                 </div>
                 {buckets.length > 1 && (
                   <div className="text-[10px] text-muted-foreground font-mono">
-                    {buckets.length} active
+                    {buckets.length} {t("active")}
                   </div>
                 )}
               </div>
@@ -208,7 +207,7 @@ export function TaskProgress() {
                   e.stopPropagation();
                   setExpanded((v) => !v);
                 }}
-                aria-label={expanded ? "Collapse" : "Expand"}
+                aria-label={expanded ? t("collapse") : t("expand")}
               >
                 {expanded ? (
                   <ChevronDown className="size-3" />
@@ -226,13 +225,13 @@ export function TaskProgress() {
                       e.stopPropagation();
                       setUserDismissed(true);
                     }}
-                    aria-label="Dismiss"
+                    aria-label={t("dismiss")}
                   >
                     <X className="size-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="left">
-                  Dismiss (reappears when a new task starts)
+                  {t("dismiss_reappears_desc")}
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -277,7 +276,7 @@ export function TaskProgress() {
                               handleJumpToSubagents();
                             }}
                           >
-                            View
+                            {t("view")}
                           </Button>
                         )}
                       </li>
@@ -286,7 +285,7 @@ export function TaskProgress() {
                     {anySubagentRunning && (
                       <li className="px-3 py-2 bg-muted/30">
                         <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                          Subagents
+                          {t("subagents")}
                         </div>
                         <ul className="space-y-1 max-h-32 overflow-y-auto">
                           {runningSubagents.slice(0, 6).map((s) => (
@@ -294,7 +293,7 @@ export function TaskProgress() {
                           ))}
                           {runningSubagents.length > 6 && (
                             <li className="text-[10px] text-muted-foreground">
-                              +{runningSubagents.length - 6} more…
+                              +{runningSubagents.length - 6} {t("more")}…
                             </li>
                           )}
                         </ul>

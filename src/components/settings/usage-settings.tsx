@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { apiGet } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ----------------------------- API contracts ----------------------------- */
 /* GET /api/stats/usage  → { totals: {conversations, messages, tokens, toolExecutions},
@@ -98,6 +99,7 @@ function ChartTooltip({
   payload?: Array<{ value: number; name: string; color: string }>;
   label?: string;
 }) {
+  const { t } = useTranslation();
   if (!active || !payload || payload.length === 0) return null;
   const inbound = payload.find((p) => p.name === "tokensIn")?.value ?? 0;
   const outbound = payload.find((p) => p.name === "tokensOut")?.value ?? 0;
@@ -106,21 +108,21 @@ function ChartTooltip({
       <div className="font-mono text-muted-foreground mb-1">{label}</div>
       <div className="flex items-center gap-1.5">
         <span className="size-2 rounded-sm" style={{ background: BRAND }} />
-        <span className="text-muted-foreground">in</span>
-        <span className="ml-auto font-mono tabular-nums">
+        <span className="text-muted-foreground">{t("tokens_in")}</span>
+        <span className="ms-auto font-mono tabular-nums">
           {inbound.toLocaleString()}
         </span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="size-2 rounded-sm" style={{ background: MUTED }} />
-        <span className="text-muted-foreground">out</span>
-        <span className="ml-auto font-mono tabular-nums">
+        <span className="text-muted-foreground">{t("tokens_out")}</span>
+        <span className="ms-auto font-mono tabular-nums">
           {outbound.toLocaleString()}
         </span>
       </div>
       <div className="mt-1 flex items-center gap-1.5 border-t pt-1">
-        <span className="text-muted-foreground">total</span>
-        <span className="ml-auto font-mono tabular-nums">
+        <span className="text-muted-foreground">{t("total_label")}</span>
+        <span className="ms-auto font-mono tabular-nums">
           {(inbound + outbound).toLocaleString()}
         </span>
       </div>
@@ -153,25 +155,26 @@ function StatCard({ label, value, icon: Icon }: StatCardProps) {
 }
 
 function TotalsRow({ totals }: { totals: UsageResponse["totals"] }) {
+  const { t } = useTranslation();
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <StatCard
-        label="Conversations"
+        label={t("conversations")}
         value={totals.conversations.toLocaleString()}
         icon={MessageSquare}
       />
       <StatCard
-        label="Messages"
+        label={t("messages")}
         value={totals.messages.toLocaleString()}
         icon={FileText}
       />
       <StatCard
-        label="Tokens used"
+        label={t("tokens_used_stat")}
         value={totals.tokens.toLocaleString()}
         icon={Coins}
       />
       <StatCard
-        label="Tool executions"
+        label={t("tool_executions_stat")}
         value={totals.toolExecutions.toLocaleString()}
         icon={Wrench}
       />
@@ -196,6 +199,7 @@ function TotalsSkeleton() {
 }
 
 function TokenChart({ days }: { days: TokenDay[] }) {
+  const { t } = useTranslation();
   const allZero = days.every((d) => d.total === 0);
   const data = React.useMemo(
     () =>
@@ -212,7 +216,7 @@ function TokenChart({ days }: { days: TokenDay[] }) {
     <Card className="p-4 gap-0">
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium text-foreground">
-          Token usage · last 7 days
+          {t("token_usage_last_7_days")}
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
@@ -221,7 +225,7 @@ function TokenChart({ days }: { days: TokenDay[] }) {
               style={{ background: BRAND }}
               aria-hidden="true"
             />
-            input
+            {t("token_input")}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span
@@ -229,7 +233,7 @@ function TokenChart({ days }: { days: TokenDay[] }) {
               style={{ background: MUTED }}
               aria-hidden="true"
             />
-            output
+            {t("token_output")}
           </span>
         </div>
       </div>
@@ -243,7 +247,7 @@ function TokenChart({ days }: { days: TokenDay[] }) {
             <div className="max-w-xs space-y-1">
               <BarChart3 className="mx-auto size-5 text-muted-foreground/60" />
               <p className="text-xs text-muted-foreground">
-                No usage yet. Start a conversation to see your stats.
+                {t("no_usage_yet")}
               </p>
             </div>
           </div>
@@ -326,7 +330,13 @@ function BreakdownList({
   emptyHint: string;
   max: number;
 }) {
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    return (
+      <p className="px-1 py-1 text-[11px] text-muted-foreground italic">
+        {emptyHint}
+      </p>
+    );
+  }
   const top = rows.slice(0, max);
   const maxCount = top[0]?.count ?? 1;
   return (
@@ -340,22 +350,17 @@ function BreakdownList({
             </div>
             <div className="relative h-4 flex-1 overflow-hidden rounded-sm bg-muted/60">
               <div
-                className="absolute inset-y-0 left-0 rounded-sm"
+                className="absolute inset-y-0 start-0 rounded-sm"
                 style={{ width: `${pct}%`, background: BRAND }}
                 aria-hidden="true"
               />
             </div>
-            <div className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-foreground">
+            <div className="w-12 shrink-0 text-end font-mono text-[11px] tabular-nums text-foreground">
               {r.count.toLocaleString()}
             </div>
           </div>
         );
       })}
-      {rows.length === 0 && (
-        <p className="px-1 py-1 text-[11px] text-muted-foreground italic">
-          {emptyHint}
-        </p>
-      )}
     </div>
   );
 }
@@ -377,6 +382,7 @@ function BreakdownSkeleton() {
 /* ------------------------------- component ------------------------------- */
 
 export function UsageSettings() {
+  const { t } = useTranslation();
   const usageQuery = useQuery<UsageResponse>({
     queryKey: ["stats", "usage"],
     queryFn: () => apiGet<UsageResponse>("/api/stats/usage"),
@@ -402,10 +408,9 @@ export function UsageSettings() {
     <div className="space-y-5 max-w-3xl">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-base font-semibold">Usage</h3>
+          <h3 className="text-base font-semibold">{t("usage_title")}</h3>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Aggregate activity across all your conversations. Tokens combine
-            input and output across every message.
+            {t("usage_settings_desc")}
           </p>
         </div>
         <UITooltip>
@@ -416,18 +421,18 @@ export function UsageSettings() {
               className="h-8 shrink-0 gap-1.5 text-xs"
               onClick={refresh}
               disabled={refreshing}
-              aria-label="Refresh usage stats"
+              aria-label={t("refresh_usage_stats")}
             >
               {refreshing ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="size-3.5" />
               )}
-              Refresh
+              {t("refresh")}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="left" className="text-[11px]">
-            Reload stats from the server
+            {t("reload_stats_from_server")}
           </TooltipContent>
         </UITooltip>
       </div>
@@ -450,7 +455,7 @@ export function UsageSettings() {
       <div className="grid gap-5 sm:grid-cols-2">
         <Card className="p-4 gap-0">
           <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            By provider
+            {t("by_provider")}
           </div>
           <div className="mt-3">
             {usageQuery.isLoading ? (
@@ -461,12 +466,12 @@ export function UsageSettings() {
                   label: p.provider,
                   count: p.count,
                 }))}
-                emptyHint="No provider activity yet."
+                emptyHint={t("no_provider_activity")}
                 max={8}
               />
             ) : (
               <p className="px-1 py-1 text-[11px] text-muted-foreground italic">
-                No provider activity yet.
+                {t("no_provider_activity")}
               </p>
             )}
           </div>
@@ -474,7 +479,7 @@ export function UsageSettings() {
 
         <Card className="p-4 gap-0">
           <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            By model · top 5
+            {t("by_model_top_5")}
           </div>
           <div className="mt-3">
             {usageQuery.isLoading ? (
@@ -485,12 +490,12 @@ export function UsageSettings() {
                   label: m.model,
                   count: m.count,
                 }))}
-                emptyHint="No model activity yet."
+                emptyHint={t("no_model_activity")}
                 max={5}
               />
             ) : (
               <p className="px-1 py-1 text-[11px] text-muted-foreground italic">
-                No model activity yet.
+                {t("no_model_activity")}
               </p>
             )}
           </div>
@@ -507,14 +512,14 @@ export function UsageSettings() {
         >
           <div className="flex items-center gap-2">
             <span className="font-medium text-destructive">
-              Couldn&apos;t load usage stats.
+              {t("could_not_load_usage_stats")}
             </span>
             <button
               type="button"
               onClick={refresh}
-              className="ml-auto text-[11px] text-brand hover:underline"
+              className="ms-auto text-[11px] text-brand hover:underline"
             >
-              Try again
+              {t("try_again")}
             </button>
           </div>
           {(usageError || tokensError) instanceof Error && (

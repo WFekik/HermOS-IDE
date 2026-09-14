@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBoundary } from "@/components/ide/error-boundary";
 import { useAppStore } from "@/stores/app-store";
 import type { RightPanelTab } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 function PanelSkeleton() {
   return (
@@ -96,6 +97,7 @@ export const RIGHT_PANEL_TABS: { value: RightPanelTab; label: string; icon: Reac
 ];
 
 export function RightPanel() {
+  const { t } = useTranslation();
   const tab = useAppStore((s) => s.rightPanelTab);
   const setTab = useAppStore((s) => s.setRightPanelTab);
   const [tabBarCollapsed, setTabBarCollapsed] = React.useState(false);
@@ -111,7 +113,7 @@ export function RightPanel() {
     }
   }, [tab]);
 
-  const activeTabLabel = RIGHT_PANEL_TABS.find((t) => t.value === tab)?.label ?? "Tabs";
+  const activeTabLabel = t(tab);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card overflow-hidden">
@@ -125,15 +127,15 @@ export function RightPanel() {
                 style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
               >
                 <TabsList className="h-8 inline-flex flex-row items-center gap-0.5 whitespace-nowrap bg-transparent p-0 w-max shrink-0">
-                  {RIGHT_PANEL_TABS.map((t) => (
+                  {RIGHT_PANEL_TABS.map((item) => (
                     <TabsTrigger
-                      key={t.value}
-                      value={t.value}
+                      key={item.value}
+                      value={item.value}
                       className="text-xs gap-1.5 px-2.5 h-7 shrink-0 data-[state=active]:bg-background data-[state=active]:shadow-xs rounded-md transition-all"
-                      title={t.label}
+                      title={t(item.value)}
                     >
-                      <t.icon className="size-3.5 shrink-0" />
-                      <span className="truncate max-w-[90px]">{t.label}</span>
+                      <item.icon className="size-3.5 shrink-0" />
+                      <span className="truncate max-w-[90px]">{t(item.value)}</span>
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -141,9 +143,9 @@ export function RightPanel() {
               <button
                 type="button"
                 onClick={() => setTabBarCollapsed(true)}
-                className="shrink-0 p-1.5 rounded hover:bg-accent transition-colors border-l pl-1.5 ml-0.5 text-muted-foreground hover:text-foreground"
-                title="Hide tabs"
-                aria-label="Collapse panel tabs"
+                className="shrink-0 p-1.5 rounded hover:bg-accent transition-colors border-s ps-1.5 ms-0.5 text-muted-foreground hover:text-foreground"
+                title={t("hide_tabs")}
+                aria-label={t("hide_tabs")}
               >
                 <ChevronUp className="size-3.5" />
               </button>
@@ -154,68 +156,68 @@ export function RightPanel() {
                 type="button"
                 onClick={() => setTabBarCollapsed(false)}
                 className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-accent transition-colors text-xs text-muted-foreground hover:text-foreground font-medium"
-                title="Show tabs"
-                aria-label="Expand panel tabs"
+                title={t("show_tabs")}
+                aria-label={t("show_tabs")}
               >
                 <ChevronDown className="size-3.5" />
-                <span>Panel tabs ({activeTabLabel})</span>
+                <span>{activeTabLabel}</span>
               </button>
             </div>
           )}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden relative">
           <TabsContent value="files" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Files panel error">
+            <ErrorBoundary fallbackTitle="files_panel_error">
               <WorkspacePanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="artifacts" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Artifacts panel error">
+            <ErrorBoundary fallbackTitle="artifacts_panel_error">
               <ArtifactPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="outline" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Outline panel error">
+            <ErrorBoundary fallbackTitle="outline_panel_error">
               <OutlinePanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="mcp" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="MCP panel error">
+            <ErrorBoundary fallbackTitle="mcp_panel_error">
               <McpPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="plugins" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Plugins panel error">
+            <ErrorBoundary fallbackTitle="plugins_panel_error">
               <PluginsPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="skills" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Skills panel error">
+            <ErrorBoundary fallbackTitle="skills_panel_error">
               <SkillsPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="terminal" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Terminal panel error">
+            <ErrorBoundary fallbackTitle="terminal_panel_error">
               <TerminalPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="browser" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Browser panel error">
+            <ErrorBoundary fallbackTitle="browser_panel_error">
               <BrowserPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="office" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Office panel error">
+            <ErrorBoundary fallbackTitle="office_panel_error">
               <OfficePanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="subagents" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Subagents panel error">
+            <ErrorBoundary fallbackTitle="subagents_panel_error">
               <SubagentsPanel />
             </ErrorBoundary>
           </TabsContent>
           <TabsContent value="git" className="mt-0 h-full data-[state=inactive]:hidden">
-            <ErrorBoundary fallbackTitle="Git panel error">
+            <ErrorBoundary fallbackTitle="git_panel_error">
               <GitPanel />
             </ErrorBoundary>
           </TabsContent>

@@ -758,3 +758,61 @@ src/
     expect(treeBlocks.length).toBe(1);
   });
 });
+
+describe("cleanUserMessageContent", () => {
+  it("strips ## Attached files and subsequent attachment summaries", async () => {
+    const { cleanUserMessageContent } = await import("@/components/ide/message-renderer");
+    const raw = `Please inspect this screenshot.\n\n## Attached files\n[Image: "screen.png" (image/png, 120.4 KB) — described inline below if the model supports vision, otherwise omitted]`;
+    expect(cleanUserMessageContent(raw)).toBe("Please inspect this screenshot.");
+  });
+
+  it("strips inline attachment and image preview tokens cleanly", async () => {
+    const { cleanUserMessageContent } = await import("@/components/ide/message-renderer");
+    const raw = `Check this file [Attachment: "report.pdf" (application/pdf, 50.0 KB)] and image [Image: "diag.png" (image/png, 10 KB)] for details.`;
+    expect(cleanUserMessageContent(raw)).toBe("Check this file  and image  for details.");
+  });
+
+  it("handles empty or whitespace messages safely", async () => {
+    const { cleanUserMessageContent } = await import("@/components/ide/message-renderer");
+    expect(cleanUserMessageContent("")).toBe("");
+    expect(cleanUserMessageContent("   ")).toBe("");
+  });
+});
+
+describe("formatUserMessageForDisplay", () => {
+  it("formats slash command prefix with lightning icon and bold command", async () => {
+    const { formatUserMessageForDisplay } = await import("@/components/ide/message-renderer");
+    const formatted = formatUserMessageForDisplay("/boost Fix these UI polish bugs");
+    expect(formatted).toBe("⚡ **boost** Fix these UI polish bugs");
+  });
+
+  it("cleans attachments while preserving slash command formatting", async () => {
+    const { formatUserMessageForDisplay } = await import("@/components/ide/message-renderer");
+    const raw = `/plan Implement feature\n\n## Attached files\n[Image: "test.png" (image/png, 40 KB)]`;
+    expect(formatUserMessageForDisplay(raw)).toBe("⚡ **plan** Implement feature");
+  });
+
+  it("passes normal messages through cleanly", async () => {
+    const { formatUserMessageForDisplay } = await import("@/components/ide/message-renderer");
+    expect(formatUserMessageForDisplay("Hello world")).toBe("Hello world");
+  });
+});
+
+describe("isSafeMarkdownImageHref", () => {
+  it("allows safe targets and rejects javascript:/data:text-html schemes", async () => {
+    const { isSafeMarkdownImageHref } = await import("@/components/ide/message-renderer");
+    expect(isSafeMarkdownImageHref("https://example.com/a.png")).toBe("https://example.com/a.png");
+    expect(isSafeMarkdownImageHref("http://example.com/a.jpg")).toBe("http://example.com/a.jpg");
+    expect(isSafeMarkdownImageHref("data:image/png;base64,AAA")).toBe("data:image/png;base64,AAA");
+    expect(isSafeMarkdownImageHref("blob:https://example.com/u")).toBe("blob:https://example.com/u");
+    expect(isSafeMarkdownImageHref("/api/attachments/123")).toBe("/api/attachments/123");
+    expect(isSafeMarkdownImageHref("diagram.png")).toBe("diagram.png");
+    expect(isSafeMarkdownImageHref("javascript:alert(1)")).toBeNull();
+    expect(isSafeMarkdownImageHref("JaVaScRiPt:alert(1)")).toBeNull();
+    expect(isSafeMarkdownImageHref("//evil.com/x.png")).toBeNull();
+    expect(isSafeMarkdownImageHref("data:text/html,<script>alert(1)</script>")).toBeNull();
+    expect(isSafeMarkdownImageHref("vbscript:msgbox(1)")).toBeNull();
+    expect(isSafeMarkdownImageHref("")).toBeNull();
+  });
+});
+

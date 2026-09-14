@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, Zap, Clock, Undo2, GitBranch } from "lucide-react";
+import { AlertCircle, Zap, Clock, Undo2, GitBranch, Copy, Check, Bot, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MessageRenderer } from "@/components/ide/message-renderer";
+import { MessageRenderer, cleanUserMessageContent } from "@/components/ide/message-renderer";
 import { Composer } from "@/components/ide/composer";
 import { EmptyState } from "@/components/ide/empty-state";
 import { ProviderLogo } from "@/components/brand/provider-logo";
@@ -12,6 +12,7 @@ import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { apiPost, apiDelete } from "@/lib/api-client";
 import { toast } from "sonner";
+import { useTranslation } from "@/hooks/use-translation";
 import type { AttachmentDTO, AgentMode, ProviderId } from "@/lib/types";
 import type { UIMessage } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ export function ChatView() {
   const setComposerDraft = useAppStore((s) => s.setComposerDraft);
   const createConversation = useAppStore((s) => s.createConversation);
   const ensureRealConversation = useAppStore((s) => s.ensureRealConversation);
+  const { t } = useTranslation();
 
   const { stream, stop } = useChatStream();
 
@@ -308,19 +310,19 @@ export function ChatView() {
           await createConversation();
           convId = useAppStore.getState().activeConversationId;
         } catch {
-          toast.error("Failed to create conversation");
+          toast.error(t("failed_create_conversation"));
           return;
         }
       }
       if (!convId) {
-        toast.error("No active conversation");
+        toast.error(t("no_active_conversation"));
         return;
       }
       // Lazy conversations: a pending (never-persisted) chat materializes into
       // a real DB row only now — on the first actual message.
       const realConvId = await ensureRealConversation(convId);
       if (!realConvId) {
-        toast.error("Failed to create conversation");
+        toast.error(t("failed_create_conversation"));
         return;
       }
       convId = realConvId;
@@ -370,18 +372,18 @@ export function ChatView() {
         await createConversation();
         convId = useAppStore.getState().activeConversationId;
       } catch {
-        toast.error("Failed to create conversation");
+        toast.error(t("failed_create_conversation"));
         return false;
       }
     }
     if (!convId) {
-      toast.error("No active conversation");
+      toast.error(t("no_active_conversation"));
       return false;
     }
     // Lazy conversations: materialize the pending row before queueing into it.
     const realConvId = await ensureRealConversation(convId);
     if (!realConvId) {
-      toast.error("Failed to create conversation");
+      toast.error(t("failed_create_conversation"));
       return false;
     }
     convId = realConvId;
@@ -408,7 +410,7 @@ export function ChatView() {
       // switched conversations while the request was in flight.
       queuedPendingRef.current = queuedPendingRef.current.filter((p) => p.id !== messageId);
       useAppStore.getState().removeMessage(messageId, convId);
-      toast.error("Failed to queue message");
+      toast.error(t("failed_queue_message"));
       return false;
     }
   };
@@ -548,6 +550,7 @@ export function ChatView() {
 
   return (
     <div className="flex h-full flex-col bg-background">
+      <RunningSessionBanner />
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -568,7 +571,7 @@ export function ChatView() {
                   key={virtualRow.key}
                   data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
-                  className="absolute top-0 left-0 w-full"
+                  className="absolute top-0 start-0 w-full"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                   <div className={cn("mx-auto px-4 py-1.5", conversationWidthClass(conversationWidth))}>
@@ -675,9 +678,10 @@ function MessageRow({ message }: { message: UIMessage; index: number }) {
   );
 }
 
-/** User message — right-aligned, plain text, with an undo button on hover. */
+/** User message — bubble card using the right panel theme color (card). */
 function UserMessageRow({ message }: { message: UIMessage }) {
   const [busy, setBusy] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
   const isStreaming = useAppStore((s) => s.isStreaming);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const setComposerDraft = useAppStore((s) => s.setComposerDraft);
@@ -685,6 +689,19 @@ function UserMessageRow({ message }: { message: UIMessage }) {
   const closeAllFileTabs = useAppStore((s) => s.closeAllFileTabs);
   const setPreTurnCheckpoint = useAppStore((s) => s.setPreTurnCheckpoint);
   const branchConversation = useAppStore((s) => s.branchConversation);
+  const { t } = useTranslation();
+
+  const copyPrompt = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(cleanUserMessageContent(message.content));
+      setCopied(true);
+      toast.success(t("prompt_copied"));
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error(t("failed_copy_prompt"));
+    }
+  };
 
   const branch = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -693,10 +710,10 @@ function UserMessageRow({ message }: { message: UIMessage }) {
     try {
       const createdId = await branchConversation(message.id);
       if (createdId) {
-        toast.success("Branched into a new conversation");
+        toast.success(t("branched_success"));
       }
     } catch {
-      toast.error("Branch failed");
+      toast.error(t("branch_failed"));
     } finally {
       setBusy(false);
     }
@@ -720,52 +737,63 @@ function UserMessageRow({ message }: { message: UIMessage }) {
       setPreTurnCheckpoint(null);
       closeAllFileTabs();
       removeMessageAndAfter(message.id);
-      setComposerDraft(message.content);
+      setComposerDraft(cleanUserMessageContent(message.content));
       if (restoredCount > 0) {
-        toast.success(`Message undone — reverted ${restoredCount} file(s) across turns`);
+        toast.success(t("all_files_reverted"));
       } else {
-        toast.success("Message undone — edit and send to retry");
+        toast.success(t("message_undone"));
       }
     } catch {
-      toast.error("Undo failed");
+      toast.error(t("undo_failed"));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="group scroll-mt-24" data-message-id={message.id}>
-      <div className="text-right">
+    <div className="group scroll-mt-24 pb-1" data-message-id={message.id}>
+      <div className="w-full rounded-2xl border border-border/70 bg-card px-4 py-3.5 text-start text-card-foreground shadow-xs transition-colors hover:border-border/90 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
         <MessageRenderer message={message} />
-        {!message.streaming && (
-          <div className="mt-0.5 flex justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity text-[10px]"
-              onClick={undo}
-              disabled={isStreaming || busy}
-              aria-label="Undo to this point"
-              type="button"
-            >
-              <Undo2 className="size-3" />
-              <span>undo to this point</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity text-[10px]"
-              onClick={branch}
-              disabled={isStreaming || busy}
-              aria-label="Branch from this message"
-              type="button"
-            >
-              <GitBranch className="size-3" />
-              <span>branch</span>
-            </Button>
-          </div>
-        )}
       </div>
+      {!message.streaming && (
+        <div className="mt-1 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            onClick={copyPrompt}
+            aria-label={t("copy")}
+            type="button"
+          >
+            {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+            <span>{copied ? t("copied") : t("copy")}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            onClick={undo}
+            disabled={isStreaming || busy}
+            aria-label={t("undo")}
+            type="button"
+          >
+            <Undo2 className="size-3" />
+            <span>{t("undo")}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            onClick={branch}
+            disabled={isStreaming || busy}
+            aria-label={t("branch")}
+            type="button"
+          >
+            <GitBranch className="size-3" />
+            <span>{t("branch")}</span>
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -789,6 +817,7 @@ export const MemoizedMessageRow = React.memo(MessageRow, (prev, next) => {
 });
 
 function RateLimitRetryBanner({ onStop }: { onStop: (conversationId: string) => void }) {
+  const { t } = useTranslation();
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const rateLimitRetry = useAppStore((s) => s.rateLimitRetry);
   const isStreaming = useAppStore((s) => s.isStreaming);
@@ -816,7 +845,12 @@ function RateLimitRetryBanner({ onStop }: { onStop: (conversationId: string) => 
       <div className="flex items-center gap-2">
         <AlertCircle className="size-4 shrink-0 animate-spin" />
         <span>
-          Rate limit reached. Retrying (attempt {rateLimitRetry.attempt} of {rateLimitRetry.maxAttempts}) in {remainingSec}s...
+          {t("rate_limit_reached")}.{" "}
+          {t("retrying_in", {
+            attempt: rateLimitRetry.attempt,
+            maxAttempts: rateLimitRetry.maxAttempts,
+            sec: remainingSec,
+          })}
         </span>
       </div>
       <Button 
@@ -825,8 +859,65 @@ function RateLimitRetryBanner({ onStop }: { onStop: (conversationId: string) => 
         className="h-7 text-[10px] px-2 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 font-medium" 
         onClick={() => onStop(activeConversationId)}
       >
-        Cancel Run
+        {t("cancel_run")}
       </Button>
     </div>
   );
 }
+
+function RunningSessionBanner() {
+  const { t } = useTranslation();
+  const activeConversationId = useAppStore((s) => s.activeConversationId);
+  const conversations = useAppStore((s) => s.conversations);
+  const pendingConversations = useAppStore((s) => s.pendingConversations);
+  const streamingByConv = useAppStore((s) => s.streamingStateByConversation);
+  const permissionPrompts = useAppStore((s) => s.permissionPromptsByConversation);
+  const questionPrompts = useAppStore((s) => s.questionPromptsByConversation);
+  const selectConversation = useAppStore((s) => s.selectConversation);
+
+  // Find a running conversation that is NOT the currently active one
+  const runningEntry = Object.entries(streamingByConv).find(
+    ([id, st]) => id !== activeConversationId && st?.isStreaming,
+  );
+
+  if (!runningEntry) return null;
+
+  const [runningId] = runningEntry;
+  const session =
+    conversations.find((c) => c.id === runningId) ||
+    pendingConversations.find((p) => p.id === runningId);
+  const sessionTitle = session?.title || t("conversation");
+
+  const hasPendingInput = Boolean(
+    permissionPrompts[runningId] || questionPrompts[runningId],
+  );
+
+  return (
+    <div className="mx-4 mt-2 p-2.5 rounded-xl border border-brand/30 bg-brand/5 dark:bg-brand/10 text-xs flex items-center justify-between gap-3 shadow-xs transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+      <div className="flex items-center gap-2.5 min-w-0">
+        {hasPendingInput ? (
+          <AlertCircle className="size-4 text-amber-500 shrink-0 animate-bounce" />
+        ) : (
+          <Bot className="size-4 text-brand shrink-0 animate-pulse" />
+        )}
+        <div className="min-w-0 truncate text-foreground/90">
+          <span className="font-medium">
+            {hasPendingInput
+              ? t("agent_needs_input_in_session", { title: sessionTitle })
+              : t("agent_running_in_session", { title: sessionTitle })}
+          </span>
+        </div>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs px-2.5 gap-1.5 shrink-0 border-brand/40 text-brand hover:bg-brand/15 font-medium shadow-2xs"
+        onClick={() => void selectConversation(runningId)}
+      >
+        <span>{t("go_to_session")}</span>
+        <ArrowRight className="size-3 rtl:rotate-180" />
+      </Button>
+    </div>
+  );
+}
+

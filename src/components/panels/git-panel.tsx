@@ -51,6 +51,7 @@ import { useAppStore } from "@/stores/app-store";
 import { apiGet, apiPost, apiDelete, ApiRequestError } from "@/lib/api-client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import type {
   GitBranch as GitBranchInfo,
   GitCommit,
@@ -80,6 +81,7 @@ const COMMIT_PREVIEW_COUNT = 8;
 const COMMIT_EXPANDED_COUNT = 20;
 
 export function GitPanel() {
+  const { t } = useTranslation();
   const gitStatus = useAppStore((s) => s.gitStatus);
   const loading = useAppStore((s) => s.gitStatusLoading);
   const error = useAppStore((s) => s.gitStatusError);
@@ -135,23 +137,23 @@ export function GitPanel() {
   const handleCheckout = async (branch: string) => {
     try {
       await apiPost("/api/git/checkout", { branch });
-      toast.success(`Checked out ${branch}`);
+      toast.success(t("checked_out_branch", { branch }));
       void refreshGitStatus();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Checkout failed");
+      toast.error(e instanceof Error ? e.message : t("branch_failed"));
     }
   };
 
   const handleAddWorktree = async (branch: string, path: string) => {
     try {
       await apiPost("/api/git/worktree", { branch, path });
-      toast.success(`Worktree added at ${path}`);
+      toast.success(t("worktree_added", { path }));
       void refreshGitStatus();
     } catch (e) {
       if (e instanceof ApiRequestError && (e.status === 404 || e.status === 405)) {
-        toast.error("Worktree management not available yet");
+        toast.error(t("worktree_not_available"));
       } else {
-        toast.error(e instanceof Error ? e.message : "Failed to add worktree");
+        toast.error(e instanceof Error ? e.message : t("failed_add_worktree"));
       }
     }
   };
@@ -163,13 +165,13 @@ export function GitPanel() {
       await apiDelete(
         `/api/git/worktree?path=${encodeURIComponent(path)}`,
       );
-      toast.success("Worktree removed");
+      toast.success(t("worktree_removed"));
       void refreshGitStatus();
     } catch (e) {
       if (e instanceof ApiRequestError && (e.status === 404 || e.status === 405)) {
-        toast.error("Worktree management not available yet");
+        toast.error(t("worktree_not_available"));
       } else {
-        toast.error(e instanceof Error ? e.message : "Failed to remove worktree");
+        toast.error(e instanceof Error ? e.message : t("failed_remove_worktree"));
       }
     }
   };
@@ -201,7 +203,7 @@ export function GitPanel() {
       <div className="flex items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <GitBranch className="size-4 text-brand" />
-          <span className="text-sm font-medium">Git</span>
+          <span className="text-sm font-medium">{t("git")}</span>
           {isRepo && (
             <Badge
               variant="outline"
@@ -219,7 +221,7 @@ export function GitPanel() {
                 variant="ghost"
                 className="size-7 p-0"
                 onClick={handleRefresh}
-                aria-label="Refresh git status"
+                aria-label={t("refresh_git_status")}
                 disabled={loading}
               >
                 <RefreshCw
@@ -227,17 +229,17 @@ export function GitPanel() {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Refresh</TooltipContent>
+            <TooltipContent side="bottom">{t("refresh")}</TooltipContent>
           </Tooltip>
           {isRepo && (
             <Button
               size="sm"
               className="h-7 gap-1 text-[11px] bg-brand text-brand-foreground hover:bg-brand/90"
               onClick={() => void handleViewDiff()}
-              aria-label="View full diff"
+              aria-label={t("view_full_diff")}
             >
               <FilePen className="size-3" />
-              View diff
+              {t("view_diff")}
             </Button>
           )}
         </div>
@@ -258,7 +260,7 @@ export function GitPanel() {
               onClick={handleRefresh}
             >
               <RefreshCw className="size-3" />
-              Retry
+              {t("retry")}
             </Button>
           </div>
         ) : !isRepo ? (
@@ -276,33 +278,33 @@ export function GitPanel() {
 
             {/* File lists */}
             <FileListSection
-              title="Staged"
+              title={t("git_staged")}
               files={staged}
               dotColor="bg-brand"
-              emptyHint="No staged changes"
+              emptyHint={t("git_no_staged")}
               onFileClick={handleFileClick}
               defaultOpen
             />
             <FileListSection
-              title="Modified"
+              title={t("git_modified")}
               files={modified}
               dotColor="bg-amber-500"
-              emptyHint="No modified files"
+              emptyHint={t("git_no_modified")}
               onFileClick={handleFileClick}
               defaultOpen
             />
             <FileListSection
-              title="Untracked"
+              title={t("git_untracked")}
               files={untracked}
               dotColor="bg-muted-foreground/50"
-              emptyHint="No untracked files"
+              emptyHint={t("git_no_untracked")}
               onFileClick={handleFileClick}
               defaultOpen={untracked.length > 0}
             />
 
             {/* Commits */}
             {commits.length > 0 && (
-              <Section title="Commits" icon={GitCommitIcon}>
+              <Section title={t("git_commits")} icon={GitCommitIcon}>
                 <ul className="space-y-0.5">
                   {visibleCommits.map((c) => (
                     <CommitRow key={c.hash} commit={c} />
@@ -316,8 +318,8 @@ export function GitPanel() {
                     onClick={() => setShowAllCommits((v) => !v)}
                   >
                     {showAllCommits
-                      ? "Show fewer"
-                      : `View full log (${commits.length})`}
+                      ? t("git_show_fewer")
+                      : t("git_view_full_log", { count: commits.length })}
                   </Button>
                 )}
               </Section>
@@ -325,7 +327,7 @@ export function GitPanel() {
 
             {/* Branches */}
             {branches.length > 0 && (
-              <Section title="Branches" icon={GitBranch}>
+              <Section title={t("git_branches")} icon={GitBranch}>
                 <ul className="space-y-0.5">
                   {branches.map((b) => (
                     <BranchRow
@@ -340,7 +342,7 @@ export function GitPanel() {
 
             {/* Worktrees */}
             {worktrees.length > 0 && (
-              <Section title="Worktrees" icon={ListTree}>
+              <Section title={t("git_worktrees")} icon={ListTree}>
                 <ul className="space-y-0.5">
                   {worktrees.map((w) => (
                     <WorktreeRow
@@ -357,7 +359,7 @@ export function GitPanel() {
                   onClick={() => setWorktreeDialogOpen(true)}
                 >
                   <Plus className="size-3" />
-                  Add worktree
+                  {t("add_worktree")}
                 </Button>
               </Section>
             )}
@@ -369,7 +371,7 @@ export function GitPanel() {
       <Dialog open={diffOpen} onOpenChange={setDiffOpen}>
         <DialogContent className="sm:max-w-4xl max-h-[85vh] h-[80vh] flex flex-col p-0 overflow-hidden">
           <DialogHeader className="px-5 py-4 border-b shrink-0">
-            <DialogTitle>Working tree diff</DialogTitle>
+            <DialogTitle>{t("working_tree_diff")}</DialogTitle>
             <DialogDescription>
               {totalChanges > 0
                 ? `${totalChanges} change${totalChanges === 1 ? "" : "s"} across ${
@@ -379,14 +381,14 @@ export function GitPanel() {
                       ...untracked.map((f) => f.path),
                     ]).size
                   } file${totalChanges === 1 ? "" : "s"}.`
-                : "No changes in the working tree."}
+                : t("working_tree_clean")}
             </DialogDescription>
           </DialogHeader>
           <div className="flex-1 min-h-0 p-4 overflow-hidden">
             {diffLoading ? (
               <div className="flex h-full items-center justify-center rounded-md border bg-card p-8 text-xs text-muted-foreground">
-                <Loader2 className="mr-2 size-4 animate-spin" />
-                Loading diff…
+                <Loader2 className="me-2 size-4 animate-spin" />
+                {t("loading_diff")}…
               </div>
             ) : (
               <GitDiffView diff={diffText} className="h-full" />
@@ -423,6 +425,7 @@ function StatusSummary({
   totalChanges: number;
   clean: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="rounded-md border bg-background/60 p-2.5 space-y-1.5">
       <div className="flex items-center gap-2">
@@ -434,7 +437,7 @@ function StatusSummary({
           {branch || "HEAD detached"}
         </span>
         {(ahead > 0 || behind > 0) && (
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ms-auto flex items-center gap-1">
             {ahead > 0 && (
               <Badge
                 variant="outline"
@@ -458,13 +461,13 @@ function StatusSummary({
       {clean ? (
         <div className="flex items-center gap-1.5 text-xs text-brand">
           <Check className="size-3" />
-          <span>Working tree clean</span>
+          <span>{t("working_tree_clean")}</span>
         </div>
       ) : (
         <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
           <AlertTriangle className="size-3" />
           <span>
-            {totalChanges} change{totalChanges === 1 ? "" : "s"} to review
+            {t("changes_to_review", { count: totalChanges })}
           </span>
         </div>
       )}
@@ -496,7 +499,7 @@ function FileListSection({
       <CollapsibleTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/40 transition-colors"
+          className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-start text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/40 transition-colors"
           aria-label={`${open ? "Collapse" : "Expand"} ${title} section`}
         >
           {open ? (
@@ -507,7 +510,7 @@ function FileListSection({
           <span>{title}</span>
           <Badge
             variant="secondary"
-            className="ml-1 h-4 min-w-4 px-1 text-[9px] font-mono tabular-nums"
+            className="ms-1 h-4 min-w-4 px-1 text-[9px] font-mono tabular-nums"
           >
             {files.length}
           </Badge>
@@ -557,7 +560,7 @@ function FileRow({
       <button
         type="button"
         onClick={onClick}
-        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-accent/50 transition-colors"
+        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-start hover:bg-accent/50 transition-colors"
         title={file.path}
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", dotColor)} />
@@ -642,7 +645,7 @@ function BranchRow({
         onClick={branch.current ? undefined : onCheckout}
         disabled={branch.current}
         className={cn(
-          "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] transition-colors",
+          "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-start text-[11px] transition-colors",
           branch.current
             ? "bg-brand/5 text-brand cursor-default"
             : "hover:bg-accent/50",
@@ -688,6 +691,7 @@ function WorktreeRow({
   worktree: GitWorktree;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <li className="flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-accent/40 transition-colors">
       <ListTree
@@ -716,12 +720,12 @@ function WorktreeRow({
               size="sm"
               className="size-6 p-0 hover:text-destructive"
               onClick={onRemove}
-              aria-label={`Remove worktree ${worktree.path}`}
+              aria-label={t("remove_worktree")}
             >
               <Trash2 className="size-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="left">Remove worktree</TooltipContent>
+          <TooltipContent side="left">{t("remove_worktree")}</TooltipContent>
         </Tooltip>
       )}
     </li>
@@ -753,6 +757,7 @@ function Section({
 /* ------------------------------ Not a repo ------------------------------ */
 
 function NotARepoState() {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const cmd = "git init";
@@ -761,9 +766,9 @@ function NotARepoState() {
       await navigator.clipboard.writeText(cmd);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-      toast.success("Copied to clipboard");
+      toast.success(t("copied_to_clipboard"));
     } catch {
-      toast.error("Couldn't copy");
+      toast.error(t("couldnt_copy"));
     }
   };
   return (
@@ -772,11 +777,9 @@ function NotARepoState() {
         <GitGraph className="size-6 text-muted-foreground/60" />
       </div>
       <div className="space-y-1">
-        <p className="text-sm font-medium">Not a git repository</p>
+        <p className="text-sm font-medium">{t("not_a_git_repo")}</p>
         <p className="text-[11px] text-muted-foreground max-w-[240px]">
-          This workspace isn&apos;t a git repository. Initialize one with{" "}
-          <code className="font-mono text-foreground/80">git init</code> in the
-          terminal.
+          {t("not_a_git_repo_desc")}
         </p>
       </div>
       <div className="flex items-center gap-2 rounded-md border bg-background/60 px-2 py-1.5">
@@ -789,11 +792,11 @@ function NotARepoState() {
         >
           {copied ? (
             <>
-              <Check className="size-3 text-brand" /> Copied
+              <Check className="size-3 text-brand" /> {t("copied")}
             </>
           ) : (
             <>
-              <Copy className="size-3" /> Copy
+              <Copy className="size-3" /> {t("copy")}
             </>
           )}
         </Button>
@@ -805,7 +808,7 @@ function NotARepoState() {
         onClick={() => setRightPanelTab("terminal")}
       >
         <ExternalLink className="size-3" />
-        Open terminal
+        {t("open_terminal")}
       </Button>
     </div>
   );
@@ -822,6 +825,7 @@ function WorktreeDialog({
   onOpenChange: (v: boolean) => void;
   onSubmit: (branch: string, path: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [branch, setBranch] = React.useState("");
   const [path, setPath] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -849,16 +853,15 @@ function WorktreeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add worktree</DialogTitle>
+          <DialogTitle>{t("add_worktree")}</DialogTitle>
           <DialogDescription>
-            Create a new git worktree at the given path with a new branch
-            checked out. The path is relative to the workspace root.
+            {t("add_worktree_desc")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor="wt-branch" className="text-xs">
-              Branch name
+              {t("branch_name")}
             </Label>
             <Input
               id="wt-branch"
@@ -874,7 +877,7 @@ function WorktreeDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="wt-path" className="text-xs">
-              Path (relative to workspace)
+              {t("path")}
             </Label>
             <Input
               id="wt-path"
@@ -896,7 +899,7 @@ function WorktreeDialog({
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button
             size="sm"
@@ -909,7 +912,7 @@ function WorktreeDialog({
             ) : (
               <Plus className="size-3.5" />
             )}
-            Add worktree
+            {t("add_worktree")}
           </Button>
         </DialogFooter>
       </DialogContent>

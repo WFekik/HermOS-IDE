@@ -5,6 +5,7 @@ import { MousePointerClick, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import { parseSnapshot, type SnapshotLine } from "@/components/browser/types";
 
 /* ------------------------------------------------------------------ *
@@ -28,6 +29,7 @@ export function SnapshotView({
   onQuickType: (ref: string) => void;
   busyRef: string | null;
 }) {
+  const { t } = useTranslation();
   const lines = React.useMemo(
     () => parseSnapshot(snapshot),
     [snapshot],
@@ -36,7 +38,7 @@ export function SnapshotView({
   if (lines.length === 0) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-center text-xs text-muted-foreground">
-        Empty snapshot.
+        {t("empty_snapshot")}
       </div>
     );
   }
@@ -73,6 +75,7 @@ function SnapshotRow({
   onQuickClick: () => void;
   onQuickType: () => void;
 }) {
+  const { t } = useTranslation();
   const isRef = !!line.ref;
   return (
     <div
@@ -124,8 +127,8 @@ function SnapshotRow({
               : line.body || line.raw || ""}
           </span>
           {busy && (
-            <span className="ml-1 inline-flex items-center text-[10px] text-brand">
-              working…
+            <span className="ms-1 inline-flex items-center text-[10px] text-brand">
+              {t("working")}
             </span>
           )}
         </div>
@@ -140,9 +143,9 @@ function SnapshotRow({
                 onQuickClick();
               }}
               disabled={busy}
-              aria-label={`Click ${line.ref}`}
+              aria-label={t("browser_click_element")}
             >
-              <MousePointerClick className="size-3" /> Click
+              <MousePointerClick className="size-3" /> {t("click")}
             </Button>
             <Button
               size="sm"
@@ -153,9 +156,9 @@ function SnapshotRow({
                 onQuickType();
               }}
               disabled={busy}
-              aria-label={`Type into ${line.ref}`}
+              aria-label={t("browser_type_into_element")}
             >
-              <Keyboard className="size-3" /> Type…
+              <Keyboard className="size-3" /> {t("type")}…
             </Button>
           </div>
         )}

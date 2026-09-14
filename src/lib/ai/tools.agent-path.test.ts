@@ -42,6 +42,19 @@ describe("resolveAgentPath trusted roots", () => {
     expect(t?.isTruncation).toBe(false);
   });
 
+  it("resolves leading-slash and absolute workspace paths without hijacking to artifacts", async () => {
+    const slashPath = await resolveAgentPath(USER, WS, "c1", "/src/index.ts");
+    expect(slashPath?.rootDir).toBe(WS.rootDir);
+    expect(slashPath?.rel).toBe(path.join("src", "index.ts"));
+    expect(slashPath?.isArtifact).toBe(false);
+
+    const absWsPath = path.join(WS.rootDir, "src", "index.ts");
+    const resolvedAbs = await resolveAgentPath(USER, WS, "c1", absWsPath);
+    expect(resolvedAbs?.rootDir).toBe(WS.rootDir);
+    expect(resolvedAbs?.rel).toBe(path.join("src", "index.ts"));
+    expect(resolvedAbs?.isArtifact).toBe(false);
+  });
+
   it("rejects traversal escapes", async () => {
     expect(await resolveAgentPath(USER, WS, "c1", "../secret.txt")).toBeNull();
     expect(await resolveAgentPath(USER, WS, "c1", "a/../../../secret.txt")).toBeNull();
@@ -156,4 +169,84 @@ describe("HERMOS_TEMP_DIR / HERMOS_TRUNCATION_DIR in spawned children", () => {
     const stdout = completed?.stdout ?? "";
     expect(stdout.trim()).toBe(`${tempDir}|${truncationUserDir("u-env")}`);
   }, 30_000);
+});
+
+describe("com.hermos-ide and artifacts virtual path resolution", () => {
+  it("resolves com.hermos-ide virtual prefix and sessions to HERMOS_TEMP_DIR", async () => {
+    const { ensureHermosTempDir, HERMOS_TEMP_DIR } = await import("@/lib/paths");
+    ensureHermosTempDir();
+
+    const t1 = await resolveAgentPath(USER, WS, "c1", "com.hermos-ide/sessions/active.json");
+    expect(t1).not.toBeNull();
+    expect(t1?.rootDir).toBe(HERMOS_TEMP_DIR);
+    expect(t1?.isTemp).toBe(true);
+
+    const t2 = await resolveAgentPath(USER, WS, "c1", "sessions/session-42.json");
+    expect(t2).not.toBeNull();
+    expect(t2?.rootDir).toBe(HERMOS_TEMP_DIR);
+    expect(t2?.isTemp).toBe(true);
+  });
+
+  it("resolves virtual artifacts prefix", async () => {
+    const { ARTIFACTS_DIR } = await import("@/lib/paths");
+    const userArtifacts = path.join(ARTIFACTS_DIR, USER, "c1");
+    mkdirSync(userArtifacts, { recursive: true });
+    writeFileSync(path.join(userArtifacts, "architecture.md"), "# Architecture");
+
+    const t = await resolveAgentPath(USER, WS, "c1", "artifacts/architecture.md");
+    expect(t).not.toBeNull();
+    expect(t?.isArtifact).toBe(true);
+  });
+});
+
+describe("ConvergenceDetector with different tool edits", () => {
+  it("does NOT trigger loop detection when prose repeats but edits differ on the same file", async () => {
+    const { ConvergenceDetector } = await import("@/lib/ai/executor");
+    const detector = new ConvergenceDetector();
+
+    // 12 iterations with identical prose, but different edits on the same file
+    for (let i = 0; i < 12; i++) {
+      const status = detector.record("Now I will apply the next code modification to src/index.ts", [
+        {
+          toolName: "edit_file",
+          args: {
+            path: "src/index.ts",
+            edits: [{ find: `old_function_${i}()`, replace: `new_function_${i}()` }],
+          },
+        },
+      ]);
+      expect(status).toBe("ok");
+    }
+
+    // Reset detector to test pure identical loop
+    detector.reset();
+    let finalStatus: string = "ok";
+    for (let i = 0; i < 11; i++) {
+      finalStatus = detector.record("Stuck in loop doing the exact same thing", [
+        {
+          toolName: "edit_file",
+          args: {
+            path: "src/index.ts",
+            edits: [{ find: "identical", replace: "identical" }],
+          },
+        },
+      ]);
+    }
+    expect(finalStatus).toBe("break");
+  });
+
+  it("caps toolSignatures memory growth to at most 20 entries", async () => {
+    const { ConvergenceDetector } = await import("@/lib/ai/executor");
+    const detector = new ConvergenceDetector();
+
+    for (let i = 0; i < 50; i++) {
+      detector.record(`Iteration prose ${i}`, [
+        {
+          toolName: "run_command",
+          args: { command: `echo ${i}` },
+        },
+      ]);
+    }
+    expect((detector as unknown as { toolSignatures: string[] }).toolSignatures.length).toBeLessThanOrEqual(20);
+  });
 });

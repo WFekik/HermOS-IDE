@@ -73,6 +73,7 @@ import {
 } from "@/lib/office/resolvers";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 
 interface WorkspaceOfficeDoc {
   path: string;
@@ -203,6 +204,7 @@ function withRelPath(manifest: OfficeDocManifest, relPath: string): OfficeDocMan
 }
 
 export function OfficePanel() {
+  const { t } = useTranslation();
   const activeOfficeDoc = useAppStore((s) => s.activeOfficeDoc);
   const setActiveOfficeDoc = useAppStore((s) => s.setActiveOfficeDoc);
   const updateActiveOfficeSlide = useAppStore((s) => s.updateActiveOfficeSlide);
@@ -506,7 +508,7 @@ export function OfficePanel() {
             slide-by-slide with executive layouts, live theme switchers, and real-time visual inspection.
           </p>
 
-          <div className="w-full space-y-2.5 text-left">
+          <div className="w-full space-y-2.5 text-start">
             <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
               Step-by-Step Agent Starters:
             </div>
@@ -517,13 +519,13 @@ export function OfficePanel() {
                   "Outline and create an executive 6-slide presentation (presentation.pptx) on our platform architecture, roadmap, and performance metrics. Build it slide-by-slide with tailored layouts (KPI cards, split architecture, metrics table, roadmap timeline, and executive quote)."
                 );
               }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-left group flex items-start gap-3 cursor-pointer shadow-xs"
+              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
             >
               <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500 group-hover:scale-105 transition-transform shrink-0">
                 <Presentation className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">Create a Presentation (Slide-by-Slide)</div>
+                <div className="text-xs font-semibold text-foreground">{t("create_presentation")}</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
                   "Build an executive 6-slide deck carefully slide-by-slide with cards, tables, and roadmaps"
                 </div>
@@ -536,13 +538,13 @@ export function OfficePanel() {
                   "Generate a formal technical assessment PDF report (report.pdf) with executive summary, callouts, and benchmark tables."
                 );
               }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-left group flex items-start gap-3 cursor-pointer shadow-xs"
+              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
             >
               <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500 group-hover:scale-105 transition-transform shrink-0">
                 <FileText className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">Generate a PDF Report</div>
+                <div className="text-xs font-semibold text-foreground">{t("generate_pdf_report")}</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
                   "Generate a formal technical assessment PDF with callouts and tables"
                 </div>
@@ -555,13 +557,13 @@ export function OfficePanel() {
                   "Draft an executive engineering specification Word document (spec.docx) with sections, tables, and metric highlights."
                 );
               }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-left group flex items-start gap-3 cursor-pointer shadow-xs"
+              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
             >
               <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 group-hover:scale-105 transition-transform shrink-0">
                 <FileType className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">Draft a Word Document</div>
+                <div className="text-xs font-semibold text-foreground">{t("draft_word_document")}</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
                   "Draft an engineering specification Word doc with comparison tables"
                 </div>
@@ -577,7 +579,7 @@ export function OfficePanel() {
   // STUDIO INTERFACE (Kimi / GLM Style with Company-Grade Aesthetics)
   // =========================================================================
   return (
-    <div className="flex flex-col h-full bg-background border-l border-border select-none overflow-hidden">
+    <div className="flex flex-col h-full bg-background border-s border-border select-none overflow-hidden">
       {/* 1. TOP STUDIO BAR — Zero Collision, Clear Affordances */}
       <div className="h-10 border-b border-border px-2.5 flex items-center justify-between gap-1.5 shrink-0 bg-card/50 backdrop-blur-sm">
         {/* Left: Document Selector & Type Badge */}
@@ -597,7 +599,7 @@ export function OfficePanel() {
                   <FileType className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 )}
                 <span className="truncate font-semibold">{activeOfficeDoc?.title || "Select Document"}</span>
-                <ChevronDown className="w-3 h-3 opacity-50 shrink-0 ml-0.5" />
+                <ChevronDown className="w-3 h-3 opacity-50 shrink-0 ms-0.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
@@ -697,7 +699,7 @@ export function OfficePanel() {
                   <Play className="w-3.5 h-3.5 fill-brand/20" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Start Slideshow (Fullscreen)</TooltipContent>
+              <TooltipContent side="bottom">{t("start_slideshow")}</TooltipContent>
             </Tooltip>
           )}
 
@@ -713,7 +715,7 @@ export function OfficePanel() {
                 <Sparkles className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Ask Agent to Refine</TooltipContent>
+            <TooltipContent side="bottom">{t("ask_agent_refine")}</TooltipContent>
           </Tooltip>
 
           {/* Export / Download */}
@@ -732,7 +734,7 @@ export function OfficePanel() {
                 <Download className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Download File</TooltipContent>
+            <TooltipContent side="bottom">{t("download_file")}</TooltipContent>
           </Tooltip>
 
           {/* Save Button */}
@@ -740,14 +742,14 @@ export function OfficePanel() {
             size="sm"
             onClick={handleSaveChanges}
             disabled={saving}
-            className="h-7 px-2.5 text-xs bg-brand text-brand-foreground hover:bg-brand/90 gap-1 shrink-0 font-medium ml-0.5"
+            className="h-7 px-2.5 text-xs bg-brand text-brand-foreground hover:bg-brand/90 gap-1 shrink-0 font-medium ms-0.5"
           >
             {saving ? (
               <RefreshCw className="w-3 h-3 animate-spin" />
             ) : (
               <Check className="w-3 h-3" />
             )}
-            <span>Save</span>
+            <span>{t("save")}</span>
           </Button>
         </div>
       </div>
@@ -759,8 +761,8 @@ export function OfficePanel() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Left Slide Filmstrip — Wider w-44 for Legible Titles */}
-            <div className="w-44 border-r border-border bg-card/20 flex flex-col shrink-0 overflow-hidden">
-              <div className="p-2 border-b border-border/60 flex items-center justify-between">
+            <div className="w-44 border-e border-border bg-card/20 flex flex-col shrink-0 min-h-0 overflow-hidden">
+              <div className="p-2 border-b border-border/60 flex items-center justify-between shrink-0">
                 <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Slides ({activeOfficeDoc.slides?.length || 0})
                 </span>
@@ -769,8 +771,7 @@ export function OfficePanel() {
                 </span>
               </div>
 
-              <ScrollArea className="flex-1 p-1.5">
-                <div className="space-y-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-1.5">
                   {activeOfficeDoc.slides?.map((slide, sIdx) => {
                     const isActive = sIdx === currentSlideIndex;
                     const LayoutIcon = LAYOUT_ICONS[slide.layout || "bullets"] || FileText;
@@ -780,7 +781,7 @@ export function OfficePanel() {
                         key={slide.id || sIdx}
                         onClick={() => setCurrentSlideIndex(sIdx)}
                         className={cn(
-                          "group relative p-2.5 rounded-lg border transition-all cursor-pointer text-left",
+                          "group relative p-2.5 rounded-lg border transition-all cursor-pointer text-start",
                           isActive
                             ? "border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs"
                             : "border-border/60 bg-card/50 hover:bg-accent/40 hover:border-border"
@@ -801,7 +802,7 @@ export function OfficePanel() {
                         </div>
 
                         {/* Slide action buttons: duplicate and delete */}
-                        <div className="absolute right-1.5 top-1.5 hidden group-hover:flex items-center gap-0.5 bg-card/95 border border-border/80 rounded px-1 py-0.5 shadow-xs">
+                        <div className="absolute end-1.5 top-1.5 hidden group-hover:flex items-center gap-0.5 bg-card/95 border border-border/80 rounded px-1 py-0.5 shadow-xs">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -826,8 +827,7 @@ export function OfficePanel() {
                       </div>
                     );
                   })}
-                </div>
-              </ScrollArea>
+              </div>
             </div>
 
             {/* Center: Interactive Slide Canvas (Company-Grade 16:9 Aspect, Zero Blank Slides) */}
@@ -843,7 +843,7 @@ export function OfficePanel() {
                 >
                   {/* Decorative top accent line */}
                   <div
-                    className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
+                    className="absolute top-0 start-0 end-0 h-1.5 rounded-t-xl"
                     style={{ backgroundColor: `#${theme.primary}` }}
                   />
 
@@ -948,7 +948,7 @@ export function OfficePanel() {
                                 updateActiveOfficeSlide(currentSlideIndex, { subtitle: text });
                               }
                             }}
-                            className="text-xs md:text-sm pl-4 opacity-85 outline-none hover:bg-black/5 dark:hover:bg-white/5 focus:bg-black/5 dark:focus:bg-white/5 focus:ring-1 focus:ring-brand/40 rounded px-1 -mx-1 transition-colors cursor-text"
+                            className="text-xs md:text-sm ps-4 opacity-85 outline-none hover:bg-black/5 dark:hover:bg-white/5 focus:bg-black/5 dark:focus:bg-white/5 focus:ring-1 focus:ring-brand/40 rounded px-1 -mx-1 transition-colors cursor-text"
                             style={{ color: `#${theme.textMuted}` }}
                             title="Click to edit subtitle"
                           >
@@ -1123,7 +1123,7 @@ export function OfficePanel() {
                             className="rounded-xl border overflow-x-auto my-auto max-h-[340px] shadow-xs"
                             style={{ borderColor: `#${theme.border}` }}
                           >
-                            <table className="w-full text-xs md:text-sm text-left border-collapse">
+                            <table className="w-full text-xs md:text-sm text-start border-collapse">
                               <thead className="sticky top-0 z-10">
                                 <tr style={{ backgroundColor: `#${theme.primary}`, color: "#FFFFFF" }}>
                                   {resolvedTable.headers.map((h, hIdx) => (
@@ -1321,7 +1321,7 @@ export function OfficePanel() {
 
                         {/* 6. STANDARD BULLETS LAYOUT (Default Fallback) */}
                         {(!activeSlide.layout || activeSlide.layout === "bullets") && (
-                          <ul className="space-y-2.5 pl-1 my-auto">
+                          <ul className="space-y-2.5 ps-1 my-auto">
                             {(activeSlide.bullets && activeSlide.bullets.length > 0
                               ? activeSlide.bullets
                               : ["Core platform architecture pattern", "High-velocity delivery pipeline", "Continuous quality verification"]
@@ -1377,7 +1377,7 @@ export function OfficePanel() {
                   onClick={() => setCurrentSlideIndex((c) => Math.max(0, c - 1))}
                   className="h-7 px-2.5 text-xs"
                 >
-                  <ChevronLeft className="w-3 h-3 mr-1" /> Prev
+                  <ChevronLeft className="w-3 h-3 me-1" /> Prev
                 </Button>
                 <span className="text-xs font-mono text-muted-foreground px-2">
                   {currentSlideIndex + 1} / {activeOfficeDoc.slides?.length || 1}
@@ -1389,7 +1389,7 @@ export function OfficePanel() {
                   onClick={() => setCurrentSlideIndex((c) => Math.min((activeOfficeDoc.slides?.length || 1) - 1, c + 1))}
                   className="h-7 px-2.5 text-xs"
                 >
-                  Next <ChevronRight className="w-3 h-3 ml-1" />
+                  Next <ChevronRight className="w-3 h-3 ms-1" />
                 </Button>
               </div>
             </div>
@@ -1455,21 +1455,21 @@ export function OfficePanel() {
                   {/* Common: Title & Subtitle */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
-                      <Label className="text-[10px] text-muted-foreground font-semibold">Slide Title</Label>
+                      <Label className="text-[10px] text-muted-foreground font-semibold">{t("slide_title")}</Label>
                       <Input
                         value={activeSlide.title}
                         onChange={(e) => updateActiveOfficeSlide(currentSlideIndex, { title: e.target.value })}
                         className="h-7 text-xs mt-0.5"
-                        placeholder="Slide title"
+                        placeholder={t("slide_title_placeholder")}
                       />
                     </div>
                     <div>
-                      <Label className="text-[10px] text-muted-foreground font-semibold">Subtitle</Label>
+                      <Label className="text-[10px] text-muted-foreground font-semibold">{t("optional_subtitle")}</Label>
                       <Input
                         value={activeSlide.subtitle || ""}
                         onChange={(e) => updateActiveOfficeSlide(currentSlideIndex, { subtitle: e.target.value })}
                         className="h-7 text-xs mt-0.5"
-                        placeholder="Optional subtitle"
+                        placeholder={t("optional_subtitle")}
                       />
                     </div>
                   </div>
@@ -1497,7 +1497,7 @@ export function OfficePanel() {
                             updateActiveOfficeSlide(currentSlideIndex, { steps: next });
                           }}
                         >
-                          <Plus className="w-3 h-3 mr-1" /> Add Milestone
+                          <Plus className="w-3 h-3 me-1" /> Add Milestone
                         </Button>
                       </div>
 
@@ -1627,7 +1627,7 @@ export function OfficePanel() {
                             updateActiveOfficeSlide(currentSlideIndex, { cards: next });
                           }}
                         >
-                          <Plus className="w-3 h-3 mr-1" /> Add Card
+                          <Plus className="w-3 h-3 me-1" /> Add Card
                         </Button>
                       </div>
 
@@ -1835,8 +1835,8 @@ export function OfficePanel() {
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
             <div className="flex-1 flex min-h-0 overflow-hidden">
               {/* Left Page Filmstrip — Matches Presentation Studio w-44 */}
-              <div className="w-48 border-r border-border bg-card/20 flex flex-col shrink-0 overflow-hidden">
-                <div className="p-2 border-b border-border/60 flex items-center justify-between">
+              <div className="w-48 border-e border-border bg-card/20 flex flex-col shrink-0 min-h-0 overflow-hidden">
+                <div className="p-2 border-b border-border/60 flex items-center justify-between shrink-0">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                     Pages ({paginatedPages.length})
                   </span>
@@ -1845,48 +1845,46 @@ export function OfficePanel() {
                   </span>
                 </div>
 
-                <ScrollArea className="flex-1 p-1.5">
-                  <div className="space-y-1.5">
-                    {paginatedPages.map((page) => {
-                      const isActive = page.pageNumber === currentDocPage;
-                      return (
-                        <div
-                          key={page.pageNumber}
-                          onClick={() => setCurrentDocPage(page.pageNumber)}
-                          className={cn(
-                            "group relative p-2.5 rounded-lg border transition-all cursor-pointer text-left",
-                            isActive
-                              ? "border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs"
-                              : "border-border/60 bg-card/50 hover:bg-accent/40 hover:border-border"
-                          )}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span
-                              className={cn(
-                                "text-[9px] font-mono px-1.5 py-0.2 rounded border font-semibold",
-                                isActive
-                                  ? "bg-brand/15 text-brand border-brand/30"
-                                  : "bg-background/80 text-muted-foreground border-border/60"
-                              )}
-                            >
-                              {page.pageNumber}
-                            </span>
-                            <span className="text-[9px] font-medium text-muted-foreground capitalize flex items-center gap-1">
-                              <FileText className="w-3 h-3 text-muted-foreground" />
-                              {page.isCover ? "Cover" : "Section"}
-                            </span>
-                          </div>
-
-                          <div className="text-xs font-semibold text-foreground line-clamp-2 leading-snug">
-                            {page.isCover
-                              ? (activeOfficeDoc.title || "Cover Page")
-                              : page.sections.map((s) => s.sec.heading).join(", ") || "Untitled Section"}
-                          </div>
+                <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-1.5">
+                  {paginatedPages.map((page) => {
+                    const isActive = page.pageNumber === currentDocPage;
+                    return (
+                      <div
+                        key={page.pageNumber}
+                        onClick={() => setCurrentDocPage(page.pageNumber)}
+                        className={cn(
+                          "group relative p-2.5 rounded-lg border transition-all cursor-pointer text-start",
+                          isActive
+                            ? "border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs"
+                            : "border-border/60 bg-card/50 hover:bg-accent/40 hover:border-border"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span
+                            className={cn(
+                              "text-[9px] font-mono px-1.5 py-0.2 rounded border font-semibold",
+                              isActive
+                                ? "bg-brand/15 text-brand border-brand/30"
+                                : "bg-background/80 text-muted-foreground border-border/60"
+                            )}
+                          >
+                            {page.pageNumber}
+                          </span>
+                          <span className="text-[9px] font-medium text-muted-foreground capitalize flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-muted-foreground" />
+                            {page.isCover ? "Cover" : "Section"}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
+
+                        <div className="text-xs font-semibold text-foreground line-clamp-2 leading-snug">
+                          {page.isCover
+                            ? (activeOfficeDoc.title || "Cover Page")
+                            : page.sections.map((s) => s.sec.heading).join(", ") || "Untitled Section"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Center Canvas: Active Page Sheet (Single Page Focus) */}
@@ -1902,7 +1900,7 @@ export function OfficePanel() {
                   >
                     {/* Top Decorative Accent Line */}
                     <div
-                      className="absolute top-0 left-0 right-0 h-1.5 rounded-t-xl"
+                      className="absolute top-0 start-0 end-0 h-1.5 rounded-t-xl"
                       style={{ backgroundColor: `#${theme.primary}` }}
                     />
 
@@ -2054,7 +2052,7 @@ export function OfficePanel() {
                           {/* Callout Box */}
                           {sec.callout && (
                             <div
-                              className="p-3.5 rounded-r-xl border-l-4 my-2.5 text-xs relative group/callout shadow-xs"
+                              className="p-3.5 rounded-e-xl border-s-4 my-2.5 text-xs relative group/callout shadow-xs"
                               style={{
                                 backgroundColor: `#${theme.cardBg}`,
                                 borderColor: `#${theme.primary}`,
@@ -2132,7 +2130,7 @@ export function OfficePanel() {
 
                           {/* Bullets */}
                           {sec.bullets && sec.bullets.length > 0 && (
-                            <ul className="mt-3 space-y-1.5 pl-2 text-xs md:text-sm">
+                            <ul className="mt-3 space-y-1.5 ps-2 text-xs md:text-sm">
                               {sec.bullets.map((b, bIdx) => (
                                 <li key={bIdx} className="group/bullet flex items-start gap-2">
                                   <span
@@ -2176,7 +2174,7 @@ export function OfficePanel() {
                               className="mt-3.5 rounded-xl border overflow-hidden shadow-xs"
                               style={{ borderColor: `#${theme.border}` }}
                             >
-                              <table className="w-full text-xs text-left border-collapse">
+                              <table className="w-full text-xs text-start border-collapse">
                                 <thead>
                                   <tr style={{ backgroundColor: `#${theme.primary}`, color: "#FFFFFF" }}>
                                     {sec.table.headers.map((h, hIdx) => (
@@ -2308,7 +2306,7 @@ export function OfficePanel() {
                     onClick={() => setCurrentDocPage((c) => Math.max(1, c - 1))}
                     className="h-7 px-2.5 text-xs"
                   >
-                    <ChevronLeft className="w-3 h-3 mr-1" /> Prev
+                    <ChevronLeft className="w-3 h-3 me-1" /> Prev
                   </Button>
                   <span className="text-xs font-mono text-muted-foreground px-2">
                     {currentDocPage} / {paginatedPages.length}
@@ -2320,7 +2318,7 @@ export function OfficePanel() {
                     onClick={() => setCurrentDocPage((c) => Math.min(paginatedPages.length, c + 1))}
                     className="h-7 px-2.5 text-xs"
                   >
-                    Next <ChevronRight className="w-3 h-3 ml-1" />
+                    Next <ChevronRight className="w-3 h-3 ms-1" />
                   </Button>
                 </div>
               </div>
@@ -2473,7 +2471,7 @@ export function OfficePanel() {
                         <h2 className="text-3xl md:text-4xl font-bold tracking-tight">{activeSlide.title}</h2>
                       </div>
                       {activeSlide.subtitle && (
-                        <p className="text-base md:text-lg pl-5 opacity-80" style={{ color: `#${theme.textMuted}` }}>
+                        <p className="text-base md:text-lg ps-5 opacity-80" style={{ color: `#${theme.textMuted}` }}>
                           {activeSlide.subtitle}
                         </p>
                       )}
@@ -2568,7 +2566,7 @@ export function OfficePanel() {
                           className="rounded-2xl border overflow-hidden my-auto shadow-md"
                           style={{ borderColor: `#${theme.border}` }}
                         >
-                          <table className="w-full text-sm md:text-base text-left border-collapse">
+                          <table className="w-full text-sm md:text-base text-start border-collapse">
                             <thead>
                               <tr style={{ backgroundColor: `#${theme.primary}`, color: "#FFFFFF" }}>
                                 {resolvedTable.headers.map((h, hIdx) => (
@@ -2576,7 +2574,7 @@ export function OfficePanel() {
                                     key={hIdx}
                                     className={cn(
                                       "px-5 py-3.5 font-bold whitespace-nowrap",
-                                      hIdx === 0 ? "text-left" : "text-center"
+                                      hIdx === 0 ? "text-start" : "text-center"
                                     )}
                                   >
                                     {h}
@@ -2597,7 +2595,7 @@ export function OfficePanel() {
                                       key={cIdx}
                                       className={cn(
                                         "px-5 py-3 whitespace-nowrap",
-                                        cIdx === 0 ? "text-left font-semibold" : "text-center"
+                                        cIdx === 0 ? "text-start font-semibold" : "text-center"
                                       )}
                                     >
                                       {renderStatusCell(cell)}
@@ -2660,7 +2658,7 @@ export function OfficePanel() {
 
                       {/* 6. STANDARD BULLETS */}
                       {(!activeSlide.layout || activeSlide.layout === "bullets") && (
-                        <ul className="space-y-3.5 pl-2 my-auto">
+                        <ul className="space-y-3.5 ps-2 my-auto">
                           {(activeSlide.bullets && activeSlide.bullets.length > 0
                             ? activeSlide.bullets
                             : ["Core platform architecture pattern", "High-velocity delivery pipeline", "Continuous quality verification"]
@@ -2694,7 +2692,7 @@ export function OfficePanel() {
                 onClick={() => setCurrentSlideIndex((c) => Math.max(0, c - 1))}
                 className="text-white hover:bg-white/10 h-8 px-2"
               >
-                <ChevronLeft className="w-4 h-4 mr-1" /> Prev
+                <ChevronLeft className="w-4 h-4 me-1" /> Prev
               </Button>
               <span className="text-xs text-white/70">Space / Arrow keys to navigate • Esc to exit</span>
               <Button
@@ -2704,7 +2702,7 @@ export function OfficePanel() {
                 onClick={() => setCurrentSlideIndex((c) => Math.min((activeOfficeDoc?.slides?.length || 1) - 1, c + 1))}
                 className="text-white hover:bg-white/10 h-8 px-2"
               >
-                Next <ChevronRight className="w-4 h-4 ml-1" />
+                Next <ChevronRight className="w-4 h-4 ms-1" />
               </Button>
             </div>
           </motion.div>

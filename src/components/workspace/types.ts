@@ -301,13 +301,15 @@ export function formatBytes(bytes: number | undefined | null): string {
 
 /** Return the final path segment. */
 export function baseName(path: string): string {
-  const parts = path.split("/").filter(Boolean);
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 
 /** Return the parent directory path (workspace-relative). */
 export function dirName(path: string): string {
-  const parts = path.split("/").filter(Boolean);
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
   if (parts.length <= 1) return "";
   return parts.slice(0, -1).join("/");
 }

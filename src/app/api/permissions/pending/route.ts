@@ -119,8 +119,22 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   // If the action is null (shouldn't happen for "ask" mode —
   // evaluateToolPermission returns "allow" for null actions — but we defend
   // in depth), we fall back to treating the decision as a one-shot "allow".
+  // SECURITY: command.outside_workspace is never persisted — an "always_allow"
+  // there downgrades to a one-shot "allow" so a single approval cannot
+  // permanently bypass sanitization for all future outside commands.
   if (decision === "always_allow" && pending.action) {
-    if (KNOWN_PERMISSION_ACTIONS.has(pending.action)) {
+    if (pending.action === "command.outside_workspace") {
+      try {
+        await audit(
+          user.id,
+          "permission_outside_workspace_always_allow_downgraded",
+          JSON.stringify({ id, tool: pending.toolName, action: pending.action }),
+          getClientIp(req),
+        );
+      } catch {
+        /* ignore audit failures */
+      }
+    } else if (KNOWN_PERMISSION_ACTIONS.has(pending.action)) {
       try {
         const config = await getPermissions(user.id);
         const rules: PermissionRule[] = config.rules.filter(

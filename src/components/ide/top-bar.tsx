@@ -13,6 +13,7 @@ import {
   ChevronDown,
   GitBranch,
   Check,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -31,6 +32,7 @@ import { ChatExportButton } from "@/components/ide/chat-export-button";
 import { WindowControls } from "@/components/ide/window-controls";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useThemeToggle } from "@/hooks/use-theme-toggle";
+import { useTranslation } from "@/hooks/use-translation";
 import { isTauri } from "@/lib/tauri";
 import { isMacPlatform } from "@/lib/platform";
 
@@ -56,12 +58,26 @@ export function TopBar({
   const refreshGitStatus = useAppStore((s) => s.refreshGitStatus);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const conversations = useAppStore((s) => s.conversations);
+  const pendingConversations = useAppStore((s) => s.pendingConversations);
+  const streamingByConv = useAppStore((s) => s.streamingStateByConversation);
+  const selectConversation = useAppStore((s) => s.selectConversation);
 
   const activeConversation = activeConversationId
     ? conversations.find((c) => c.id === activeConversationId)
     : null;
 
+  // Background running session (not currently active)
+  const bgRunningEntry = Object.entries(streamingByConv).find(
+    ([id, st]) => id !== activeConversationId && st?.isStreaming,
+  );
+  const bgRunningId = bgRunningEntry?.[0];
+  const bgRunningSession = bgRunningId
+    ? conversations.find((c) => c.id === bgRunningId) ||
+      pendingConversations.find((p) => p.id === bgRunningId)
+    : null;
+
   const { theme, cycle } = useThemeToggle();
+  const { t } = useTranslation();
 
   // Poll git status when the active workspace is a git repo. Refetch
   // on workspace change + every 30s (light). Cleared when the
@@ -76,7 +92,7 @@ export function TopBar({
   }, [activeWorkspace?.id, refreshGitStatus]);
 
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
-  const themeLabel = theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System";
+  const themeLabel = theme === "light" ? t("theme_light") : theme === "dark" ? t("theme_dark") : t("theme_system");
 
   const initials = (currentUser?.name || currentUser?.email || "U")
     .split(/[ @]/)
@@ -110,6 +126,7 @@ export function TopBar({
 
   const tauriDesktop = isTauri();
   const needsTrafficLightsPad = tauriDesktop && isMacPlatform();
+  const sidebarLabel = sidebarCollapsed ? t("show_sidebar") : t("hide_sidebar");
 
   return (
     <header
@@ -118,7 +135,7 @@ export function TopBar({
       style={tauriDesktop ? { WebkitAppRegion: "drag" } as React.CSSProperties : undefined}
     >
       {/* Sidebar toggle — left edge */}
-      <div className={needsTrafficLightsPad ? "pl-[80px] flex items-center gap-0.5" : "flex items-center gap-0.5"}>
+      <div className={needsTrafficLightsPad ? "ps-[80px] flex items-center gap-0.5" : "flex items-center gap-0.5"}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -126,14 +143,14 @@ export function TopBar({
               size="icon"
               className="size-6 inline-flex"
               onClick={onToggleSidebar}
-              aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              aria-label={sidebarLabel}
               data-tauri-drag-region="false"
               style={tauriDesktop ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
             >
               {sidebarCollapsed ? <PanelLeftOpen className="size-3" /> : <PanelLeftClose className="size-3" />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}</TooltipContent>
+          <TooltipContent>{sidebarLabel}</TooltipContent>
         </Tooltip>
 
         <div className="md:hidden">
@@ -200,6 +217,29 @@ export function TopBar({
           />
         )}
 
+        {/* Background running session shortcut pill */}
+        {bgRunningId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 gap-1.5 px-2 text-xs border-brand/40 bg-brand/5 hover:bg-brand/10 text-brand animate-pulse"
+                onClick={() => void selectConversation(bgRunningId)}
+                aria-label={`${t("go_to_session")}: ${bgRunningSession?.title || t("conversation")}`}
+              >
+                <Bot className="size-3 shrink-0" />
+                <span className="max-w-[120px] truncate font-medium">
+                  {bgRunningSession?.title || t("conversation")}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {t("agent_running_in_session", { title: bgRunningSession?.title || t("conversation") })} · {t("go_to_session")}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -207,12 +247,12 @@ export function TopBar({
               size="icon"
               className="size-6"
               onClick={cycle}
-              aria-label={`Theme: ${themeLabel}. Click to cycle.`}
+              aria-label={`${t("theme")}: ${themeLabel}`}
             >
               <ThemeIcon className="size-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Theme: {themeLabel}</TooltipContent>
+          <TooltipContent>{t("theme")}: {themeLabel}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -222,12 +262,12 @@ export function TopBar({
               size="icon"
               className="size-6"
               onClick={() => setCommandOpen(true)}
-              aria-label="Open command palette"
+              aria-label={t("open_command_palette")}
             >
               <ChevronDown className="size-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Command palette (⌘K)</TooltipContent>
+          <TooltipContent>{t("command_palette_shortcut")}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -237,12 +277,12 @@ export function TopBar({
               size="icon"
               className="size-6"
               onClick={() => setSettingsOpen(true)}
-              aria-label="Open settings"
+              aria-label={t("open_settings")}
             >
               <SettingsIcon className="size-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Settings</TooltipContent>
+          <TooltipContent>{t("settings")}</TooltipContent>
         </Tooltip>
 
         <DropdownMenu>
@@ -269,7 +309,7 @@ export function TopBar({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-              <SettingsIcon className="size-3" /> Settings
+              <SettingsIcon className="size-3" /> {t("settings")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -284,23 +324,23 @@ export function TopBar({
               size="icon"
               className="size-6 hidden md:inline-flex"
               onClick={onToggleRight}
-              aria-label={rightCollapsed ? "Show right panel" : "Hide right panel"}
+              aria-label={rightCollapsed ? t("show_right_panel") : t("hide_right_panel")}
             >
               {rightCollapsed ? <PanelRightOpen className="size-3" /> : <PanelRightClose className="size-3" />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{rightCollapsed ? "Show right panel" : "Hide right panel"}</TooltipContent>
+          <TooltipContent>{rightCollapsed ? t("show_right_panel") : t("hide_right_panel")}</TooltipContent>
         </Tooltip>
       </div>
 
       {/* Native window controls — desktop only (non-macOS); macOS uses native traffic lights via Overlay */}
       {tauriDesktop && !isMacPlatform() && (
         <>
-          <div className="h-4 w-px shrink-0 bg-border/60 ml-1" aria-hidden />
+          <div className="h-4 w-px shrink-0 bg-border/60 ms-1" aria-hidden />
           <div
             data-tauri-drag-region="false"
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            className="shrink-0 -mr-1.5"
+            className="shrink-0 -me-1.5"
           >
             <WindowControls />
           </div>

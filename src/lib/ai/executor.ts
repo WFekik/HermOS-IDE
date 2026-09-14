@@ -7,7 +7,7 @@ import { buildDiscoveryBlock } from "./discovery";
 import { decrypt } from "@/lib/encryption";
 import { getSecuritySettings } from "@/lib/security-settings";
 import { scrubHistoryForWire, scrubPromptString } from "@/lib/security-scrub";
-import { PROVIDERS, resolveModel, getProvider, modelSupportsVision, requiresReasoningEcho, rememberReasoningEchoRequired, DEFAULT_FALLBACK_MODEL } from "@/lib/ai/providers";
+import { PROVIDERS, resolveModel, getProvider, modelSupportsVision, requiresReasoningEcho, rememberReasoningEchoRequired } from "@/lib/ai/providers";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { peekModelInRegistry } from "@/lib/models-dev";
 import { refreshProviderModels } from "@/lib/provider-fetch";
@@ -26,6 +26,7 @@ import {
   type PermissionAction,
   type PermissionMode,
 } from "@/lib/permissions";
+import { ensureHermosTempDir } from "@/lib/paths";
 import {
   createPendingApproval,
   cancelPendingForConversation,
@@ -33,7 +34,7 @@ import {
 } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation, raceWithAbort } from "@/lib/question-prompt";
 import { audit } from "@/app/api/_lib/helpers";
-import { assertUrlAllowed } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { parseMentions, parseCommands, type ParsedMention } from "@/lib/mentions";
 import {
   getActiveWorkspace,
@@ -41,6 +42,8 @@ import {
   readFileWs,
   getCompletedCommand,
   acknowledgeCompletedCommand,
+  resolveCommandSafety,
+  ensureAgentTempDir,
 } from "@/lib/workspace";
 import { mergeReasoningCapability } from "@/lib/provider-models";
 import { getSubagents } from "@/lib/ai/subagents";
@@ -234,10 +237,11 @@ const ARCHITECT_SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
   "message_subagent",
 ]);
 
-/** Everything architect mode may invoke: read-only tools + orchestration. */
+/** Everything architect mode may invoke: read-only tools + orchestration + artifacts. */
 const ARCHITECT_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   ...ARCHITECT_READ_ONLY_TOOLS,
   ...ARCHITECT_SUBAGENT_TOOLS,
+  "create_artifact",
 ]);
 
 /** Reasonable limit for inlined preview text extracted from text-like attachments. */
@@ -257,23 +261,39 @@ async function resolveHistoryImages(
 ): Promise<ResolvedImageData> {
   const imageMap: ResolvedImageData = new Map();
   const allIds = new Set<string>();
-  for (const m of history) {
-    if (m.role !== "user" || !m.attachments) continue;
+
+  // Only inspect recent user messages (last 2 user turns) to avoid blowing up TPM limits
+  // and re-transmitting megabytes of historical images on every single tool iteration.
+  const userMessages = history.filter((m) => m.role === "user" && m.attachments);
+  const recentUserMessages = userMessages.slice(-2);
+
+  for (const m of recentUserMessages) {
     try {
-      const atts = JSON.parse(m.attachments) as Array<{ id: string; type: string }>;
+      const atts = JSON.parse(m.attachments!) as Array<{ id: string; type: string }>;
       for (const a of atts) {
         if (a.type.startsWith("image/")) allIds.add(a.id);
       }
     } catch { /* ignore malformed JSON */ }
   }
   if (allIds.size === 0) return imageMap;
+  // Deterministic newest-first order so the 5 MB budget keeps the most
+  // recent images regardless of DB return order.
   const rows = await db.attachment.findMany({
     where: { id: { in: Array.from(allIds) }, conversationId, userId },
+    orderBy: { createdAt: "desc" },
   });
+
+  let totalBase64Bytes = 0;
+  const MAX_TOTAL_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB image budget per request
+
   for (const row of rows) {
     if (!row.type.startsWith("image/")) continue;
     try {
-      const buf = readFileSync(row.path);
+      if (row.size > MAX_TOTAL_IMAGE_BYTES) continue;
+      // Async read — never block the event loop on image I/O.
+      const buf = await fsPromises.readFile(row.path);
+      if (totalBase64Bytes + buf.length > MAX_TOTAL_IMAGE_BYTES) break;
+      totalBase64Bytes += buf.length;
       imageMap.set(row.id, { mediaType: row.type, base64: buf.toString("base64") });
     } catch { /* file not found */ }
   }
@@ -338,44 +358,239 @@ const sessionReadTracker = new Map<string, Set<string>>();
  * An agent that is making genuine progress produces different text each
  * iteration. An agent in a loop produces the same text repeatedly.
  *
- * Escalation ladder:
- *   - 2 consecutive identical outputs → "warn" — caller injects a system
+ * Differing tool calls reset the prose counter — "same preamble, different
+ * edit" is genuine progress (e.g. 12 distinct edits with one shared preamble
+ * must not nag). Alternating / rotating tool cycles (ABAB…, ABCABC…,
+ * ABCDABCD…, generic period 2..5 rotations) still break via
+ * signature-cycle detection, and identical tools+prose escalate on
+ * a tight ladder to bound cost.
+ *
+ * Escalation ladder (identical tools / no tools):
+ *   - 3 consecutive identical outputs → "warn" — caller injects a system
  *     correction instructing the model to change approach
- *   - 3 consecutive → "break" — caller force-terminates with a diagnostic
+ *   - 5 consecutive → "break" — caller force-terminates with a diagnostic
  */
-class ConvergenceDetector {
+export class ConvergenceDetector {
   private history: string[] = [];
+  private toolSignatures: string[] = [];
+  public lastConsecutive = 0;
+  /** Which loop kind triggered the last break: 2/3/4-cycle, generic rotation, or prose repetition. */
+  public lastCycleKind: "two" | "three" | "four" | "rotation" | "prose" | null = null;
 
   private normalize(text: string): string {
     return text.trim().toLowerCase().replace(/\s+/g, " ");
   }
 
-  /**
-   * Record this iteration's text output. Returns the action to take.
-   * @param iterText - The cleaned text output from this iteration (after
-   *   collapseDuplicateLines + stripToolCallBlocks).
-   */
-  record(iterText: string): "ok" | "warn" | "break" {
-    const normalized = this.normalize(iterText);
-    // Skip empty iterations (tool-only turns with no prose).
-    if (!normalized) return "ok";
-    this.history.push(normalized);
+  /** True when the last 8 tool signatures form an ABABABAB 2-cycle (A≠B). */
+  private hasTwoCycle(): boolean {
+    const s = this.toolSignatures;
+    const len = s.length;
+    if (len < 8) return false;
+    const a = s[len - 1];
+    const b = s[len - 2];
+    if (a === b) return false;
+    for (let i = 0; i < 8; i += 2) {
+      if (s[len - 1 - i] !== a || s[len - 2 - i] !== b) return false;
+    }
+    return true;
+  }
 
-    // Count consecutive trailing repetitions of the current fingerprint.
+  /** True when the last 9 tool signatures form an ABCABCABC 3-cycle (not all equal). */
+  private hasThreeCycle(): boolean {
+    const s = this.toolSignatures;
+    const len = s.length;
+    if (len < 9) return false;
+    const a = s[len - 1];
+    const b = s[len - 2];
+    const c = s[len - 3];
+    if (a === b && b === c) return false;
+    for (let i = 0; i < 9; i += 3) {
+      if (s[len - 1 - i] !== a || s[len - 2 - i] !== b || s[len - 3 - i] !== c) return false;
+    }
+    return true;
+  }
+
+  /** True when the last 8 tool signatures form an ABCDABCD 4-cycle (period 4, not all equal). */
+  private hasFourCycle(): boolean {
+    const s = this.toolSignatures;
+    const len = s.length;
+    if (len < 8) return false;
+    // Require at least two distinct signatures so AAAA… (identical tools)
+    // stays on the prose ladder instead of tripping the rotation detector.
+    const window = s.slice(len - 8);
+    if (new Set(window).size < 2) return false;
+    for (let i = 0; i < 8; i++) {
+      if (s[len - 1 - i] !== s[len - 1 - (i % 4)]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Generic rotation check: true when the last 12 signatures consist of
+   * repeats of some period 2..5 (e.g. ABCDEABCDEAB is caught as period 5).
+   * Requires at least two distinct values so identical-tool runs stay on the
+   * prose ladder. Bounds cost for ≥4-cycle loops that differ every turn and
+   * would otherwise reset the prose counter forever.
+   */
+  private hasRotationCycle(): number | null {
+    const s = this.toolSignatures;
+    const len = s.length;
+    if (len < 10) return null;
+    const windowLen = Math.min(len, 12);
+    const window = s.slice(len - windowLen);
+    if (new Set(window).size < 2) return null;
+    for (let period = 2; period <= 5; period++) {
+      if (windowLen < period * 2) continue;
+      // Only test windows that hold at least two full repeats.
+      const checkLen = Math.floor(windowLen / period) * period;
+      const tail = window.slice(window.length - checkLen);
+      let ok = true;
+      for (let i = 0; i < tail.length; i++) {
+        if (tail[i] !== tail[i % period]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return period;
+    }
+    return null;
+  }
+
+  private toolSignature(toolCalls?: Array<{ name?: string; toolName?: string; args?: unknown }>): string {
+    if (!toolCalls || toolCalls.length === 0) return "no_tools";
+    return toolCalls
+      .map((t) => {
+        const name = t.name || t.toolName || "";
+        let a = t.args;
+        if (typeof a === "string") {
+          try {
+            a = JSON.parse(a);
+          } catch {
+            /* ignore */
+          }
+        }
+        let op = "";
+        const aObj = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
+        if (aObj) {
+          if (Array.isArray(aObj.edits)) {
+            op = aObj.edits
+              .map((e: unknown) => {
+                const ed = e && typeof e === "object" ? (e as Record<string, unknown>) : {};
+                return `${ed.find ?? ed.old_string ?? ""}=>${ed.replace ?? ed.new_string ?? ""}`;
+              })
+              .join(";");
+          } else if (aObj.TargetContent !== undefined || aObj.ReplacementContent !== undefined) {
+            op = `${aObj.StartLine ?? ""}:${aObj.TargetContent ?? ""}=>${aObj.ReplacementContent ?? ""}`;
+          } else if (aObj.find !== undefined || aObj.replace !== undefined) {
+            op = `${aObj.find ?? ""}=>${aObj.replace ?? ""}`;
+          } else if (aObj.command !== undefined || aObj.CommandLine !== undefined) {
+            op = String(aObj.command ?? aObj.CommandLine ?? "");
+          } else if (aObj.content !== undefined || aObj.CodeContent !== undefined) {
+            const c = String(aObj.content ?? aObj.CodeContent ?? "");
+            op = `len:${c.length}:${c.slice(0, 50)}`;
+          } else {
+            try {
+              op = JSON.stringify(aObj);
+            } catch {
+              op = "";
+            }
+          }
+        }
+        // Cap op length to avoid large strings from JSON.stringify on complex args.
+        if (op.length > 200) op = op.slice(0, 200);
+        const p = String(aObj?.path || aObj?.TargetFile || aObj?.file || aObj?.filePath || "");
+        return `${name}:${p}:${op}`;
+      })
+      .join("|");
+  }
+
+  /**
+   * Record this iteration's text output and tool calls.
+   * Differing tools reset the prose counter (genuine progress); identical
+   * tools / no tools accumulate toward warn (3) / break (5). Tool-signature
+   * cycles (ABAB…, ABCABC…, ABCDABCD…, generic period 2..5 rotations) break
+   * regardless of prose. Cycle breaks report the signature-window length via
+   * lastConsecutive (8/9/12) and lastCycleKind; prose breaks report the
+   * repetition count with lastCycleKind "prose".
+   */
+  record(iterText: string, toolCalls?: Array<{ name?: string; toolName?: string; args?: unknown }>): "ok" | "warn" | "break" {
+    const normalized = this.normalize(iterText);
+    const toolSig = this.toolSignature(toolCalls);
+
+    const hasTools = Boolean(toolCalls && toolCalls.length > 0);
+    const lastToolSig = this.toolSignatures[this.toolSignatures.length - 1];
+
+    this.toolSignatures.push(toolSig);
+    // Cap to last 20 to prevent unbounded growth in long agent runs.
+    if (this.toolSignatures.length > 20) this.toolSignatures.splice(0, this.toolSignatures.length - 20);
+
+    // Alternating / rotating tool cycles bypass single-turn checks — break
+    // even when prose differs (covers ABAB…, ABCABC…, ABCDABCD… and longer
+    // rotations via the generic check).
+    if (this.hasTwoCycle()) {
+      this.lastConsecutive = 8;
+      this.lastCycleKind = "two";
+      return "break";
+    }
+    if (this.hasThreeCycle()) {
+      this.lastConsecutive = 9;
+      this.lastCycleKind = "three";
+      return "break";
+    }
+    if (this.hasFourCycle()) {
+      this.lastConsecutive = 8;
+      this.lastCycleKind = "four";
+      return "break";
+    }
+    const rotationPeriod = this.hasRotationCycle();
+    if (rotationPeriod !== null) {
+      this.lastConsecutive = Math.min(this.toolSignatures.length, 12);
+      this.lastCycleKind = "rotation";
+      return "break";
+    }
+
+    // Differing productive tools = genuine progress: reset the prose counter
+    // so "same preamble, different edit" never false-positives.
+    if (hasTools && toolSig !== "no_tools" && toolSig !== lastToolSig) {
+      this.history = [];
+      this.lastConsecutive = 0;
+      this.lastCycleKind = null;
+      return "ok";
+    }
+
+    // Skip empty iterations (tool-only turns with no prose) for text counting.
+    if (!normalized) {
+      return "ok";
+    }
+
+    this.history.push(normalized);
+    // Cap history as well — only trailing repetitions matter.
+    if (this.history.length > 30) this.history.splice(0, this.history.length - 30);
+
+    // Count consecutive trailing repetitions of the current text fingerprint.
     let consecutive = 0;
     const current = this.history[this.history.length - 1];
     for (let i = this.history.length - 1; i >= 0; i--) {
       if (this.history[i] === current) consecutive++;
       else break;
     }
+    this.lastConsecutive = consecutive;
 
-    if (consecutive >= 3) return "break";
-    if (consecutive >= 2) return "warn";
+    // Tight ladder (3 → 5) bounds cost on true loops: identical prose with
+    // identical / no tools escalates quickly.
+    if (consecutive >= 5) {
+      this.lastCycleKind = "prose";
+      return "break";
+    }
+    if (consecutive >= 3) return "warn";
     return "ok";
   }
 
   reset(): void {
     this.history = [];
+    this.toolSignatures = [];
+    this.lastConsecutive = 0;
+    this.lastCycleKind = null;
   }
 }
 const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermOS full-stack IDE. Complete tasks end-to-end: investigate, implement, verify, report.
@@ -545,9 +760,21 @@ function mapHistory(rows: Array<{
       try {
         m.toolCalls = JSON.parse(r.toolCalls) as ToolCall[];
         if (!m.thoughtSignature && Array.isArray(m.toolCalls)) {
-          const tcWithSig = m.toolCalls.find((tc: any) => tc && (tc.thoughtSignature || tc.thought_signature));
+          const tcWithSig = m.toolCalls.find(
+            (tc: unknown) =>
+              !!tc &&
+              typeof tc === "object" &&
+              (typeof (tc as Record<string, unknown>).thoughtSignature === "string" ||
+                typeof (tc as Record<string, unknown>).thought_signature === "string"),
+          ) as Record<string, unknown> | undefined;
           if (tcWithSig) {
-            m.thoughtSignature = (tcWithSig as any).thoughtSignature || (tcWithSig as any).thought_signature;
+            const sig =
+              typeof tcWithSig.thoughtSignature === "string"
+                ? tcWithSig.thoughtSignature
+                : typeof tcWithSig.thought_signature === "string"
+                  ? tcWithSig.thought_signature
+                  : undefined;
+            if (sig) m.thoughtSignature = sig;
           }
         }
       } catch {
@@ -2304,16 +2531,22 @@ function toAnthropicMessages(
     if (m.role === "assistant") {
       const blocks: AnthropicContentBlock[] = [];
       if (m.thinking && m.thinking.trim()) {
+        const legacySig =
+          m && typeof m === "object" && typeof (m as unknown as Record<string, unknown>).thought_signature === "string"
+            ? String((m as unknown as Record<string, unknown>).thought_signature)
+            : undefined;
         const sig =
           m.thoughtSignature ||
           m.toolCalls?.[0]?.thoughtSignature ||
           m.toolCalls?.[0]?.thought_signature ||
-          (m as any).thought_signature;
+          legacySig;
         if (sig) {
-          blocks.push({ type: "thinking" as any, thinking: m.thinking, signature: sig } as any);
+          blocks.push(
+            { type: "thinking", thinking: m.thinking, signature: sig } as unknown as AnthropicContentBlock,
+          );
         } else {
           // No valid signature — Anthropic would reject dummy_sig, so emit thinking as a text block instead
-          blocks.push({ type: "text", text: `<thinking>${m.thinking}</thinking>` } as any);
+          blocks.push({ type: "text", text: `<thinking>${m.thinking}</thinking>` });
         }
       }
       if (m.content) {
@@ -2737,8 +2970,13 @@ function buildPermissionTarget(
   const firstCommand = (): string =>
     getStr("command") || getStr("CommandLine") || getStr("cmd") || getStr("Command");
   switch (toolName) {
-    case "run_command":
-      return `run \`${firstCommand()}\``;
+    case "run_command": {
+      const cmd = firstCommand();
+      // Outside-workspace prompts must be unmistakable: prefix so the
+      // permission card cannot be mistaken for an in-workspace run.
+      if (action === "command.outside_workspace") return `run OUTSIDE WORKSPACE \`${cmd}\``;
+      return `run \`${cmd}\``;
+    }
     case "edit_file":
       return `edit \`${getStr("path")}\``;
     case "write_file":
@@ -3328,21 +3566,10 @@ async function summarizeTranscript(opts: {
   return summaryText;
 }
 
-/**
- * SSRF-gated provider fetch: validates the URL against the shared policy
- * before sending, and re-validates the FINAL URL after any redirects were
- * followed (so a redirect to an internal/metadata host is refused before the
- * response is consumed). Provider base URLs are user-editable (the stored
- * `baseUrl` column overrides the preset), so every provider call is gated.
- */
-async function safeProviderFetch(url: string, init?: RequestInit): Promise<Response> {
-  await assertUrlAllowed(url);
-  const resp = await fetch(url, init);
-  if (resp.redirected) {
-    await assertUrlAllowed(resp.url);
-  }
-  return resp;
-}
+// safeProviderFetch is provided by the shared SSRF utility (see src/lib/ai/ssrf-fetch.ts).
+// It validates the URL at every redirect hop, strips auth headers on cross-origin redirects,
+// and correctly converts POST→GET on 301/302/303 per RFC 7231.
+const safeProviderFetch = fetchWithSsrf;
 
 /** Append a brief verification hint to tool results for write operations. */
 function appendVerificationHint(toolName: string, ok: boolean, content: string): string {
@@ -3662,7 +3889,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         : PUBLIC_BUILTIN_TOOLS.map((t) => t.name);
       enabledTools = allTools.filter((t) => ARCHITECT_ALLOWED_TOOLS.has(t));
       toolSection =
-        "\n\n## Mode: Architect (Read-Only)\nYou may read and analyze the codebase but MUST NOT modify files or run commands. Write plans and analysis to artifacts via create_artifact. You MAY spawn read-only research subagents (spawn_subagent) for parallel investigation — they are restricted to read-only tools automatically.";
+        "\n\n## Mode: Architect (Planning & Architecture)\nYou may read and analyze the codebase and workspace, but MUST NOT execute shell commands or modify existing workspace source files directly. Write plans, architecture documentation, and designs to artifacts via create_artifact. You can read and access artifacts, inspect sessions/temp files in com.hermos-ide, and spawn read-only research subagents (spawn_subagent) for parallel investigation.";
     } else {
       enabledTools =
         req.enabledTools && req.enabledTools.length > 0
@@ -3712,7 +3939,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         const wsRoot = activeWs.rootDir;
         const runtimeMode = process.env.HERMOS_DESKTOP === "true" ? "Desktop App (Tauri Native)" : "Web Server / Dev";
         const appPort = process.env.PORT || (process.env.HERMOS_DESKTOP === "true" ? "3001+" : "3000");
-        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.\n- **Dev Servers vs IDE Ports**: HermOS IDE itself runs on internal port ${appPort}. The user's project dev servers run on standard framework ports (e.g. 3000 for Next.js, 5173 for Vite, 8000, 8080). When opening web pages or browser tools (browser_open), always target the user's project dev server port, NEVER HermOS IDE's internal port (${appPort}).`;
+        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Temporary & Sessions Directory**: ${ensureHermosTempDir()} (all modes have access to sessions and temp storage under com.hermos-ide)\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.\n- **Dev Servers vs IDE Ports**: HermOS IDE itself runs on internal port ${appPort}. The user's project dev servers run on standard framework ports (e.g. 3000 for Next.js, 5173 for Vite, 8000, 8080). When opening web pages or browser tools (browser_open), always target the user's project dev server port, NEVER HermOS IDE's internal port (${appPort}).`;
       }
     } catch {
       envBlock = "";
@@ -4249,7 +4476,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
           anthropicMode,
         });
 const thinkInstruction = thinkPlan.kind === "params"
-          ? "\n\nCRITICAL: If you perform internal Chain-of-Thought reasoning or self-talk, enclose it strictly inside  thinking... response tags before providing your final response prose."
+          ? "\n\nCRITICAL: If you perform internal Chain-of-Thought reasoning or self-talk, enclose it strictly inside <think>...</think> tags before providing your final response prose."
           : "";
         // Completion-integrity nag: fires BEFORE the model streams, so the
         // iteration that would otherwise finish already has the failure list
@@ -4617,8 +4844,10 @@ const thinkInstruction = thinkPlan.kind === "params"
                 if (chunk.type === "signature") {
                   const lastSeg = segments[segments.length - 1];
                   if (lastSeg && lastSeg.kind === "thinking") {
-                    (lastSeg as any).signature = ((lastSeg as any).signature ?? "") + chunk.signature;
-                    (lastSeg as any).thoughtSignature = ((lastSeg as any).thoughtSignature ?? "") + chunk.signature;
+                    const segRec = lastSeg as unknown as Record<string, unknown>;
+                    segRec.signature = String(segRec.signature ?? "") + chunk.signature;
+                    segRec.thoughtSignature =
+                      String(segRec.thoughtSignature ?? "") + chunk.signature;
                   }
                   continue;
                 }
@@ -4700,8 +4929,10 @@ const thinkInstruction = thinkPlan.kind === "params"
                 if (chunk.type === "signature") {
                   const lastSeg = segments[segments.length - 1];
                   if (lastSeg && lastSeg.kind === "thinking") {
-                    (lastSeg as any).signature = ((lastSeg as any).signature ?? "") + chunk.signature;
-                    (lastSeg as any).thoughtSignature = ((lastSeg as any).thoughtSignature ?? "") + chunk.signature;
+                    const segRec = lastSeg as unknown as Record<string, unknown>;
+                    segRec.signature = String(segRec.signature ?? "") + chunk.signature;
+                    segRec.thoughtSignature =
+                      String(segRec.thoughtSignature ?? "") + chunk.signature;
                   }
                   continue;
                 }
@@ -4979,6 +5210,28 @@ const thinkInstruction = thinkPlan.kind === "params"
             }
             const msg = err instanceof Error ? err.message : String(err);
             const status = getErrorStatusCode(err);
+
+            // Upstream image payload rejection fallback: if the provider rejected a multimodal payload
+            // with 400, 413, 415, or 422 (malformed/oversize/unsupported-media), drop image blocks
+            // and retry with text preview immediately. 500 is deliberately excluded:
+            // it is usually transient and unrelated to images — retrying text-only
+            // would mask the outage and burn the image budget path.
+            // Clearing `imageData` covers the Anthropic path (which builds from
+            // truncatedHistory+imageData each attempt); rebuilding
+            // `messagesForModel` covers the OpenAI-compatible path (built once).
+            if (imageData && imageData.size > 0 && (status === 400 || status === 413 || status === 415 || status === 422)) {
+              console.warn(`[executor] Upstream rejected image payload (status ${status}) — falling back to text-only representation:`, msg.slice(0, 120));
+              imageData = undefined;
+              messagesForModel = toOpenAIMessagesWithTools(
+                iterSystemPrompt,
+                truncatedHistory,
+                undefined,
+                false,
+                echoReasoning,
+              );
+              continue;
+            }
+
             const is429 = status === 429 || /429|rate limit|too many requests/i.test(msg);
             const isTransient = isTransientStreamError(err);
             const maxAttempts = is429 ? 15 : 3;
@@ -5296,10 +5549,10 @@ const thinkInstruction = thinkPlan.kind === "params"
         // Cross-iteration convergence check: detect when the model is
         // producing identical text output across consecutive iterations
         // (the "output loop" pattern — same planning paragraph repeated).
-        const convergence = convergenceDetector.record(cleaned);
+        const convergence = convergenceDetector.record(cleaned, toolCalls);
         if (convergence === "warn") {
-          // First repeat — inject a system-level correction. Strip the
-          // duplicate text from the accumulated response.
+          // Warning threshold reached — inject a system-level correction.
+          // Strip duplicate text from the accumulated response.
           if (cleaned && fullContent.endsWith(cleaned)) {
             fullContent = fullContent.slice(0, -(cleaned.length)).replace(/\n\n$/, "");
           }
@@ -5317,15 +5570,22 @@ const thinkInstruction = thinkPlan.kind === "params"
             });
           } catch { /* best-effort */ }
         } else if (convergence === "break") {
-          // Third consecutive identical output — force-terminate.
+          // Maximum consecutive identical output reached — force-terminate.
+          // Cycle breaks (ABAB…/ABC…/ABCD…/rotation) report the signature-window
+          // length (8/9/12) via lastConsecutive; prose breaks report the
+          // repetition count. lastCycleKind distinguishes the two in prose.
           if (cleaned && fullContent.endsWith(cleaned)) {
             fullContent = fullContent.slice(0, -(cleaned.length)).replace(/\n\n$/, "");
           }
+          const cycleKind = convergenceDetector.lastCycleKind;
+          const breakDetail =
+            cycleKind && cycleKind !== "prose"
+              ? `repeating tool cycle detected (${cycleKind} pattern over ${convergenceDetector.lastConsecutive} tool calls)`
+              : `identical output detected in ${convergenceDetector.lastConsecutive} consecutive iterations`;
           emit({
             type: "delta",
             content:
-              "\n\n---\n⚠️ **Agent terminated**: identical output detected " +
-              "in 3 consecutive iterations. Please review and retry with " +
+              `\n\n---\n⚠️ **Agent terminated**: ${breakDetail} without progress. Please review and retry with ` +
               "a refined prompt or break the task into smaller steps.",
           });
           break;
@@ -5538,12 +5798,13 @@ const thinkInstruction = thinkPlan.kind === "params"
             thought_signature: tc.thought_signature,
             thoughtSignature: tc.thoughtSignature,
           }));
+          const allToolCallsForPersist = [...allToolCalls, ...toolCallsForPersist];
           try {
             await db.message.update({
               where: { id: assistantMsg.id },
               data: {
                 content: fullContent,
-                toolCalls: JSON.stringify(toolCallsForPersist),
+                toolCalls: JSON.stringify(allToolCallsForPersist),
                 segments: segments.length ? JSON.stringify(segments) : null,
               },
             });
@@ -5551,7 +5812,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             // iterations see the updated row without a re-read.
             pendingRowUpdates.set(assistantMsg.id, {
               content: fullContent,
-              toolCalls: JSON.stringify(toolCallsForPersist),
+              toolCalls: JSON.stringify(allToolCallsForPersist),
             });
           } catch {
             /* ignore persist errors — best-effort */
@@ -5571,6 +5832,13 @@ const thinkInstruction = thinkPlan.kind === "params"
           action: PermissionAction | null;
           /** True when permission was granted (allow or ask→allow). */
           allowed: boolean;
+          /**
+           * True only when an outside-workspace run_command was detected AND
+           * permission was granted. Set post-grant (never on denied entries)
+           * and forwarded to runTool only for allowed entries — workspace
+           * layers treat it as explicit user consent for verbatim execution.
+           */
+          userAllowedOutsideWorkspace?: boolean;
           /** Populated for denied entries. */
           denyReason?: string;
           /** Populated by execution for allowed entries. */
@@ -5638,6 +5906,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             signal,
             rootDir: toolRootDir,
             workspace: toolWs ?? undefined,
+            userAllowedOutsideWorkspace: entry.userAllowedOutsideWorkspace,
             onProgress: (text) => {
               emit({ type: "command_output", toolCallId: entry.toolCallId, text, running: true });
             },
@@ -5696,13 +5965,66 @@ const thinkInstruction = thinkPlan.kind === "params"
 
           // Evaluate tool action permission ("deny" blocks, "ask" prompts user, "allow" executes).
           let permissionMode: PermissionMode = "ask";
+          let action = actionForTool(tc.toolName);
+          let isOutsideCommand = false;
+
+          if (tc.toolName === "run_command") {
+            const rawCmd = String(tc.args?.command ?? tc.args?.CommandLine ?? "");
+            const tempDir = ensureAgentTempDir(user.id);
+            const hermosTemp = ensureHermosTempDir();
+            // Fail closed when no workspace resolved: treat as outside-workspace
+            // so the command requires explicit user Allow instead of being
+            // classified against the server process CWD (which is neither the
+            // user's workspace nor a safe default).
+            const safetyBase = toolWs?.rootDir ?? toolRootDir;
+            if (!safetyBase) {
+              isOutsideCommand = true;
+              action = "command.outside_workspace";
+            } else {
+              const safety = resolveCommandSafety(rawCmd, safetyBase, [tempDir, hermosTemp]);
+              if (!safety.ok && safety.isOutsideWorkspace) {
+                isOutsideCommand = true;
+                action = "command.outside_workspace";
+              }
+            }
+          }
+
           try {
-            permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, toolPermConfig);
+            if (isOutsideCommand) {
+              // Architect mode MUST NOT execute shell commands (including outside-workspace
+              // ones). Check the architect deny BEFORE the per-permission-config evaluation
+              // so it cannot be bypassed by a permissive config entry.
+              if (mode === "architect") {
+                permissionMode = "deny";
+                try {
+                  await audit(
+                    user.id,
+                    "tool_denied",
+                    JSON.stringify({
+                      tool: tc.toolName,
+                      action: "command.outside_workspace",
+                      reason: "architect_mode_shell_blocked",
+                    }),
+                  );
+                } catch { /* ignore audit failures */ }
+              } else {
+                // Route through the full permission evaluator so user-configured
+                // rules and mode restrictions are applied consistently.
+                permissionMode = await evaluateToolPermission(
+                  user.id,
+                  "command.outside_workspace",
+                  mode,
+                  toolPermConfig,
+                );
+              }
+            } else {
+              permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, toolPermConfig);
+            }
           } catch (e) {
             console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
             permissionMode = "ask"; // fail-closed: ask the user on errors
+
           }
-          const action = actionForTool(tc.toolName);
 
           const entry: ToolEntry = {
             toolCallId,
@@ -5710,6 +6032,11 @@ const thinkInstruction = thinkPlan.kind === "params"
             args: tc.args,
             action,
             allowed: false,
+            // Defense-in-depth: only set after the grant decision below
+            // (isOutsideCommand && allowed). Denied entries never carry the
+            // flag, so a future caller that forgets the `allowed` check cannot
+            // inherit outside-workspace privilege.
+            userAllowedOutsideWorkspace: false,
             thought_signature: tc.thought_signature,
             thoughtSignature: tc.thoughtSignature,
           };
@@ -5797,7 +6124,43 @@ const thinkInstruction = thinkPlan.kind === "params"
             entry.allowed = true;
           }
 
+          // Grant the outside-workspace flag only on allowed entries.
+          // Denied/cancelled entries keep it false so the privilege cannot be
+          // inherited by a future caller that skips the `allowed` check.
+          entry.userAllowedOutsideWorkspace = Boolean(isOutsideCommand && entry.allowed);
+
           toolEntries.push(entry);
+
+          // Explicit audit for outside-workspace execution: permission decision
+          // is already audited above, but log the actual execution with command
+          // context (truncated) so forensics can distinguish allowed-outside runs.
+          if (entry.userAllowedOutsideWorkspace && entry.allowed) {
+            try {
+              const rawCmd =
+                typeof entry.args === "object" && entry.args !== null
+                  ? String(
+                      (entry.args as Record<string, unknown>).command ??
+                        (entry.args as Record<string, unknown>).CommandLine ??
+                        "",
+                    )
+                  : "";
+              await audit(
+                user.id,
+                "command_outside_workspace_allowed",
+                JSON.stringify({
+                  tool: entry.toolName,
+                  action: entry.action,
+                  commandPreview: rawCmd.slice(0, 500),
+                  cwd: toolRootDir,
+                }),
+              );
+            } catch {
+              /* ignore audit failures */
+            }
+            console.warn(
+              `[executor] Outside-workspace command explicitly allowed: tool=${entry.toolName} cwd=${toolRootDir}`,
+            );
+          }
 
           // Immediately execute this tool one by one — no batching
           await executeSingleTool(entry);
@@ -6295,7 +6658,12 @@ export async function testProvider(
     const baseUrl = (baseUrlOverride || info?.baseUrl || "").replace(/\/$/, "");
 
     if (provider === "anthropic") {
-      const testModel = (model && model !== "auto") ? model : (info?.models?.[0]?.id || DEFAULT_FALLBACK_MODEL);
+      // Resolve dynamically: explicit model, else first live catalog entry.
+      // Never guess a model ID — without one the ping cannot run honestly.
+      const testModel = model && model !== "auto" ? model : info?.models?.[0]?.id;
+      if (!testModel || testModel === "auto") {
+        return { ok: false, error: "No model available for provider ping. Fetch models first, then retry Test." };
+      }
       const resp = await safeProviderFetch(baseUrl + "/messages", {
         method: "POST",
         headers: {

@@ -10,15 +10,16 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { ProviderLogo } from "@/components/brand/provider-logo";
+import { useTranslation } from "@/hooks/use-translation";
 import type { ProviderId, ProviderInfo, ProviderKeyDTO } from "@/lib/types";
 
 interface ModelSelectorProps {
   compact?: boolean;
 }
 
-export function formatModelDisplayName(rawId: string): string {
+export function formatModelDisplayName(rawId: string, t?: (k: string) => string): string {
   if (!rawId) return "";
-  if (rawId === "auto") return "Auto (Best Model)";
+  if (rawId === "auto") return t ? t("auto_best_model") : "Auto (Best Model)";
   const name = rawId.includes("/") ? rawId.split("/").pop()! : rawId;
   return name
     .replace(/-instruct$/i, "")
@@ -38,22 +39,13 @@ export function formatModelDisplayName(rawId: string): string {
     .trim();
 }
 
-function getModelFamilyIcon(rawId: string): { icon: React.ElementType; color: string } {
-  const lower = (rawId || "").toLowerCase();
-  if (lower.includes("deepseek")) return { icon: Sparkles, color: "text-blue-400" };
-  if (lower.includes("llama")) return { icon: Cpu, color: "text-purple-400" };
-  if (lower.includes("gemma") || lower.includes("gemini")) return { icon: Sparkles, color: "text-amber-400" };
-  if (lower.includes("gpt") || lower.includes("openai")) return { icon: Cpu, color: "text-brand" };
-  if (lower.includes("claude") || lower.includes("anthropic")) return { icon: Sparkles, color: "text-orange-400" };
-  if (lower.includes("mistral") || lower.includes("codestral")) return { icon: Cpu, color: "text-amber-500" };
-  return { icon: Cpu, color: "text-muted-foreground" };
-}
 
 /** Filter a provider's model list by a search query. Returns null if the
  *  provider itself doesn't match at all and none of its models do. */
 function filterProvider(
   provider: ProviderInfo,
   query: string,
+  t?: (k: string) => string,
 ): ProviderInfo | null {
   if (!query) return provider;
   const q = query.toLowerCase();
@@ -61,7 +53,7 @@ function filterProvider(
   const filteredModels = provider.models.filter(
     (m) =>
       m.id.toLowerCase().includes(q) ||
-      formatModelDisplayName(m.id).toLowerCase().includes(q),
+      formatModelDisplayName(m.id, t).toLowerCase().includes(q),
   );
   if (providerMatches) return provider; // show all models when provider name matches
   if (filteredModels.length === 0) return null;
@@ -69,6 +61,7 @@ function filterProvider(
 }
 
 export function ModelSelector(_props: ModelSelectorProps) {
+  const { t } = useTranslation();
   const providers = useAppStore((s) => s.providers);
   const providerKeys = useAppStore((s) => s.providerKeys);
   const selectedProvider = useAppStore((s) => s.selectedProvider);
@@ -116,7 +109,7 @@ export function ModelSelector(_props: ModelSelectorProps) {
         ? Array.from(new Set(["auto", ...rawList]))
         : [];
 
-      const models = finalModelIds.map((id: string) => ({ id, name: formatModelDisplayName(id) }));
+      const models = finalModelIds.map((id: string) => ({ id, name: formatModelDisplayName(id, t) }));
 
       if (p.free && p.requiresKey) {
         tokenRequired.push({ ...p, models });
@@ -127,21 +120,21 @@ export function ModelSelector(_props: ModelSelectorProps) {
       }
     }
     return { free, tokenRequired, byokConfigured };
-  }, [providers, providerKeys]);
+  }, [providers, providerKeys, t]);
 
   // Apply search filter
   const filtered = React.useMemo(() => {
     const free = grouped.free
-      .map((p) => filterProvider(p, search))
+      .map((p) => filterProvider(p, search, t))
       .filter(Boolean) as ProviderInfo[];
     const tokenRequired = grouped.tokenRequired
-      .map((p) => filterProvider(p, search))
+      .map((p) => filterProvider(p, search, t))
       .filter(Boolean) as ProviderInfo[];
     const byokConfigured = grouped.byokConfigured
-      .map((p) => filterProvider(p, search))
+      .map((p) => filterProvider(p, search, t))
       .filter(Boolean) as ProviderInfo[];
     return { free, tokenRequired, byokConfigured };
-  }, [grouped, search]);
+  }, [grouped, search, t]);
 
   const noResults = search.length > 0 && filtered.free.length === 0 && filtered.tokenRequired.length === 0 && filtered.byokConfigured.length === 0;
 
@@ -160,16 +153,16 @@ export function ModelSelector(_props: ModelSelectorProps) {
             "h-6.5 px-1.5 gap-1 font-sans text-[11px] min-w-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 border-0 font-medium",
             _props.compact ? "max-w-[140px] sm:max-w-[190px]" : "max-w-[180px] sm:max-w-[240px]"
           )}
-          aria-label="Select provider and model"
-          title={`${currentProvider?.name ?? "Provider"} / ${formatModelDisplayName(selectedModel)}`}
+          aria-label={t("select_provider_and_model")}
+          title={`${currentProvider?.name ?? "Provider"} / ${formatModelDisplayName(selectedModel, t)}`}
         >
           <ProviderLogo providerId={selectedProvider} modelId={selectedModel} size={14} />
           <span className="hidden xl:inline max-w-[70px] truncate min-w-0 font-medium text-muted-foreground">
-            {currentProvider?.name ?? "Select"}
+            {currentProvider?.name ?? t("select")}
           </span>
           <span className="text-muted-foreground/50 shrink-0 hidden xl:inline">/</span>
           <span className="max-w-[100px] sm:max-w-[130px] truncate text-foreground font-mono text-[11px] min-w-0">
-            {formatModelDisplayName(selectedModel)}
+            {formatModelDisplayName(selectedModel, t)}
           </span>
           <ChevronDown className="size-3 opacity-50 shrink-0" />
         </Button>
@@ -180,13 +173,13 @@ export function ModelSelector(_props: ModelSelectorProps) {
       >
         {/* Header */}
         <div className="px-3 py-2 border-b shrink-0 flex items-center justify-between">
-          <div className="text-xs font-semibold">Provider &amp; Model</div>
+          <div className="text-xs font-semibold">{t("provider_and_model")}</div>
         </div>
 
         {/* Search box */}
         <div className="px-2 py-1.5 border-b shrink-0">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+            <Search className="absolute start-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
             <Input
               ref={searchRef}
               value={search}
@@ -199,9 +192,9 @@ export function ModelSelector(_props: ModelSelectorProps) {
                   }
                 }
               }}
-              placeholder="Search providers or models…"
-              className="h-7 pl-7 pr-7 text-xs font-sans"
-              aria-label="Search models"
+              placeholder={t("search_providers_or_models")}
+              className="h-7 ps-7 pe-7 text-xs font-sans"
+              aria-label={t("search_models")}
               spellCheck={false}
               autoComplete="off"
             />
@@ -212,8 +205,8 @@ export function ModelSelector(_props: ModelSelectorProps) {
                   setSearch("");
                   searchRef.current?.focus();
                 }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Clear search"
+                className="absolute end-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label={t("clear_search")}
               >
                 <X className="size-3.5" />
               </button>
@@ -226,16 +219,16 @@ export function ModelSelector(_props: ModelSelectorProps) {
           {noResults ? (
             <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center">
               <Search className="size-5 text-muted-foreground/50" />
-              <p className="text-xs font-medium text-muted-foreground">No models found</p>
+              <p className="text-xs font-medium text-muted-foreground">{t("no_models_found")}</p>
               <p className="text-[11px] text-muted-foreground/70">
-                Try a different search term
+                {t("try_different_search_term")}
               </p>
             </div>
           ) : (
             <div className="p-1.5">
               {filtered.tokenRequired.length > 0 && (
                 <ProviderGroup
-                  label="Requires free account token"
+                  label={t("requires_free_account_token")}
                   providers={filtered.tokenRequired}
                   keyFor={keyFor}
                   selectedProvider={selectedProvider}
@@ -248,7 +241,7 @@ export function ModelSelector(_props: ModelSelectorProps) {
                 <>
                   {filtered.tokenRequired.length > 0 && <Separator className="my-1.5" />}
                   <ProviderGroup
-                    label="Free Tier"
+                    label={t("free_tier")}
                     providers={filtered.free}
                     keyFor={keyFor}
                     selectedProvider={selectedProvider}
@@ -262,7 +255,7 @@ export function ModelSelector(_props: ModelSelectorProps) {
                 <>
                   {(filtered.free.length > 0 || filtered.tokenRequired.length > 0) && <Separator className="my-1.5" />}
                   <ProviderGroup
-                    label="BYOK · Configured"
+                    label={t("byok_configured")}
                     providers={filtered.byokConfigured}
                     keyFor={keyFor}
                     selectedProvider={selectedProvider}
@@ -314,6 +307,7 @@ function ProviderGroup({
   onPick,
   searchQuery = "",
 }: ProviderGroupProps) {
+  const { t } = useTranslation();
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   if (providers.length === 0) return null;
@@ -342,51 +336,51 @@ function ProviderGroup({
               {isTokenRequired ? (
                 key?.hasKey ? (
                   <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/40 gap-0.5">
-                    <KeyRound className="size-2.5" /> token
+                    <KeyRound className="size-2.5" /> {t("token_badge")}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="text-[10px] h-4 border-amber-500/40 text-amber-600">
-                    token required
+                    {t("token_required_badge")}
                   </Badge>
                 )
               ) : p.free ? (
-                <Badge variant="secondary" className="text-[10px] h-4">free</Badge>
+                <Badge variant="secondary" className="text-[10px] h-4">{t("free_badge")}</Badge>
               ) : key?.hasKey ? (
                 <Badge variant="outline" className="text-[10px] h-4 text-brand border-brand/40 gap-0.5">
-                  <KeyRound className="size-2.5" /> key
+                  <KeyRound className="size-2.5" /> {t("key_badge")}
                 </Badge>
               ) : requiresKey ? (
                 <Badge variant="outline" className="text-[10px] h-4 text-muted-foreground">
-                  no key
+                  {t("no_key_badge")}
                 </Badge>
               ) : null}
               {keyMissing && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="ml-auto h-5 px-1.5 text-[10px] gap-0.5"
+                  className="ms-auto h-5 px-1.5 text-[10px] gap-0.5"
                   onClick={handleAddKey}
                 >
-                  <Plus className="size-2.5" /> Add key
+                  <Plus className="size-2.5" /> {t("add_key")}
                 </Button>
               )}
             </div>
-            <div className="ml-3 space-y-0.5 border-l pl-2 my-0.5">
+            <div className="ms-3 space-y-0.5 border-s ps-2 my-0.5">
               {p.models.length === 0 ? (
                 <div className="px-2 py-1 text-[11px] text-muted-foreground italic">
-                  {isTokenRequired ? "Add token to load models" : "No models configured"}
+                  {isTokenRequired ? t("add_token_to_load_models") : t("no_models_configured")}
                 </div>
               ) : (
                 p.models.map((m) => {
                   const active = p.id === selectedProvider && m.id === selectedModel;
-                  const displayName = formatModelDisplayName(m.id);
+                  const displayName = formatModelDisplayName(m.id, t);
                   return (
                     <button
                       key={m.id}
                       type="button"
                       onClick={() => onPick(p, m.id)}
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent transition-colors min-w-0",
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs hover:bg-accent transition-colors min-w-0",
                         active && "bg-accent font-medium",
                         keyMissing && "opacity-60",
                       )}

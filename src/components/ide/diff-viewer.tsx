@@ -6,6 +6,7 @@ import { Check, Copy, FilePen, FileCheck2, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DiffRow, type SharedDiffLine } from "@/components/ui/diff-row";
+import { useTranslation } from "@/hooks/use-translation";
 
 interface DiffViewerProps {
   path: string;
@@ -46,6 +47,7 @@ export function DiffViewer({
   hideApply,
   className,
 }: DiffViewerProps) {
+  const { t } = useTranslation();
   const allLines = React.useMemo(
     () => computeUnifiedDiff(oldContent ?? "", newContent ?? ""),
     [oldContent, newContent],
@@ -95,15 +97,15 @@ export function DiffViewer({
           size="sm"
           className="h-6 px-2 text-[11px] gap-1.5"
           onClick={copyNew}
-          aria-label="Copy new content"
+          aria-label={t("copy_new_content")}
         >
           {copied ? (
             <>
-              <Check className="size-3 text-brand" /> Copied
+              <Check className="size-3 text-brand" /> {t("copied")}
             </>
           ) : (
             <>
-              <Copy className="size-3" /> Copy new
+              <Copy className="size-3" /> {t("copy_new")}
             </>
           )}
         </Button>
@@ -114,10 +116,10 @@ export function DiffViewer({
             className="h-6 px-2 text-[11px] gap-1.5"
             onClick={onApply}
             disabled={applyBusy}
-            aria-label="Apply edit"
+            aria-label={t("apply_edit")}
           >
             <FileCheck2 className="size-3 text-brand" />
-            {applyBusy ? "Applying…" : "Apply"}
+            {applyBusy ? `${t("applying")}…` : t("apply")}
           </Button>
         )}
       </div>
@@ -125,7 +127,7 @@ export function DiffViewer({
       {!hasChanges ? (
         <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground italic">
           <Minus className="size-3" aria-hidden />
-          No changes
+          {t("no_changes")}
         </div>
       ) : (
         <>
@@ -154,7 +156,7 @@ export function DiffViewer({
               onClick={() => setExpanded(true)}
               className="w-full border-t bg-muted/30 px-3 py-1.5 text-center text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
-              Show {hiddenLines} more unchanged {hiddenLines === 1 ? "line" : "lines"}
+              {t("show_unchanged_lines", { count: hiddenLines })}
             </button>
           )}
           {expanded && allLines.length > 10 && (
@@ -163,7 +165,7 @@ export function DiffViewer({
               onClick={() => setExpanded(false)}
               className="w-full border-t bg-muted/30 px-3 py-1.5 text-center text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
-              Collapse to changes only
+              {t("collapse_to_changes")}
             </button>
           )}
         </>
@@ -216,48 +218,91 @@ function computeUnifiedDiff(oldStr: string, newStr: string): DiffLine[] {
   const m = oldLines.length;
   const n = newLines.length;
 
-  // Build LCS length table.
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      if (oldLines[i] === newLines[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+  type Raw = { type: "context" | "add" | "del"; oldIdx: number; newIdx: number; text: string };
+  const raw: Raw[] = [];
+
+  // 1. Common prefix trimming
+  let prefix = 0;
+  while (prefix < m && prefix < n && oldLines[prefix] === newLines[prefix]) {
+    raw.push({ type: "context", oldIdx: prefix, newIdx: prefix, text: oldLines[prefix] });
+    prefix++;
+  }
+
+  // 2. Common suffix trimming
+  let suffix = 0;
+  while (
+    m - 1 - suffix >= prefix &&
+    n - 1 - suffix >= prefix &&
+    oldLines[m - 1 - suffix] === newLines[n - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const midOldStart = prefix;
+  const midOldEnd = m - suffix;
+  const midNewStart = prefix;
+  const midNewEnd = n - suffix;
+
+  const midM = midOldEnd - midOldStart;
+  const midN = midNewEnd - midNewStart;
+
+  if (midM > 0 || midN > 0) {
+    // If diff window exceeds 250k cells, emit chunk deletions and additions to prevent thread lock
+    if (midM * midN > 250_000) {
+      for (let i = midOldStart; i < midOldEnd; i++) {
+        raw.push({ type: "del", oldIdx: i, newIdx: midNewStart, text: oldLines[i] });
+      }
+      for (let j = midNewStart; j < midNewEnd; j++) {
+        raw.push({ type: "add", oldIdx: midOldEnd, newIdx: j, text: newLines[j] });
+      }
+    } else {
+      // Build LCS DP table on the middle segment only
+      const dp: number[][] = Array.from({ length: midM + 1 }, () => new Array<number>(midN + 1).fill(0));
+      for (let i = midM - 1; i >= 0; i--) {
+        for (let j = midN - 1; j >= 0; j--) {
+          if (oldLines[midOldStart + i] === newLines[midNewStart + j]) {
+            dp[i][j] = dp[i + 1][j + 1] + 1;
+          } else {
+            dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+          }
+        }
+      }
+
+      let i = 0;
+      let j = 0;
+      while (i < midM && j < midN) {
+        if (oldLines[midOldStart + i] === newLines[midNewStart + j]) {
+          raw.push({ type: "context", oldIdx: midOldStart + i, newIdx: midNewStart + j, text: oldLines[midOldStart + i] });
+          i++;
+          j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+          raw.push({ type: "del", oldIdx: midOldStart + i, newIdx: midNewStart + j, text: oldLines[midOldStart + i] });
+          i++;
+        } else {
+          raw.push({ type: "add", oldIdx: midOldStart + i, newIdx: midNewStart + j, text: newLines[midNewStart + j] });
+          j++;
+        }
+      }
+      while (i < midM) {
+        raw.push({ type: "del", oldIdx: midOldStart + i, newIdx: midNewEnd, text: oldLines[midOldStart + i] });
+        i++;
+      }
+      while (j < midN) {
+        raw.push({ type: "add", oldIdx: midOldEnd, newIdx: midNewStart + j, text: newLines[midNewStart + j] });
+        j++;
       }
     }
   }
 
-  // Backtrack to build the diff.
-  type Raw = { type: "context" | "add" | "del"; oldIdx: number; newIdx: number; text: string };
-  const raw: Raw[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < m && j < n) {
-    if (oldLines[i] === newLines[j]) {
-      raw.push({ type: "context", oldIdx: i, newIdx: j, text: oldLines[i] });
-      i++;
-      j++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      raw.push({ type: "del", oldIdx: i, newIdx: j, text: oldLines[i] });
-      i++;
-    } else {
-      raw.push({ type: "add", oldIdx: i, newIdx: j, text: newLines[j] });
-      j++;
-    }
-  }
-  while (i < m) {
-    raw.push({ type: "del", oldIdx: i, newIdx: j, text: oldLines[i] });
-    i++;
-  }
-  while (j < n) {
-    raw.push({ type: "add", oldIdx: i, newIdx: j, text: newLines[j] });
-    j++;
+  // Suffix lines
+  for (let s = 0; s < suffix; s++) {
+    const oldIdx = m - suffix + s;
+    const newIdx = n - suffix + s;
+    raw.push({ type: "context", oldIdx, newIdx, text: oldLines[oldIdx] });
   }
 
   // Convert to DiffLine with old/new line numbers (1-based for display).
   const out: DiffLine[] = [];
-  // Single hunk header covering the whole file.
   out.push({
     type: "hunk",
     oldNo: null,

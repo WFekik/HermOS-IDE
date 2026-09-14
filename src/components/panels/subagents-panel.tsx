@@ -24,6 +24,7 @@ import {
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import { SubagentChatPanel } from "./subagent-chat-panel";
 import type { Subagent, SubagentStatus } from "@/stores/app-store";
 
@@ -58,6 +59,7 @@ const TERMINAL_STATUSES: ReadonlySet<SubagentStatus> = new Set([
 ]);
 
 export function SubagentsPanel() {
+  const { t } = useTranslation();
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const subagents = useAppStore((s) => s.subagents);
   const loading = useAppStore((s) => s.subagentsLoading);
@@ -135,14 +137,14 @@ export function SubagentsPanel() {
     async (s: Subagent) => {
       try {
         await deleteSubagent(s.id);
-        toast.success(`Subagent "${s.name}" removed`);
+        toast.success(t("subagent_removed", { name: s.name }));
       } catch (e) {
         toast.error(
-          e instanceof Error ? e.message : "Failed to remove subagent",
+          e instanceof Error ? e.message : t("failed_remove_subagent"),
         );
       }
     },
-    [deleteSubagent],
+    [deleteSubagent, t],
   );
 
   const runningCount = subagents.filter(
@@ -165,14 +167,14 @@ export function SubagentsPanel() {
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <div className="flex items-center gap-2">
           <Bot className="size-4 text-brand" />
-          <span className="text-sm font-medium">Subagents</span>
+          <span className="text-sm font-medium">{t("subagents")}</span>
           <Badge variant="secondary" className="text-[10px] h-4">
             {subagents.length}
           </Badge>
           {runningCount > 0 && (
             <span className="inline-flex items-center gap-1 text-[9px] font-mono font-medium px-1.5 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/20">
               <span className="size-1.5 rounded-full bg-brand animate-pulse" />
-              {runningCount} running
+              {t("subagents_running_count", { count: runningCount })}
             </span>
           )}
         </div>
@@ -188,7 +190,7 @@ export function SubagentsPanel() {
                   void refreshSubagents(activeConversationId)
                 }
                 disabled={!activeConversationId}
-                aria-label="Refresh subagents"
+                aria-label={t("refresh_subagents")}
               >
                 <RefreshCw
                   className={cn(
@@ -198,7 +200,7 @@ export function SubagentsPanel() {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Refresh</TooltipContent>
+            <TooltipContent side="bottom">{t("refresh")}</TooltipContent>
           </Tooltip>
         </div>
       </div>
@@ -208,9 +210,9 @@ export function SubagentsPanel() {
         {!activeConversationId ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-center">
             <Bot className="size-7 text-muted-foreground/40" />
-            <p className="mt-2 text-sm font-medium">No conversation selected</p>
+            <p className="mt-2 text-sm font-medium">{t("no_conversation_selected")}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Select a conversation to see its subagents.
+              {t("select_conversation_subagents")}
             </p>
           </div>
         ) : isStale || (loading && subagents.length === 0) ? (
@@ -226,15 +228,15 @@ export function SubagentsPanel() {
               onClick={() => void refreshSubagents(activeConversationId)}
             >
               <RefreshCw className="size-3" />
-              Retry
+              {t("retry")}
             </Button>
           </div>
         ) : subagents.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-center">
             <Bot className="size-7 text-muted-foreground/40" />
-            <p className="mt-2 text-sm font-medium">No subagents</p>
+            <p className="mt-2 text-sm font-medium">{t("no_subagents")}</p>
             <p className="mt-1 text-xs text-muted-foreground max-w-[240px]">
-              Spawn one above, or ask HermOS to delegate a task to a subagent.
+              {t("no_subagents_desc")}
             </p>
           </div>
         ) : (
@@ -267,6 +269,7 @@ function SubagentCard({
   onDelete: (e: React.MouseEvent) => void;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const status = subagent.status;
   const isRunning = status === "running";
   const isPending = status === "pending";
@@ -316,15 +319,15 @@ function SubagentCard({
                   e.stopPropagation();
                   onDelete(e);
                 }}
-                aria-label={`Delete subagent ${subagent.name}`}
+                aria-label={t("delete_subagent", { name: subagent.name })}
               >
                 <Trash2 className="size-3" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">Delete</TooltipContent>
+            <TooltipContent side="left">{t("delete")}</TooltipContent>
           </Tooltip>
 
-          <ChevronRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0 ml-0.5" />
+          <ChevronRight className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0 ms-0.5" />
         </div>
       </div>
 
@@ -344,7 +347,7 @@ function SubagentCard({
 
       {/* Ultra-thin progress bar for running / pending subagents */}
       {(isRunning || isPending) && (
-        <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-muted/20 overflow-hidden">
+        <div className="absolute bottom-0 start-0 end-0 h-[2px] bg-muted/20 overflow-hidden">
           {subagent.progress != null &&
           typeof subagent.progress === "number" &&
           subagent.progress > 0 ? (
@@ -389,14 +392,15 @@ function StatusDot({ name, task }: { name?: string; task?: string }) {
 }
 
 function StatusBadge({ status }: { status: SubagentStatus }) {
+  const { t } = useTranslation();
   if (status === "running") {
     return <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />;
   }
   if (status === "completed") {
-    return <span className="text-[10px] font-mono text-brand font-medium">completed</span>;
+    return <span className="text-[10px] font-mono text-brand font-medium">{t("completed")}</span>;
   }
   if (status === "failed") {
-    return <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">failed</span>;
+    return <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-medium">{t("failed")}</span>;
   }
   return null;
 }

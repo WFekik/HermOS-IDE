@@ -353,6 +353,7 @@ describe("DEFAULT_PERMISSIONS", () => {
         { action: "file.read", mode: "allow" },
         { action: "file.write", mode: "allow" },
         { action: "command.run", mode: "ask" },
+        { action: "command.outside_workspace", mode: "ask" },
         { action: "browser.open", mode: "ask" },
         { action: "browser.click", mode: "ask" },
         { action: "browser.type", mode: "ask" },
@@ -547,6 +548,8 @@ describe("evaluateToolPermission — convenience wrapper", () => {
     // subagents, whose allowedTools the executor clips to read-only tools.
     expect(await evaluateToolPermission("arch-user", "spawn_subagent", "architect")).toBe("allow");
     expect(await evaluateToolPermission("arch-user", "get_subagent", "architect")).toBe("allow");
+    // Architect mode CAN create and access artifacts
+    expect(await evaluateToolPermission("arch-user", "create_artifact", "architect")).toBe("allow");
   });
 
   it("does NOT force-deny in agent mode (uses user config)", async () => {
@@ -647,5 +650,18 @@ describe("refreshPermissionsConfig — batch snapshot refresh", () => {
     // The call still succeeds — the executor's best-effort refresh cannot
     // throw and kill the agent loop mid-batch.
     expect(result.autoAllowReadonly).toBe(true);
+  });
+
+  it("denies command.outside_workspace in architect mode regardless of user config", async () => {
+    const { evaluateToolPermission } = await import("./permissions");
+    const permissiveConfig: PermissionsConfig = {
+      rules: [{ action: "command.outside_workspace", mode: "allow" }],
+      autoAllowReadonly: true,
+    };
+    const mode = await evaluateToolPermission("u1", "run_command", "architect", permissiveConfig);
+    expect(mode).toBe("deny");
+
+    const direct = await evaluateToolPermission("u1", "command.outside_workspace", "architect", permissiveConfig);
+    expect(direct).toBe("deny");
   });
 });

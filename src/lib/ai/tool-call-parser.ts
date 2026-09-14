@@ -552,16 +552,24 @@ export function parseNonStreamingResponse(body: string): { content?: string; thi
         } else if (item.type === "reasoning") {
           // Responses reasoning items vary by gateway: `content` (string),
           // `summary: [{text}]`, or `text`. Accept all instead of dropping.
-          const summaryText = Array.isArray((item as any).summary)
-            ? (item as any).summary
-                .map((s: any) => (typeof s === "string" ? s : typeof s?.text === "string" ? s.text : ""))
+          const itemRec =
+            item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+          const summaryText = Array.isArray(itemRec.summary)
+            ? (itemRec.summary as unknown[])
+                .map((s: unknown) =>
+                  typeof s === "string"
+                    ? s
+                    : s && typeof s === "object" && typeof (s as Record<string, unknown>).text === "string"
+                      ? String((s as Record<string, unknown>).text)
+                      : "",
+                )
                 .filter(Boolean)
                 .join("\n")
             : "";
           const rawThinking =
-            (typeof (item as any).content === "string" && (item as any).content) ||
+            (typeof itemRec.content === "string" && itemRec.content) ||
             summaryText ||
-            (typeof (item as any).text === "string" && (item as any).text) ||
+            (typeof itemRec.text === "string" && itemRec.text) ||
             "";
           if (rawThinking.trim()) {
             result.thinking = (result.thinking ? `${result.thinking}\n` : "") + rawThinking.trim();

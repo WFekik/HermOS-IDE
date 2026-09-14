@@ -43,6 +43,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
 import type { RightPanelTab } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* The thin 48px rails shown when the sidebar / right panel are
    collapsed. Matches VS Code's "icon-only" collapse behavior — the
@@ -370,17 +371,18 @@ function SidebarRail({
   onNewChat: () => void;
   onOpenSettings: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <aside
-      className="flex h-full shrink-0 flex-col items-center gap-1 border-r bg-sidebar py-2"
+      className="flex h-full shrink-0 flex-col items-center gap-1 border-e bg-sidebar py-2"
       style={{ width: `${RAIL_WIDTH_PX}px` }}
-      aria-label="Sidebar (collapsed)"
+      aria-label={t("sidebar_collapsed_aria")}
     >
       <button
         type="button"
         onClick={onExpand}
         className="flex size-9 items-center justify-center rounded-md hover:bg-sidebar-accent/60 transition-colors"
-        aria-label="Expand sidebar"
+        aria-label={t("show_sidebar")}
       >
         <HermOSLogo size={24} />
       </button>
@@ -392,12 +394,12 @@ function SidebarRail({
             size="icon"
             className="size-9"
             onClick={onNewChat}
-            aria-label="New conversation"
+            aria-label={t("new_conversation")}
           >
             <Plus className="size-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="right">New conversation ({isMacPlatform() ? "⌘" : "Ctrl+"}N)</TooltipContent>
+        <TooltipContent side="right">{t("new_conversation")} ({isMacPlatform() ? "⌘" : "Ctrl+"}N)</TooltipContent>
       </Tooltip>
       <div className="flex-1" />
       <Tooltip>
@@ -407,12 +409,12 @@ function SidebarRail({
             size="icon"
             className="size-9"
             onClick={onOpenSettings}
-            aria-label="Settings"
+            aria-label={t("settings")}
           >
             <SettingsIcon className="size-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="right">Settings ({isMacPlatform() ? "⌘" : "Ctrl+"},)</TooltipContent>
+        <TooltipContent side="right">{t("settings")} ({isMacPlatform() ? "⌘" : "Ctrl+"},)</TooltipContent>
       </Tooltip>
     </aside>
   );
@@ -426,7 +428,7 @@ function SubagentRailBadge() {
   );
   if (runningCount === 0) return null;
   return (
-    <span className="absolute -top-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-sky-500 text-[8px] font-mono font-semibold text-white leading-none shadow-2xs animate-pulse">
+    <span className="absolute -top-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full bg-sky-500 text-[8px] font-mono font-semibold text-white leading-none shadow-2xs animate-pulse">
       {runningCount > 9 ? "9+" : runningCount}
     </span>
   );
@@ -439,36 +441,38 @@ function RightPanelRail({
   activeTab: RightPanelTab;
   onPick: (t: RightPanelTab) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <aside
-      className="flex h-full shrink-0 flex-col items-center gap-0.5 border-l bg-card py-2 overflow-y-auto"
+      className="flex h-full shrink-0 flex-col items-center gap-0.5 border-s bg-card py-2 overflow-y-auto"
       style={{ width: `${RAIL_WIDTH_PX}px` }}
-      aria-label="Tools panel (collapsed)"
+      aria-label={t("tools_panel_collapsed_aria")}
     >
-      {RIGHT_PANEL_TABS.map((t) => {
-        const Icon = t.icon;
-        const active = t.value === activeTab;
+      {RIGHT_PANEL_TABS.map((item) => {
+        const Icon = item.icon;
+        const active = item.value === activeTab;
+        const label = t(item.value);
         return (
-          <Tooltip key={t.value}>
+          <Tooltip key={item.value}>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => onPick(t.value)}
+                onClick={() => onPick(item.value)}
                 className={cn(
                   "flex size-9 items-center justify-center rounded-md transition-colors",
                   active
                     ? "bg-brand/10 text-brand"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
-                    aria-label={`${t.label} (expand panel)`}
-                  >
-                    <span className="relative">
-                      <Icon className="size-4" />
-                      {t.value === "subagents" && <SubagentRailBadge />}
-                    </span>
-                  </button>
+                aria-label={`${label} (${t("expand_panel")})`}
+              >
+                <span className="relative">
+                  <Icon className="size-4" />
+                  {item.value === "subagents" && <SubagentRailBadge />}
+                </span>
+              </button>
             </TooltipTrigger>
-            <TooltipContent side="left">{t.label}</TooltipContent>
+            <TooltipContent side="left">{label}</TooltipContent>
           </Tooltip>
         );
       })}

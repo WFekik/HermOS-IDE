@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ProjectSelector } from "@/components/ide/project-selector";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { ConversationDTO } from "@/lib/types";
@@ -60,6 +61,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
   const toggleProjectCollapse = useAppStore((s) => s.toggleProjectCollapse);
   const renameWorkspace = useAppStore((s) => s.renameWorkspace);
   const deleteWorkspace = useAppStore((s) => s.deleteWorkspace);
+  const { t } = useTranslation();
 
   const [query, setQuery] = React.useState("");
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -91,12 +93,12 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
     if (renamingProjectId !== workspaceId) return;
     const ok = await renameWorkspace(workspaceId, next);
     if (ok) {
-      toast.success("Project renamed");
+      toast.success(t("project_renamed"));
     } else {
-      toast.error("Failed to rename project");
+      toast.error(t("rename_failed"));
     }
     setRenamingProjectId(null);
-  }, [renameDraft, renamingProjectId, renameWorkspace]);
+  }, [renameDraft, renamingProjectId, renameWorkspace, t]);
 
   const cancelRename = React.useCallback(() => {
     setRenamingProjectId(null);
@@ -107,11 +109,11 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
     const ok = await deleteWorkspace(workspaceId);
     setConfirmCloseId(null);
     if (ok) {
-      toast.success("Project closed");
+      toast.success(t("project_closed"));
     } else {
-      toast.error("Failed to close project");
+      toast.error(t("delete_failed"));
     }
-  }, [deleteWorkspace]);
+  }, [deleteWorkspace, t]);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 250);
@@ -205,23 +207,23 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
       <Button
         variant="ghost"
         size="sm"
-        className="md:hidden absolute right-2 top-2 z-10 size-7 p-0"
-        aria-label="Close sidebar"
+        className="md:hidden absolute end-2 top-2 z-10 size-7 p-0"
+        aria-label={t("close")}
         onClick={onNavigate}
       >
         <X className="size-4" />
       </Button>
 
       {/* Top Header with project selector */}
-      <div className="flex items-center px-3 pt-3 pb-1 pr-10 md:pr-3">
+      <div className="flex items-center px-3 pt-3 pb-1 pe-10 md:pe-3">
         <ProjectSelector className="flex-1 min-w-0" createOnSwitch={false} />
       </div>
 
       <div className="px-3 py-1.5">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3 text-muted-foreground pointer-events-none" />
+          <Search className="absolute start-2.5 top-1/2 -translate-y-1/2 size-3 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder="Search conversations…"
+            placeholder={t("search_conversations")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -230,16 +232,16 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                 clearSearch();
               }
             }}
-            className="h-7.5 pl-7.5 pr-7 text-xs bg-sidebar-accent/30 border-sidebar-border/50 rounded-lg focus-visible:ring-1"
-            aria-label="Search conversations"
+            className="h-7.5 ps-7.5 pe-7 text-xs bg-sidebar-accent/30 border-sidebar-border/50 rounded-lg focus-visible:ring-1"
+            aria-label={t("search_conversations")}
           />
           {query && (
             <Button
               variant="ghost"
               size="sm"
-              aria-label="Clear search"
+              aria-label={t("clear")}
               onClick={clearSearch}
-              className="absolute right-1 top-1/2 -translate-y-1/2 size-5 p-0 text-muted-foreground hover:text-foreground"
+              className="absolute end-1 top-1/2 -translate-y-1/2 size-5 p-0 text-muted-foreground hover:text-foreground"
             >
               <X className="size-3" />
             </Button>
@@ -323,7 +325,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                         </span>
                       )}
 
-                      <div className="ml-auto flex items-center gap-0.5 shrink-0">
+                      <div className="ms-auto flex items-center gap-0.5 shrink-0">
                         {convs.length > 0 && !isCollapsed && (
                           <span className="text-[10px] text-muted-foreground/60 tabular-nums px-1 group-hover:hidden">
                             {convs.length}
@@ -337,7 +339,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             className="size-5 p-0 text-muted-foreground hover:text-foreground"
                             onClick={(e) => { e.stopPropagation(); void onNew(workspace.id); }}
                             aria-label={`New chat in ${workspace.name}`}
-                            title="New chat in this project"
+                            title={t("new_chat")}
                           >
                             <Plus className="size-3" />
                           </Button>
@@ -347,7 +349,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             className="size-5 p-0 text-muted-foreground hover:text-foreground"
                             onClick={(e) => { e.stopPropagation(); startRename(workspace); }}
                             aria-label={`Rename ${workspace.name}`}
-                            title="Rename project"
+                            title={t("rename")}
                           >
                             <Pencil className="size-3" />
                           </Button>
@@ -357,7 +359,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             className="size-5 p-0 text-muted-foreground hover:text-destructive"
                             onClick={(e) => { e.stopPropagation(); setConfirmCloseId(workspace.id); }}
                             aria-label={`Delete ${workspace.name}`}
-                            title="Delete project"
+                            title={t("delete")}
                           >
                             <Trash2 className="size-3" />
                           </Button>
@@ -367,7 +369,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
 
                     {/* Project conversations */}
                     {!isCollapsed && convs.length > 0 && (
-                      <div className="ml-3 pl-2 border-l border-sidebar-border/30 space-y-0.5">
+                      <div className="ms-3 ps-2 border-s border-sidebar-border/30 space-y-0.5">
                         {convs.map((c) => {
                           const active = c.id === activeConversationId;
                           return (
@@ -399,17 +401,17 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                   {debouncedQuery ? (
                     <div className="flex flex-col items-center gap-1.5">
                       <SearchX className="size-4 text-muted-foreground/60" />
-                      <span>No conversations found</span>
+                      <span>{t("no_conversations")}</span>
                       <button
                         type="button"
                         onClick={clearSearch}
                         className="text-[11px] text-brand hover:underline"
                       >
-                        Clear search
+                        {t("clear")}
                       </button>
                     </div>
                   ) : (
-                    "No conversations yet"
+                    t("no_conversations")
                   )}
                 </div>
               )}
@@ -426,8 +428,8 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
           onClick={onOpenCommand}
         >
           <Search className="size-3.5 shrink-0" />
-          <span className="truncate flex-1 text-left min-w-0">Quick switch</span>
-          <Badge variant="secondary" className="ml-auto text-[10px] font-mono shrink-0">⌘K</Badge>
+          <span className="truncate flex-1 text-start min-w-0">{t("quick_switch")}</span>
+          <Badge variant="secondary" className="ms-auto text-[10px] font-mono shrink-0">⌘K</Badge>
         </Button>
         <Button
           variant="ghost"
@@ -436,30 +438,30 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
           onClick={onOpenSettings}
         >
           <Settings className="size-3.5 shrink-0" />
-          <span className="truncate flex-1 text-left min-w-0">Settings</span>
+          <span className="truncate flex-1 text-start min-w-0">{t("settings")}</span>
         </Button>
       </div>
 
       <AlertDialog open={deleteId !== null} onOpenChange={(o) => !o && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+            <AlertDialogTitle>{t("delete_conversation_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the conversation and all its messages. This action cannot be undone.
+              {t("delete_conversation_desc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={async () => {
                 if (!deleteId) return;
                 await deleteConversation(deleteId);
                 setDeleteId(null);
-                toast.success("Conversation deleted");
+                toast.success(t("delete"));
               }}
             >
-              Delete
+              {t("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -468,19 +470,18 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
       <AlertDialog open={confirmDeleteId !== null} onOpenChange={(o) => !o && setConfirmCloseId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete project?</AlertDialogTitle>
+            <AlertDialogTitle>{t("delete_project_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the project from HermOS and unlinks its conversations.
-              The files on disk will not be affected.
+              {t("delete_project_desc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={() => { if (confirmDeleteId) void handleDeleteProject(confirmDeleteId); }}
             >
-              Delete project
+              {t("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -512,6 +513,7 @@ function ConversationRow({
   onDelete: () => void;
   onRename: (title: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(conversation.title);
   const [saving, setSaving] = React.useState(false);
@@ -542,7 +544,7 @@ function ConversationRow({
   const commit = async () => {
     const next = draft.trim();
     if (next.length < 1 || next.length > 100) {
-      toast.error("Title must be 1–100 characters");
+      toast.error(t("title_length_error"));
       cancel();
       return;
     }
@@ -554,9 +556,9 @@ function ConversationRow({
     try {
       await onRename(next);
       setEditing(false);
-      toast.success("Renamed");
+      toast.success(t("renamed"));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Rename failed");
+      toast.error(e instanceof Error ? e.message : t("rename_failed"));
       cancel();
     } finally {
       setSaving(false);
@@ -633,10 +635,10 @@ function ConversationRow({
               <Pin className={cn("size-3", conversation.pinned ? "text-brand fill-brand" : "text-muted-foreground")} />
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="size-5 p-0 text-muted-foreground hover:text-foreground" aria-label="Rename" onClick={startRename}>
+          <Button variant="ghost" size="sm" className="size-5 p-0 text-muted-foreground hover:text-foreground" aria-label={t("rename")} onClick={startRename}>
             <Pencil className="size-3 text-muted-foreground" />
           </Button>
-          <Button variant="ghost" size="sm" className="size-5 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+          <Button variant="ghost" size="sm" className="size-5 p-0 text-muted-foreground hover:text-destructive" aria-label={t("delete")} onClick={(e) => { e.stopPropagation(); onDelete(); }}>
             <Trash2 className="size-3" />
           </Button>
         </div>

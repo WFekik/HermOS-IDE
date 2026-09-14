@@ -28,6 +28,7 @@ import { FILE_OP_TOOLS, computeDiffStats, fileTypeIconMeta, formatBytes } from "
 import { DiffViewer } from "@/components/ide/diff-viewer";
 import { CodeBlock } from "@/components/ide/code-block";
 import { useAppStore, type LiveToolCall } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 interface ToolCallCardProps {
   tc: LiveToolCall;
@@ -52,6 +53,7 @@ const SHELL_OP_TOOLS = new Set(["run_command", "run_terminal", "terminal", "comm
  * visible (no overflow:hidden on the outer container, no z-index tricks).
  */
 export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
+  const { t } = useTranslation();
   const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   const wsName = activeWorkspace?.name || "workspace";
 
@@ -65,7 +67,7 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
 
   const [open, setOpen] = React.useState(initialOpen);
 
-  const summary = React.useMemo(() => makeArgsSummary(tc.name, args, wsName), [tc.name, args, wsName]);
+  const summary = React.useMemo(() => makeArgsSummary(tc.name, args, wsName, t), [tc.name, args, wsName, t]);
   const status = tc.status;
   const durationLabel = React.useMemo(() => maybeDuration(args), [args]);
 
@@ -112,18 +114,18 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs transition-colors"
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-start text-xs transition-colors"
       >
         <ToolStatusIcon status={status} />
         <ToolIcon name={tc.name} className="size-3.5 text-brand shrink-0" />
-        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name)}</span>
+        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name, t)}</span>
         {isCreatedFile && (
           <Badge
             variant="outline"
             className="h-3.5 px-1 text-[8px] font-mono border-0 bg-emerald-500/15 text-emerald-400 shrink-0"
           >
-            <FilePlus2 className="size-2 mr-0.5" />
-            NEW
+            <FilePlus2 className="size-2 me-0.5" />
+            {t("new_badge")}
           </Badge>
         )}
         {summary && (
@@ -138,7 +140,7 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
             <span className="text-red-500 dark:text-red-400">-{diffStats.del}</span>
           </span>
         )}
-        <span className="ml-auto flex items-center gap-1.5 shrink-0">
+        <span className="ms-auto flex items-center gap-1.5 shrink-0">
           {durationLabel && (
             <span className="font-mono text-[10px] text-foreground font-medium">
               {durationLabel}
@@ -217,6 +219,7 @@ function handleOpenFile(filePath: string, line?: number) {
 /* ----------------------------- File path row ----------------------------- */
 
 function FilePathRow({ path, isDir }: { path: string; isDir?: boolean }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const ext = React.useMemo(() => {
     const parts = path.split(".");
@@ -228,12 +231,12 @@ function FilePathRow({ path, isDir }: { path: string; isDir?: boolean }) {
     try {
       await navigator.clipboard.writeText(path);
       setCopied(true);
-      toast.success("Path copied");
+      toast.success(t("path_copied"));
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("copy_failed"));
     }
-  }, [path]);
+  }, [path, t]);
 
   return (
     <div className="flex items-center gap-1.5 rounded bg-black/5 dark:bg-black/40 border border-black/10 dark:border-white/5 px-2 py-1">
@@ -248,8 +251,8 @@ function FilePathRow({ path, isDir }: { path: string; isDir?: boolean }) {
       <button
         type="button"
         onClick={onCopy}
-        title="Copy path"
-        aria-label="Copy path"
+        title={t("copy_path")}
+        aria-label={t("copy_path")}
         className="shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         {copied ? (
@@ -265,18 +268,19 @@ function FilePathRow({ path, isDir }: { path: string; isDir?: boolean }) {
 /* --------------------------- Command header --------------------------- */
 
 function CommandHeader({ command }: { command: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const onCopy = React.useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(command);
       setCopied(true);
-      toast.success("Command copied");
+      toast.success(t("command_copied"));
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("copy_failed"));
     }
-  }, [command]);
+  }, [command, t]);
 
   return (
     <div className="flex items-start gap-1.5 rounded bg-black/5 dark:bg-black/60 border border-black/10 dark:border-white/5 px-2 py-1.5">
@@ -288,8 +292,8 @@ function CommandHeader({ command }: { command: string }) {
       <button
         type="button"
         onClick={onCopy}
-        title="Copy command"
-        aria-label="Copy command"
+        title={t("copy_command")}
+        aria-label={t("copy_command")}
         className="shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         {copied ? (
@@ -311,7 +315,7 @@ export interface NormalizedDirEntry {
   size?: number;
 }
 
-export function DirectoryListingView({
+export function DirListingView({
   entries,
   basePath,
   totalFiles,
@@ -322,6 +326,7 @@ export function DirectoryListingView({
   totalFiles?: number;
   totalDirs?: number;
 }) {
+  const { t } = useTranslation();
   const [copiedPath, setCopiedPath] = React.useState<string | null>(null);
 
   const handleCopy = async (path: string, e: React.MouseEvent) => {
@@ -329,17 +334,17 @@ export function DirectoryListingView({
     try {
       await navigator.clipboard.writeText(path);
       setCopiedPath(path);
-      toast.success("Path copied");
+      toast.success(t("path_copied"));
       setTimeout(() => setCopiedPath(null), 1500);
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("copy_failed"));
     }
   };
 
   if (!entries || entries.length === 0) {
     return (
       <div className="rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5 px-3 py-2 text-xs text-muted-foreground italic font-mono">
-        Empty directory
+        {t("empty_directory")}
         {basePath && (
           <span className="block truncate font-mono not-italic" title={basePath}>
             {basePath}
@@ -392,7 +397,8 @@ export function DirectoryListingView({
                 <button
                   type="button"
                   onClick={(e) => handleCopy(entry.path, e)}
-                  title="Copy path"
+                  title={t("copy_path")}
+                  aria-label={t("copy_path")}
                   className="opacity-0 group-hover/item:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-muted-foreground hover:text-foreground shrink-0"
                 >
                   {copiedPath === entry.path ? (
@@ -409,9 +415,9 @@ export function DirectoryListingView({
       {(totalDirs !== undefined || totalFiles !== undefined) && (
         <div className="flex items-center justify-between px-1 text-[10px] font-mono text-muted-foreground">
           <span>
-            {totalDirs !== undefined ? `${totalDirs} ${totalDirs === 1 ? "folder" : "folders"}` : ""}
+            {totalDirs !== undefined ? t("folders_count", { count: totalDirs }) : ""}
             {totalDirs !== undefined && totalFiles !== undefined ? ", " : ""}
-            {totalFiles !== undefined ? `${totalFiles} ${totalFiles === 1 ? "file" : "files"}` : ""}
+            {totalFiles !== undefined ? t("files_count", { count: totalFiles }) : ""}
           </span>
           {basePath && <span className="truncate max-w-[200px]" title={basePath}>{basePath}</span>}
         </div>
@@ -419,6 +425,9 @@ export function DirectoryListingView({
     </div>
   );
 }
+
+/** Backward-compatible alias for the pre-rename `DirectoryListingView` export. */
+export const DirectoryListingView = DirListingView;
 
 export function GlobResultView({
   matches,
@@ -429,6 +438,7 @@ export function GlobResultView({
   pattern?: string;
   basePath?: string;
 }) {
+  const { t } = useTranslation();
   const [copiedPath, setCopiedPath] = React.useState<string | null>(null);
 
   const handleCopy = async (path: string, e: React.MouseEvent) => {
@@ -436,17 +446,17 @@ export function GlobResultView({
     try {
       await navigator.clipboard.writeText(path);
       setCopiedPath(path);
-      toast.success("Path copied");
+      toast.success(t("path_copied"));
       setTimeout(() => setCopiedPath(null), 1500);
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("copy_failed"));
     }
   };
 
   if (!matches || matches.length === 0) {
     return (
       <div className="rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5 px-3 py-2 text-xs text-muted-foreground italic font-mono">
-        No files matched {pattern ? `pattern "${pattern}"` : "query"}
+        {pattern ? `${t("no_files_matched")} "${pattern}"` : t("no_files_matched")}
       </div>
     );
   }
@@ -469,7 +479,8 @@ export function GlobResultView({
               <button
                 type="button"
                 onClick={(e) => handleCopy(filePath, e)}
-                title="Copy path"
+                title={t("copy_path")}
+                aria-label={t("copy_path")}
                 className="opacity-0 group-hover/item:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-muted-foreground hover:text-foreground shrink-0"
               >
                 {copiedPath === filePath ? (
@@ -483,7 +494,7 @@ export function GlobResultView({
         })}
       </div>
       <div className="flex items-center justify-between px-1 text-[10px] font-mono text-muted-foreground">
-        <span>{matches.length} matched {matches.length === 1 ? "file" : "files"}</span>
+        <span>{t("matched_files_count", { count: matches.length })}</span>
         {pattern && <Badge variant="outline" className="text-[9px] h-3.5 font-mono border-0 bg-black/5 dark:bg-white/5">{pattern}</Badge>}
       </div>
     </div>
@@ -503,6 +514,7 @@ export function GrepResultView({
   matches: GrepMatchItem[];
   pattern?: string;
 }) {
+  const { t } = useTranslation();
   // Group by file
   const grouped = React.useMemo(() => {
     const map = new Map<string, GrepMatchItem[]>();
@@ -517,14 +529,14 @@ export function GrepResultView({
   if (!matches || matches.length === 0) {
     return (
       <div className="rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5 px-3 py-2 text-xs text-muted-foreground italic font-mono">
-        No matches found {pattern ? `for "${pattern}"` : ""}
+        {pattern ? `${t("no_matches_found")} "${pattern}"` : t("no_matches_found")}
       </div>
     );
   }
 
   return (
     <div className="space-y-1.5 font-mono text-[11px]">
-      <div className="space-y-2 max-h-80 overflow-y-auto pr-0.5">
+      <div className="space-y-2 max-h-80 overflow-y-auto pe-0.5">
         {grouped.map(([file, items]) => {
           const ext = file.includes(".") ? file.split(".").pop()?.toLowerCase() || "" : "";
           return (
@@ -535,7 +547,7 @@ export function GrepResultView({
               >
                 <FileTypeIcon ext={ext} className="size-3.5 shrink-0" />
                 <span className="font-semibold text-foreground truncate min-w-0 flex-1">{file}</span>
-                <span className="text-[10px] text-muted-foreground shrink-0">{items.length} {items.length === 1 ? "match" : "matches"}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{t("items_count", { count: items.length })}</span>
               </div>
               <div className="divide-y divide-black/5 dark:divide-white/5">
                 {items.map((item, idx) => (
@@ -544,7 +556,7 @@ export function GrepResultView({
                     onClick={() => handleOpenFile(file, item.line)}
                     className="flex items-start gap-2 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
                   >
-                    <span className="text-[10px] text-muted-foreground shrink-0 select-none pt-0.5 min-w-[32px] text-right font-medium">
+                    <span className="text-[10px] text-muted-foreground shrink-0 select-none pt-0.5 min-w-[32px] text-end font-medium">
                       L{item.line}
                     </span>
                     <code className="text-zinc-700 dark:text-zinc-300 text-[11px] whitespace-pre-wrap break-words min-w-0 flex-1 font-mono">
@@ -558,7 +570,7 @@ export function GrepResultView({
         })}
       </div>
       <div className="flex items-center justify-between px-1 text-[10px] font-mono text-muted-foreground">
-        <span>{matches.length} total matches in {grouped.length} files</span>
+        <span>{t("total_matches_in_files", { count: matches.length, files: grouped.length })}</span>
         {pattern && <Badge variant="outline" className="text-[9px] h-3.5 font-mono border-0 bg-black/5 dark:bg-white/5">{pattern}</Badge>}
       </div>
     </div>
@@ -578,17 +590,18 @@ export function WebSearchResultView({
   results: WebSearchResultItem[];
   query?: string;
 }) {
+  const { t } = useTranslation();
   if (!results || results.length === 0) {
     return (
       <div className="rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5 px-3 py-2 text-xs text-muted-foreground italic font-mono">
-        No web results found
+        {t("no_web_results")}
       </div>
     );
   }
 
   return (
     <div className="space-y-1.5 font-mono text-[11px]">
-      <div className="space-y-1.5 max-h-80 overflow-y-auto pr-0.5">
+      <div className="space-y-1.5 max-h-80 overflow-y-auto pe-0.5">
         {results.map((r, i) => {
           let hostname = "";
           try {
@@ -621,7 +634,7 @@ export function WebSearchResultView({
         })}
       </div>
       <div className="px-1 text-[10px] font-mono text-muted-foreground">
-        {results.length} web search {results.length === 1 ? "result" : "results"}
+        {t("web_search_results_count", { count: results.length })}
       </div>
     </div>
   );
@@ -684,13 +697,14 @@ export function StructuredObjectView({
 }: {
   data: Record<string, unknown>;
 }) {
+  const { t } = useTranslation();
   const [showRaw, setShowRaw] = React.useState(false);
   const entries = Object.entries(data);
 
   if (entries.length === 0) {
     return (
       <div className="rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5 px-2.5 py-1.5 text-xs font-mono text-muted-foreground">
-        Success (no output)
+        {t("success_no_output")}
       </div>
     );
   }
@@ -704,7 +718,7 @@ export function StructuredObjectView({
             onClick={() => setShowRaw(false)}
             className="text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           >
-            Show formatted view
+            {t("show_formatted_view")}
           </button>
         </div>
         <pre className="font-mono text-[11px] whitespace-pre-wrap break-words rounded px-2 py-1.5 max-h-96 overflow-y-auto text-zinc-500 dark:text-zinc-400 bg-black/5 dark:bg-black/30">
@@ -749,7 +763,7 @@ export function StructuredObjectView({
           onClick={() => setShowRaw(true)}
           className="text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         >
-          View raw JSON
+          {t("view_raw_json")}
         </button>
       </div>
     </div>
@@ -876,18 +890,19 @@ function CopyableOutput({
   text: string;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const onCopy = React.useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      toast.success(`${label} copied`);
+      toast.success(t("label_copied", { label }));
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      toast.error("Copy failed");
+      toast.error(t("copy_failed"));
     }
-  }, [text, label]);
+  }, [text, label, t]);
 
   const truncated = text.length > 4000 ? text.slice(0, 4000) + "\n…[truncated]" : text;
 
@@ -900,8 +915,8 @@ function CopyableOutput({
         <button
           type="button"
           onClick={onCopy}
-          title={`Copy ${label}`}
-          aria-label={`Copy ${label}`}
+          title={t("copy_label", { label })}
+          aria-label={t("copy_label", { label })}
           className="rounded p-0.5 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           {copied ? (
@@ -926,6 +941,7 @@ function CopyableOutput({
 /* ----------------------------- Result body ----------------------------- */
 
 export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
+  const { t } = useTranslation();
   // Live command output — show a progress terminal while the command runs.
   if (tc.name === "run_command" && tc.liveOutput && tc.liveOutput.length > 0) {
     return (
@@ -933,7 +949,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
         {tc.status === "running" && (
           <div className="flex items-center gap-1.5 mb-1">
             <Loader2 className="size-3 animate-spin text-brand" />
-            <span className="text-[11px] text-muted-foreground">Running…</span>
+            <span className="text-[11px] text-muted-foreground">{t("running")}…</span>
           </div>
         )}
         <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-black/5 dark:bg-black/40 rounded px-2 py-1.5 max-h-64 overflow-y-auto text-foreground">
@@ -980,7 +996,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
                 <span className="relative inline-flex rounded-full size-2 bg-primary"></span>
               </span>
               <span className="text-[11px] font-mono text-primary font-medium">
-                Streaming {path} ({lineCount} lines)…
+                {t("streaming_file_lines", { path, count: lineCount })}
               </span>
             </div>
             <div className="max-h-64 overflow-y-auto rounded border border-border/60">
@@ -998,13 +1014,13 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
           <div className="flex items-center gap-2">
             <Loader2 className="size-3 animate-spin text-brand" />
             <span className="text-[11px] text-muted-foreground">
-              Editing {path}…
+              {t("editing_file", { path })}
             </span>
           </div>
           <div className="rounded border border-border/50 bg-muted/40 p-2 space-y-2 select-none">
             {args.find && (
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Find</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{t("find")}</span>
                 <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 bg-red-500/5 rounded px-2 py-1 max-h-24 overflow-y-auto">
                   {args.find.split("\n").map((line, i) => (
                     <div key={i} className="text-red-700 dark:text-red-400 bg-red-500/10 px-1 font-mono">
@@ -1015,7 +1031,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
               </div>
             )}
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Replace</span>
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{t("replace")}</span>
               <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 bg-emerald-500/5 rounded px-2 py-1 max-h-24 overflow-y-auto">
                 {replaceText.split("\n").map((line, i) => (
                   <div key={i} className="text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-1 font-mono">
@@ -1031,7 +1047,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
     return (
       <div className="text-muted-foreground italic text-[11px] flex items-center gap-1.5">
         <Loader2 className="size-3 animate-spin text-brand" />
-        Running…
+        {t("running")}…
       </div>
     );
   }
@@ -1063,7 +1079,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
         <div className="flex items-center gap-2">
           {isRunning ? (
             <Badge variant="outline" className="text-[10px] h-4 font-mono border-0 text-brand bg-brand/10 animate-pulse">
-              running…
+              {t("running")}…
             </Badge>
           ) : (
             <Badge
@@ -1075,7 +1091,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
                   : "text-red-500 dark:text-red-400 bg-red-500/10 border-red-500/20",
               )}
             >
-              exit {r.exitCode ?? (tc.ok === false ? 1 : 0)}
+              {t("exit_code", { code: r.exitCode ?? (tc.ok === false ? 1 : 0) })}
             </Badge>
           )}
         </div>
@@ -1108,7 +1124,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
     const dirResult = parseDirectoryResult(tc.result, args);
     if (dirResult) {
       return (
-        <DirectoryListingView
+        <DirListingView
           entries={dirResult.entries}
           basePath={dirResult.basePath}
           totalFiles={dirResult.totalFiles}
@@ -1223,7 +1239,7 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
       const asDir = parseDirectoryResult(tc.result, args);
       if (asDir && asDir.entries.length > 0) {
         return (
-          <DirectoryListingView
+          <DirListingView
             entries={asDir.entries}
             basePath={asDir.basePath}
             totalFiles={asDir.totalFiles}
@@ -1403,15 +1419,9 @@ export function parseGlobResult(result: unknown, args?: Record<string, unknown>)
   const pattern =
     typeof args?.pattern === "string"
       ? args.pattern
-      : typeof (data as any)?.pattern === "string"
-      ? (data as any).pattern
-      : undefined;
+      : strField(data, "pattern");
   const basePath =
-    typeof args?.path === "string"
-      ? args.path
-      : typeof (data as any)?.path === "string"
-      ? (data as any).path
-      : undefined;
+    typeof args?.path === "string" ? args.path : strField(data, "path");
 
   if (Array.isArray(data)) {
     const matches = data.filter((x): x is string => typeof x === "string");
@@ -1441,16 +1451,10 @@ export function parseGrepResult(result: unknown, args?: Record<string, unknown>)
     typeof args?.pattern === "string"
       ? args.pattern
       : typeof args?.query === "string"
-      ? args.query
-      : typeof args?.Query === "string"
-      ? args.Query
-      : typeof (data as any)?.pattern === "string"
-      ? (data as any).pattern
-      : typeof (data as any)?.query === "string"
-      ? (data as any).query
-      : typeof (data as any)?.Query === "string"
-      ? (data as any).Query
-      : undefined;
+        ? args.query
+        : typeof args?.Query === "string"
+          ? args.Query
+          : strField(data, "pattern", "query", "Query");
 
   const rawMatches =
     Array.isArray(data)
@@ -1487,11 +1491,7 @@ export function parseWebSearchResult(result: unknown, args?: Record<string, unkn
     if (parsed) data = parsed;
   }
   const query =
-    typeof args?.query === "string"
-      ? args.query
-      : typeof (data as any)?.query === "string"
-      ? (data as any).query
-      : undefined;
+    typeof args?.query === "string" ? args.query : strField(data, "query");
 
   const rawResults =
     Array.isArray(data)
@@ -1578,17 +1578,17 @@ function pickToolIcon(name: string): React.ElementType {
   return Wrench;
 }
 
-function formatToolDisplayName(name: string): string {
-  if (name === "list_directory" || name === "list_dir") return "Analyzed";
-  if (name === "read_file" || name === "view_file") return "Read";
-  if (name === "write_file" || name === "write_to_file") return "Created";
-  if (name === "edit_file" || name === "replace_file_content") return "Edited";
-  if (name === "multi_edit" || name === "multi_replace_file_content") return "Multi-edited";
-  if (name === "remove_file" || name === "delete") return "Deleted";
-  if (name === "run_command" || name === "run_terminal") return "Executed";
-  if (name === "grep" || name === "grep_search" || name === "glob") return "Searched";
-  if (name === "web_search") return "Searched web";
-  if (name === "http_fetch") return "Fetched";
+function formatToolDisplayName(name: string, t?: (key: string, params?: Record<string, string | number>) => string): string {
+  if (name === "list_directory" || name === "list_dir") return t ? t("tool_analyzed") : "Analyzed";
+  if (name === "read_file" || name === "view_file") return t ? t("tool_read") : "Read";
+  if (name === "write_file" || name === "write_to_file") return t ? t("tool_created") : "Created";
+  if (name === "edit_file" || name === "replace_file_content") return t ? t("tool_edited") : "Edited";
+  if (name === "multi_edit" || name === "multi_replace_file_content") return t ? t("tool_multi_edited") : "Multi-edited";
+  if (name === "remove_file" || name === "delete") return t ? t("tool_deleted") : "Deleted";
+  if (name === "run_command" || name === "run_terminal") return t ? t("tool_executed") : "Executed";
+  if (name === "grep" || name === "grep_search" || name === "glob") return t ? t("tool_searched") : "Searched";
+  if (name === "web_search") return t ? t("tool_searched_web") : "Searched web";
+  if (name === "http_fetch") return t ? t("tool_fetched") : "Fetched";
   return name;
 }
 
@@ -1596,6 +1596,7 @@ function makeArgsSummary(
   name: string,
   args: Record<string, unknown> | undefined,
   wsName: string = "workspace",
+  t?: (key: string, params?: Record<string, string | number>) => string,
 ): string {
   if (!args) return "";
   if (name === "list_directory" || name === "list_dir") {
@@ -1607,7 +1608,7 @@ function makeArgsSummary(
     const path = extractFilePath(args) || "";
     if ((name === "multi_edit" || name === "multi_replace_file_content") && Array.isArray(args.edits || args.ReplacementChunks)) {
       const edits = (args.edits || args.ReplacementChunks) as unknown[];
-      return `${edits.length} edit${edits.length === 1 ? "" : "s"}`;
+      return t ? t("edits_count", { count: edits.length }) : `${edits.length} edit${edits.length === 1 ? "" : "s"}`;
     }
     return path;
   }
@@ -1852,4 +1853,15 @@ export function safeParse(raw: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Safely read a string field from unknown LLM JSON without `as any`. */
+export function strField(obj: unknown, ...keys: string[]): string | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const rec = obj as Record<string, unknown>;
+  for (const k of keys) {
+    const v = rec[k];
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return undefined;
 }

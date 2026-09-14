@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
  * todo-collapsed-banner.tsx
@@ -79,6 +79,7 @@ interface TodoCollapsedBannerProps {
 }
 
 export function TodoCollapsedBanner({ conversationId }: TodoCollapsedBannerProps) {
+  const { t } = useTranslation();
   const [hasSeenFirst, setHasSeenFirst] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
   const [liveTodos, setLiveTodos] = React.useState<TodoLite[] | null>(null);
@@ -95,70 +96,85 @@ export function TodoCollapsedBanner({ conversationId }: TodoCollapsedBannerProps
     setExpanded(false);
   }, [conversationId]);
 
-  const { data, error } = useQuery<StreamResponse>({
-    queryKey: ["todos-stream", conversationId],
-    enabled: !!conversationId,
-    refetchInterval: false,
-    refetchOnWindowFocus: false,
-    retry: 3,
-    queryFn: async ({ signal }) => {
-      if (!conversationId) throw new Error("No conversation");
-      const res = await fetch(
-        `/api/todos/stream?conversationId=${encodeURIComponent(conversationId)}`,
-        { signal, credentials: "include" },
-      );
-      if (!res.ok || !res.body) {
-        throw new Error(`Todo stream failed (${res.status})`);
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let snapshot: TodoLite[] | null = null;
-      while (true) {
-        if (signal?.aborted) {
-          await reader.cancel();
-          throw new Error("aborted");
+  const [streamError, setStreamError] = React.useState(false);
+
+  React.useEffect(() => {
+    const convId = conversationId;
+    if (!convId) return;
+    const ac = new AbortController();
+    let isMounted = true;
+    setStreamError(false);
+
+    async function streamTodos(targetId: string) {
+      try {
+        const res = await fetch(
+          `/api/todos/stream?conversationId=${encodeURIComponent(targetId)}`,
+          { signal: ac.signal, credentials: "include" },
+        );
+        if (!res.ok || !res.body) {
+          if (isMounted) setStreamError(true);
+          return;
         }
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          if (frame.startsWith(":")) continue; // heartbeat
-          const lines = frame.split("\n");
-          let event = "message";
-          let dataLine = "";
-          for (const line of lines) {
-            if (line.startsWith("event: ")) event = line.slice(7).trim();
-            else if (line.startsWith("data: ")) dataLine += line.slice(6);
-          }
-          if (!dataLine) continue;
-          try {
-            const parsed = JSON.parse(dataLine);
-            if (event === "snapshot") {
-              snapshot = (parsed.todos as TodoLite[]) ?? [];
-              setLiveTodos(snapshot);
-              setHasSeenFirst(true);
-            } else if (event === "update") {
-              const next = (parsed.todos as TodoLite[]) ?? [];
-              setLiveTodos(next);
-              if (!hasSeenFirst) setHasSeenFirst(true);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (isMounted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            if (frame.startsWith(":")) continue; // heartbeat
+            const lines = frame.split("\n");
+            let event = "message";
+            let dataLine = "";
+            for (const line of lines) {
+              if (line.startsWith("event: ")) event = line.slice(7).trim();
+              else if (line.startsWith("data: ")) dataLine += line.slice(6);
             }
-          } catch {
-            // ignore malformed frame
+            if (!dataLine) continue;
+            try {
+              const parsed = JSON.parse(dataLine);
+              if (event === "snapshot") {
+                const snapshot = (parsed.todos as TodoLite[]) ?? [];
+                if (isMounted) {
+                  setLiveTodos(snapshot);
+                  setHasSeenFirst(true);
+                }
+              } else if (event === "update") {
+                const next = (parsed.todos as TodoLite[]) ?? [];
+                if (isMounted) {
+                  setLiveTodos(next);
+                  setHasSeenFirst(true);
+                }
+              }
+            } catch {
+              // ignore malformed frame
+            }
           }
         }
+      } catch (err: any) {
+        if (err?.name === "AbortError" || ac.signal.aborted) {
+          return; // Clean exit on unmount or tab switch
+        }
+        if (isMounted) setStreamError(true);
       }
-      return { todos: snapshot ?? [] };
-    },
-  });
+    }
+
+    void streamTodos(convId);
+
+    return () => {
+      isMounted = false;
+      ac.abort();
+    };
+  }, [conversationId]);
 
   // The SSE stream is the source of truth: once it has delivered a frame
   // (including an empty list after todo_clear / auto-clear), it wins over the
   // store snapshot. The store is only a fallback for the pre-stream moment.
-  const todos = liveTodos !== null ? liveTodos : (storeTodos ?? data?.todos ?? null);
+  const todos = liveTodos !== null ? liveTodos : (storeTodos ?? null);
 
   // Auto-expand the very first time the agent publishes todos.
   // This hook must run before any conditional return so React's
@@ -191,15 +207,15 @@ export function TodoCollapsedBanner({ conversationId }: TodoCollapsedBannerProps
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-xs hover:bg-muted/60 transition-colors"
+        className="flex w-full items-center gap-2 px-4 py-1.5 text-start text-xs hover:bg-muted/60 transition-colors"
         aria-expanded={expanded}
       >
         <ListTodo className="size-3.5 text-brand shrink-0" />
         <span className="font-medium text-foreground">
-          {total} task{total === 1 ? "" : "s"}
+          {t("tasks_count", { count: total })}
         </span>
         <span className="text-muted-foreground">
-          · {completed}/{total} done
+          · {t("tasks_done_ratio", { completed, total })}
         </span>
         <div className="flex-1 mx-2 h-1.5 rounded-full bg-background overflow-hidden max-w-[140px]">
           <div
@@ -209,10 +225,10 @@ export function TodoCollapsedBanner({ conversationId }: TodoCollapsedBannerProps
         </div>
         {remaining > 0 && (
           <span className="text-[10px] text-muted-foreground">
-            {remaining} remaining
+            {t("tasks_remaining", { count: remaining })}
           </span>
         )}
-        <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+        <span className="ms-auto inline-flex items-center gap-1 text-[10px] text-muted-foreground">
           {expanded ? (
             <ChevronDown className="size-3" />
           ) : (
@@ -251,10 +267,10 @@ export function TodoCollapsedBanner({ conversationId }: TodoCollapsedBannerProps
                   </li>
                 );
               })}
-              {error && (
+              {streamError && (
                 <li className="flex items-center gap-2 text-[10px] text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="size-3" />
-                  Live task updates unavailable — reconnecting…
+                  {t("live_task_updates_unavailable")}
                 </li>
               )}
             </div>

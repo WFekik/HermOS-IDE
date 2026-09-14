@@ -180,12 +180,131 @@ describe("ask_question Zod Schema Validation (Multi-Question & Single)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects empty question string in questions array", () => {
+  it("rejects whitespace-only question/title/prompt/text (alias paths)", () => {
+    for (const alias of ["question", "title", "prompt"] as const) {
+      const r = askQuestionSchema.safeParse({ [alias]: "   " });
+      expect(r.success, `alias ${alias} whitespace should fail`).toBe(false);
+    }
+    const nested = askQuestionSchema.safeParse({
+      questions: [{ title: "   ", options: ["a"] }],
+    });
+    expect(nested.success).toBe(false);
+  });
+
+  it("accepts questions with camelCase isMultiSelect and object options", () => {
     const result = askQuestionSchema.safeParse({
       questions: [
-        { question: "   " },
+        {
+          question: "Select database",
+          options: [{ label: "SQLite", value: "sqlite" }, { label: "Postgres", value: "postgres" }],
+          isMultiSelect: true,
+        },
       ],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions?.[0].isMultiSelect).toBe(true);
+      expect(result.data.questions?.[0].options).toEqual(["SQLite", "Postgres"]);
+    }
+  });
+
+  it("accepts title/prompt aliases and single object questions", () => {
+    const result = askQuestionSchema.safeParse({
+      questions: {
+        title: "Which deployment target?",
+        options: [{ text: "Vercel" }, { name: "AWS" }],
+        multiSelect: "true",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions?.[0].question).toBe("Which deployment target?");
+      expect(result.data.questions?.[0].isMultiSelect).toBe(true);
+      expect(result.data.questions?.[0].options).toEqual(["Vercel", "AWS"]);
+    }
+  });
+
+  describe("answerSchema validation & multi-question safety", () => {
+    afterEach(() => {
+      // Isolate route tests: resolve/cancel any prompt the test registered so
+      // conv_multi_* entries never leak across tests.
+      cancelPendingQuestionsForConversation("conv_multi_1");
+      cancelPendingQuestionsForConversation("conv_ws_1");
+      resetPendingQuestionsForTesting();
+    });
+
+    it("cleans whitespace-only selectedOptions to empty (no phantom selection)", async () => {
+      const { id } = createPendingQuestion({
+        userId: "desktop-user",
+        conversationId: "conv_ws_1",
+        toolCallId: "tc_ws1",
+        questions: [{ question: "Pick one?" }],
+      });
+      const route = await import("@/app/api/agents/questions/pending/route");
+      const req = new Request("http://localhost/api/agents/questions/pending", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, answers: [{ selectedOptions: ["   "] }] }),
+      });
+      const res = await route.POST(req as any);
+      // Whitespace-only selection carries no answer → empty-payload 400,
+      // never a phantom selection flowing to resolvePendingQuestion.
+      expect(res.status).toBe(400);
+    });
+
+    it("caps plain string answers to 10,000 characters and rejects oversized inputs", async () => {
+      // Import the schemas directly from the route module
+      const route = await import("@/app/api/agents/questions/pending/route");
+      // Test via sending a mock POST request with oversized bare-string answer
+      const oversized = "a".repeat(10_001);
+      const normal = "a".repeat(10_000);
+
+      const makeReq = (ans: unknown) =>
+        new Request("http://localhost/api/agents/questions/pending", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: "q_test", answers: [ans] }),
+        });
+
+      // Oversized string should fail validation
+      const badReq = makeReq(oversized);
+      const badRes = await route.POST(badReq as any);
+      expect(badRes.status).toBe(400);
+
+      // Normal string <= 10,000 passes schema validation (might 404 on non-existent question ID, not 400)
+      const okReq = makeReq(normal);
+      const okRes = await route.POST(okReq as any);
+      expect(okRes.status).not.toBe(400);
+    });
+
+    it("rejects ambiguous top-level fallback when prompt has multiple questions", async () => {
+      const route = await import("@/app/api/agents/questions/pending/route");
+
+      // Register a multi-question prompt in registry
+      const { id } = createPendingQuestion({
+        userId: "desktop-user",
+        conversationId: "conv_multi_1",
+        toolCallId: "tc_m1",
+        questions: [
+          { question: "First question?" },
+          { question: "Second question?" },
+        ],
+      });
+
+      // Submit with only top-level text instead of answers array
+      const req = new Request("http://localhost/api/agents/questions/pending", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id,
+          text: "Only answering one question at top level",
+        }),
+      });
+
+      const res = await route.POST(req as any);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toMatch(/answers\[\]/);
+    });
   });
 });

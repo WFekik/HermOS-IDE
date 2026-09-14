@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { checkUrlHost, getSsrfDispatcher } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { commandsDisabledMessage } from "@/lib/workspace";
 import type { PluginTool } from "@/lib/types";
 
@@ -62,22 +62,15 @@ export async function executePluginTool(
     if (!tool.endpoint) {
       throw new Error(`Plugin tool "${tool.name}" is configured as api but has no endpoint.`);
     }
-    const checkReason = await checkUrlHost(tool.endpoint);
-    if (checkReason) {
-      return { error: "SSRF policy blocked request to endpoint: " + checkReason };
-    }
-    const response = await fetch(tool.endpoint, {
+    // SSRF: plugin endpoints are user-configured — fetchWithSsrf validates
+    // every redirect hop (violations throw fail-closed).
+    const response = await fetchWithSsrf(tool.endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(args),
-      dispatcher: getSsrfDispatcher(),
-    } as RequestInit);
-    if (response.redirected) {
-      const reason = await checkUrlHost(response.url);
-      if (reason) throw new Error(`SSRF policy blocked redirect to: ${reason}`);
-    }
+    });
     if (!response.ok) {
       throw new Error(`API plugin tool returned error status: ${response.status}`);
     }

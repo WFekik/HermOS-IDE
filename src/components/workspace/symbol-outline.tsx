@@ -20,6 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { apiGet, ApiRequestError } from "@/lib/api-client";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* -------------------------------------------------------------------------- *
  * Symbol outline
@@ -78,16 +79,6 @@ const KIND_ICON: Record<SymbolInfo["kind"], React.ElementType> = {
   import: ArrowDownToLine,
 };
 
-const KIND_LABEL: Record<SymbolInfo["kind"], string> = {
-  function: "Function",
-  class: "Class",
-  interface: "Interface",
-  type: "Type",
-  const: "Const",
-  export: "Export",
-  import: "Import",
-};
-
 export interface SymbolOutlineProps {
   /** Optional override for the file path to outline. Defaults to the store's activeFileTab. */
   path?: string | null;
@@ -96,8 +87,22 @@ export interface SymbolOutlineProps {
 }
 
 export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps) {
+  const { t } = useTranslation();
   const activeFileTab = useAppStore((s) => s.activeFileTab);
   const path = pathProp !== undefined ? pathProp : activeFileTab;
+
+  const getKindLabel = (kind: SymbolInfo["kind"]) => {
+    switch (kind) {
+      case "function": return t("kind_function");
+      case "class": return t("kind_class");
+      case "interface": return t("kind_interface");
+      case "type": return t("kind_type");
+      case "const": return t("kind_const");
+      case "export": return t("kind_export");
+      case "import": return t("kind_import");
+      default: return kind;
+    }
+  };
 
   const [symbols, setSymbols] = React.useState<SymbolInfo[] | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -178,8 +183,8 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
     return (
       <OutlineEmpty
         icon={<FileText className="size-7 text-muted-foreground/40" />}
-        title="No file open"
-        body="Open a file to see its outline."
+        title={t("no_file_open")}
+        body={t("open_file_outline_desc")}
       />
     );
   }
@@ -188,8 +193,8 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
     return (
       <OutlineEmpty
         icon={<ListTree className="size-7 text-muted-foreground/40" />}
-        title="No symbols for this file"
-        body="Symbols are only available for .ts, .tsx, .js, and .jsx files."
+        title={t("no_symbols_file")}
+        body={t("symbols_supported_exts_desc")}
       />
     );
   }
@@ -212,7 +217,7 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
               className="mt-3 h-7 gap-1 text-xs"
               onClick={refresh}
             >
-              <RefreshCw className="size-3" /> Retry
+              <RefreshCw className="size-3" /> {t("retry")}
             </Button>
           </div>
         </div>
@@ -226,8 +231,8 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
         <OutlineHeader path={path} count={0} onRefresh={refresh} refreshing={loading} />
         <OutlineEmpty
           icon={<ListTree className="size-7 text-muted-foreground/40" />}
-          title="No symbols found"
-          body="This file doesn't declare any functions, classes, types, or exports the extractor recognizes."
+          title={t("no_symbols_found")}
+          body={t("no_symbols_found_desc")}
         />
       </div>
     );
@@ -244,7 +249,7 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
         refreshing={loading}
       />
       <ScrollArea className="min-h-0 flex-1">
-        <ul className="py-1" role="list" aria-label="Symbols in this file">
+        <ul className="py-1" role="list" aria-label={t("symbols_in_file")}>
           {symbols?.map((sym, i) => {
             const Icon = KIND_ICON[sym.kind] ?? SquareFunction;
             const label =
@@ -257,11 +262,11 @@ export function SymbolOutline({ path: pathProp, className }: SymbolOutlineProps)
                   type="button"
                   onClick={() => handleSymbolClick(sym.line)}
                   className={cn(
-                    "group flex w-full items-center gap-2 px-3 py-1 text-left text-xs transition-colors",
+                    "group flex w-full items-center gap-2 px-3 py-1 text-start text-xs transition-colors",
                     "hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none",
                   )}
-                  title={`${KIND_LABEL[sym.kind]} • line ${sym.line}`}
-                  aria-label={`${KIND_LABEL[sym.kind]} ${sym.name} — line ${sym.line}`}
+                  title={`${getKindLabel(sym.kind)} • line ${sym.line}`}
+                  aria-label={`${getKindLabel(sym.kind)} ${sym.name} — line ${sym.line}`}
                 >
                   <Icon className="size-3.5 shrink-0 text-brand" aria-hidden />
                   <span className="min-w-0 flex-1 truncate font-mono text-foreground/90">
@@ -300,6 +305,7 @@ function OutlineHeader({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
+  const { t } = useTranslation();
   const name = path.split("/").pop() ?? path;
   return (
     <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b px-3">
@@ -320,7 +326,7 @@ function OutlineHeader({
         className="size-6 shrink-0 p-0"
         onClick={onRefresh}
         disabled={refreshing}
-        aria-label="Refresh symbols"
+        aria-label={t("refresh_symbols")}
       >
         {refreshing ? (
           <Loader2 className="size-3 animate-spin" />
@@ -358,7 +364,7 @@ function OutlineSkeleton() {
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <div className="size-3.5 shrink-0 rounded bg-muted/60 animate-pulse" />
         <div className="h-3 w-24 shrink-0 rounded bg-muted/60 animate-pulse" />
-        <div className="ml-auto size-3 shrink-0 rounded bg-muted/60 animate-pulse" />
+        <div className="ms-auto size-3 shrink-0 rounded bg-muted/60 animate-pulse" />
       </div>
       <div className="flex-1 space-y-1 p-2">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -368,7 +374,7 @@ function OutlineSkeleton() {
               className="h-3 shrink-0 rounded bg-muted/60 animate-pulse"
               style={{ width: `${60 + ((i * 17) % 80)}px` }}
             />
-            <div className="ml-auto h-2.5 w-6 shrink-0 rounded bg-muted/40 animate-pulse" />
+            <div className="ms-auto h-2.5 w-6 shrink-0 rounded bg-muted/40 animate-pulse" />
           </div>
         ))}
       </div>

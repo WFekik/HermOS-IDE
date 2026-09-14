@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { HelpCircle, Send, Check, Clock, Sparkles, ChevronRight, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 import type { QuestionPromptState, QuestionItemState } from "@/stores/app-store";
 
 export const QUESTION_AUTO_TIMEOUT_MS = 300_000; // 5 minutes
@@ -37,12 +38,20 @@ interface QuestionAnswerState {
  */
 const QuestionCountdown = React.memo(function QuestionCountdown({
   timeoutMs = QUESTION_AUTO_TIMEOUT_MS,
+  createdAt,
   onTimeout,
 }: {
   timeoutMs?: number;
+  createdAt?: number;
   onTimeout: () => void;
 }) {
-  const [remaining, setRemaining] = React.useState(timeoutMs);
+  const computeRemaining = React.useCallback(() => {
+    if (!createdAt) return timeoutMs;
+    const elapsed = Date.now() - createdAt;
+    return Math.max(0, timeoutMs - elapsed);
+  }, [createdAt, timeoutMs]);
+
+  const [remaining, setRemaining] = React.useState(computeRemaining);
   const onTimeoutRef = React.useRef(onTimeout);
 
   React.useEffect(() => {
@@ -50,11 +59,9 @@ const QuestionCountdown = React.memo(function QuestionCountdown({
   });
 
   React.useEffect(() => {
-    setRemaining(timeoutMs);
-    const start = Date.now();
+    setRemaining(computeRemaining());
     const interval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const left = Math.max(0, timeoutMs - elapsed);
+      const left = computeRemaining();
       setRemaining(left);
       if (left <= 0) {
         clearInterval(interval);
@@ -63,7 +70,7 @@ const QuestionCountdown = React.memo(function QuestionCountdown({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [timeoutMs]);
+  }, [computeRemaining]);
 
   const secondsLeft = Math.ceil(remaining / 1000);
   const minutes = Math.floor(secondsLeft / 60);
@@ -78,7 +85,7 @@ const QuestionCountdown = React.memo(function QuestionCountdown({
         {timerLabel}
       </span>
       {/* Absolute or contained progress bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-muted overflow-hidden">
+      <div className="absolute bottom-0 start-0 end-0 h-0.5 bg-muted overflow-hidden">
         <div
           className="h-full bg-brand transition-all duration-1000 ease-linear"
           style={{ width: `${progressPct}%` }}
@@ -92,6 +99,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
   prompt,
   onResolve,
 }: QuestionPromptProps) {
+  const { t } = useTranslation();
   const questions: QuestionItemState[] = React.useMemo(() => {
     if (prompt.questions && prompt.questions.length > 0) {
       return prompt.questions;
@@ -105,11 +113,17 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
         },
       ];
     }
-    return [];
-  }, [prompt]);
+    return [{ question: t("question_fallback_placeholder") }];
+  }, [prompt, t]);
 
   const [currentIndex, setCurrentIndex] = React.useState(0);
-  const [answersState, setAnswersState] = React.useState<Record<number, QuestionAnswerState>>({});
+  const [answersState, setAnswersState] = React.useState<Record<number, QuestionAnswerState>>(() => {
+    const initial: Record<number, QuestionAnswerState> = {};
+    questions.forEach((_, idx) => {
+      initial[idx] = { selected: [], text: "" };
+    });
+    return initial;
+  });
   const [submitting, setSubmitting] = React.useState(false);
 
   const resolveRef = React.useRef(onResolve);
@@ -117,27 +131,31 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
     resolveRef.current = onResolve;
   });
 
-  // Reset state when prompt id changes
+  // Reset state strictly when prompt id changes (preserves user input across store re-renders)
+  const activePromptIdRef = React.useRef(prompt.id);
   React.useEffect(() => {
-    const initial: Record<number, QuestionAnswerState> = {};
-    questions.forEach((_, idx) => {
-      initial[idx] = { selected: [], text: "" };
-    });
-    setAnswersState(initial);
-    setCurrentIndex(0);
-    setSubmitting(false);
+    if (activePromptIdRef.current !== prompt.id) {
+      activePromptIdRef.current = prompt.id;
+      const initial: Record<number, QuestionAnswerState> = {};
+      questions.forEach((_, idx) => {
+        initial[idx] = { selected: [], text: "" };
+      });
+      setAnswersState(initial);
+      setCurrentIndex(0);
+      setSubmitting(false);
+    }
   }, [prompt.id, questions]);
 
   const handleTimeout = React.useCallback(() => {
     resolveRef.current({
-      text: "User did not answer within timeout. Proceed using best judgment.",
+      text: t("question_timeout_text"),
       answers: questions.map((q, idx) => ({
         questionIndex: idx,
         question: q.question,
-        text: "Timed out",
+        text: t("question_timeout_label"),
       })),
     });
-  }, [questions]);
+  }, [questions, t]);
 
   const totalQuestions = questions.length;
   const isLastQuestion = currentIndex === totalQuestions - 1;
@@ -247,8 +265,21 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
       } else if (isCurrentAnswered) {
         handleNext();
       }
+      return;
     }
-  }, [allAnswered, answersState, handleNext, handleSubmit, isCurrentAnswered, isLastQuestion, isQuestionAnswered, questions]);
+
+    const targetEl = e.target as HTMLElement | null;
+    const targetTag = targetEl?.tagName?.toLowerCase();
+    const isEditable = targetTag === "textarea" || targetTag === "input" || Boolean(targetEl?.isContentEditable);
+    if (!isEditable) {
+      const num = parseInt(e.key, 10);
+      if (!isNaN(num) && num >= 1 && num <= 9 && currentQuestion?.options && num <= currentQuestion.options.length) {
+        e.preventDefault();
+        toggleOption(currentQuestion.options[num - 1], Boolean(currentQuestion.isMultiSelect));
+        return;
+      }
+    }
+  }, [allAnswered, answersState, currentQuestion, handleNext, handleSubmit, isCurrentAnswered, isLastQuestion, isQuestionAnswered, questions, toggleOption]);
 
   if (!currentQuestion) return null;
 
@@ -263,7 +294,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
       className="p-3"
       role="dialog"
       aria-live="assertive"
-      aria-label="Clarification Prompt"
+      aria-label={t("clarification_prompt")}
       onKeyDown={handleKeyDown}
     >
       <div className="relative rounded-lg border border-brand/40 bg-card overflow-hidden shadow-xs pb-1">
@@ -277,13 +308,13 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
               <span className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Sparkles className="size-3 text-brand" />
                 {totalQuestions > 1
-                  ? `Question ${currentIndex + 1} of ${totalQuestions}`
-                  : "HermOS needs clarification"}
+                  ? t("question_x_of_y", { current: currentIndex + 1, total: totalQuestions })
+                  : t("needs_clarification")}
               </span>
 
               {/* Step indicator pills */}
               {totalQuestions > 1 && (
-                <div className="flex items-center gap-1 ml-1">
+                <div className="flex items-center gap-1 ms-1">
                   {questions.map((q, idx) => {
                     const isAnswered = isQuestionAnswered(q, answersState[idx]);
                     const isActive = idx === currentIndex;
@@ -301,7 +332,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                               ? "w-2.5 bg-brand/50 hover:bg-brand/70"
                               : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50",
                         )}
-                        title={`Go to Question ${idx + 1}`}
+                        title={t("go_to_question", { num: idx + 1 })}
                       />
                     );
                   })}
@@ -312,6 +343,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
 
           <QuestionCountdown
             timeoutMs={QUESTION_AUTO_TIMEOUT_MS}
+            createdAt={prompt.createdAt}
             onTimeout={handleTimeout}
           />
         </div>
@@ -336,9 +368,9 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
               {hasOptions && (
                 <div className="space-y-1.5">
                   <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    {isMulti ? "Select one or more options:" : "Select an option:"}
+                    {isMulti ? t("select_multiple_options") : t("select_option")}
                   </div>
-                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pe-1">
                     {currentQuestion.options!.map((opt, optIdx) => {
                       const isSelected = currentAnswer.selected.includes(opt);
                       return (
@@ -347,7 +379,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                           type="button"
                           onClick={() => toggleOption(opt, isMulti)}
                           className={cn(
-                            "w-full flex items-start gap-2.5 p-2 rounded-md text-left text-xs transition-all border",
+                            "w-full flex items-start gap-2.5 p-2 rounded-md text-start text-xs transition-all border",
                             isSelected
                               ? "border-brand bg-brand/10 text-foreground font-medium shadow-xs"
                               : "border-border/60 hover:border-border hover:bg-muted/50 text-foreground/85",
@@ -377,9 +409,11 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                             </div>
                           )}
                           <span className="flex-1 leading-snug">{opt}</span>
-                          <kbd className="text-[10px] text-muted-foreground/60 px-1 py-0.2 rounded border border-border/40 font-mono">
-                            {optIdx + 1}
-                          </kbd>
+                          {optIdx < 9 && (
+                            <kbd className="text-[10px] text-muted-foreground/60 px-1 py-0.2 rounded border border-border/40 font-mono">
+                              {optIdx + 1}
+                            </kbd>
+                          )}
                         </button>
                       );
                     })}
@@ -390,15 +424,15 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
               {/* Custom write-in textarea */}
               <div>
                 <div className="text-[10px] font-medium text-muted-foreground mb-1">
-                  {hasOptions ? "Or write custom answer / instructions:" : "Your answer:"}
+                  {hasOptions ? t("custom_answer_label") : t("your_answer")}
                 </div>
                 <textarea
                   value={currentAnswer.text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={
                     hasOptions
-                      ? "Type custom answer or extra instructions (optional)..."
-                      : "Type your answer here..."
+                      ? t("custom_answer_placeholder")
+                      : t("your_answer_placeholder")
                   }
                   className="w-full min-h-[48px] max-h-24 text-xs p-2 rounded-md bg-muted/40 border border-border/70 focus:outline-hidden focus:ring-1 focus:ring-brand focus:border-brand placeholder:text-muted-foreground/60 resize-y"
                   rows={2}
@@ -420,25 +454,21 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                 className="h-8 gap-1 text-xs"
               >
                 <ChevronLeft className="size-3.5" />
-                Back
+                {t("back")}
               </Button>
             ) : (
               <span className="text-[11px] text-muted-foreground hidden sm:inline">
-                Press <kbd className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[10px]">Ctrl+Enter</kbd> to {isLastQuestion ? "submit" : "continue"}
+                {t("question_footer_hint", { action: isLastQuestion ? t("submit") : t("continue") })}
               </span>
             )}
             {isLastQuestion && !allAnswered && totalQuestions > 1 && (
               <span className="block text-[11px] text-muted-foreground/80 sm:hidden mt-1">
-                Answer all questions to submit
+                {t("answer_all_questions")}
               </span>
             )}
             {isLastQuestion && !allAnswered && (
-              <span className="hidden sm:inline text-[11px] text-muted-foreground/80 ml-2">
-                {totalQuestions > 1
-                  ? unansweredCount === 1
-                    ? "1 question left"
-                    : `${unansweredCount} questions left`
-                  : "Answer the question to submit"}
+              <span className="hidden sm:inline text-[11px] text-muted-foreground/80 ms-2">
+                {t("answer_all_questions")}
               </span>
             )}
           </div>
@@ -452,7 +482,7 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                 disabled={!isCurrentAnswered}
                 className="h-8 gap-1 bg-brand text-brand-foreground hover:bg-brand/90"
               >
-                Next
+                {t("next")}
                 <ChevronRight className="size-3.5" />
               </Button>
             ) : (
@@ -462,10 +492,10 @@ export const QuestionPromptCard = React.memo(function QuestionPromptCard({
                 onClick={handleSubmit}
                 disabled={!allAnswered || submitting}
                 className="h-8 gap-1.5 bg-brand text-brand-foreground hover:bg-brand/90"
-                aria-label="Submit answers"
+                aria-label={t("submit_answer")}
               >
                 <Send className="size-3" />
-                {totalQuestions > 1 ? "Submit All Answers" : "Submit Answer"}
+                {t("submit_answer")}
               </Button>
             )}
           </div>

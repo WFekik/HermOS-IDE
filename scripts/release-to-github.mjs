@@ -41,6 +41,22 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.0.8" || tag === "1.0.8") {
+    return `### HermOS IDE ${tag} — Security Hardening & Agent Reliability
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### 🔒 What's New in ${tag}
+- **🛡️ Provider Fetch SSRF Hardening**: Per-hop URL validation with redirect cap, cross-origin credential stripping, and safe method handling on redirects — applied to provider chat, model listing, title generation, inline edit, background refresh, and plugin API fetch paths.
+- **🔐 Outside-Workspace Command Gate**: Explicit one-shot user approval with full audit trail; interactive terminal stays workspace-confined.
+- **🤖 Agent Reliability**: Sequential tool execution, loop detection with bounded cost, symlink-aware path sandbox, and newest-first image budget with text-only fallback.
+- **🌍 9-Language UI**: English, Spanish, French, German, Chinese, Japanese, Arabic (RTL), Russian, and Portuguese with lazy loading and translated settings.
+- **🔌 Provider Updates**: OpenCode Zen Responses bridge, capability-driven vision detection, and honest connectivity checks.
+- **✅ Verified End-to-End**: typecheck clean, eslint clean, 1623 tests passed (91 files), cargo check clean, production build green (Azure test gate).
+
+#### 📦 Downloads & Verification
+All installer binaries and signatures are signed with the HermOS Tauri release key. Download the installer for your platform below.`;
+  }
   if (tag === "v1.0.7" || tag === "1.0.7") {
     return `### HermOS IDE ${tag} — Office Studio & Appearance Themes
 

@@ -4,7 +4,7 @@ import path from "path";
 import { requireUser } from "@/lib/session";
 import { withRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { parseJson, apiError, unauthorized, ok, withErrorHandler } from "@/app/api/_lib/helpers";
-import { assertUrlAllowed } from "@/lib/ssrf";
+import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { PROVIDERS } from "@/lib/ai/providers";
@@ -148,8 +148,8 @@ ${code}`;
   try {
     if (providerId === "anthropic") {
       const url = (baseUrl || "https://api.anthropic.com/v1").replace(/\/+$/, "") + "/messages";
-      await assertUrlAllowed(url);
-      const res = await fetch(url, {
+      // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
+      const res = await fetchWithSsrf(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -165,7 +165,6 @@ ${code}`;
         }),
         signal: AbortSignal.timeout(30000),
       });
-      if (res.redirected) await assertUrlAllowed(res.url);
       if (!res.ok) return null;
       const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
       const text = data?.content?.find((c) => c.type === "text")?.text;
@@ -174,7 +173,7 @@ ${code}`;
       const useResponses = isResponsesRequired(providerId, baseUrl, model);
       const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
       const url = useResponses ? responsesUrl : completionsUrl;
-      await assertUrlAllowed(url);
+      // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
       const headers = buildProviderHeaders({
         providerId,
         baseUrl,
@@ -204,7 +203,7 @@ ${code}`;
             temperature: 0.2,
             max_tokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           };
-      let res = await fetch(url, {
+      let res = await fetchWithSsrf(url, {
         method: "POST",
         headers: freshHeaders(),
         body: JSON.stringify(body),
@@ -224,7 +223,7 @@ ${code}`;
           maxTokens: INLINE_EDIT_MAX_OUTPUT_TOKENS,
           stream: false,
         });
-        res = await fetch(fallbackUrl, {
+        res = await fetchWithSsrf(fallbackUrl, {
           method: "POST",
           headers: freshHeaders(),
           body: JSON.stringify(fallbackBody),
@@ -233,7 +232,7 @@ ${code}`;
       } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
         clearResponsesRequired(baseUrl, model);
         const fallbackUrl = resolveProviderUrls(baseUrl).completionsUrl;
-        res = await fetch(fallbackUrl, {
+        res = await fetchWithSsrf(fallbackUrl, {
           method: "POST",
           headers: freshHeaders(),
           body: JSON.stringify({
@@ -248,7 +247,6 @@ ${code}`;
           signal: AbortSignal.timeout(30000),
         });
       }
-      if (res.redirected) await assertUrlAllowed(res.url);
       if (!res.ok) return null;
       const fullBody = await res.text();
       const parsed = parseNonStreamingResponse(fullBody);

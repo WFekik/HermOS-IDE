@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { langIconKind, type LangIconKind } from "@/lib/tool-ui-shared";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/hooks/use-translation";
 
 interface CodeBlockProps {
   language: string | undefined;
@@ -65,6 +66,7 @@ export const CodeBlock = React.memo(function CodeBlock({
   endLine,
   streaming,
 }: CodeBlockProps) {
+  const { t } = useTranslation();
   const { resolvedTheme } = useTheme();
   const [copied, setCopied] = React.useState(false);
   const isDark = resolvedTheme === "dark";
@@ -134,7 +136,7 @@ export const CodeBlock = React.memo(function CodeBlock({
               <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
                 {startLine !== undefined && endLine !== undefined
                   ? `L${startLine}-L${endLine}`
-                  : `${lineCount} ${lineCount === 1 ? "line" : "lines"}`}
+                  : t("lines_count", { count: lineCount })}
               </span>
             </>
           )}
@@ -144,15 +146,15 @@ export const CodeBlock = React.memo(function CodeBlock({
           size="sm"
           className="h-6 px-2 text-[11px] gap-1.5"
           onClick={copy}
-          aria-label={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? t("copied") : t("copy_code")}
         >
           {copied ? (
             <>
-              <Check className="size-3 text-brand" aria-hidden /> Copied
+              <Check className="size-3 text-brand" aria-hidden /> {t("copied")}
             </>
           ) : (
             <>
-              <Copy className="size-3" aria-hidden /> Copy
+              <Copy className="size-3" aria-hidden /> {t("copy")}
             </>
           )}
         </Button>
@@ -214,16 +216,18 @@ export const CodeBlock = React.memo(function CodeBlock({
             className="h-6 gap-1 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            aria-label={expanded ? "Collapse code" : "Expand code"}
+            aria-label={expanded ? t("collapse_code") : t("expand_code")}
           >
             {expanded ? (
               <>
-                <ChevronUp className="size-3" /> Collapse
+                <ChevronUp className="size-3" /> {t("collapse")}
               </>
             ) : (
               <>
-                <ChevronDown className="size-3" /> Expand {hiddenLines} more{" "}
-                {hiddenLines === 1 ? "line" : "lines"}
+                <ChevronDown className="size-3" /> {t("expand_lines_more", {
+                  count: hiddenLines,
+                  unit: hiddenLines === 1 ? "line" : "lines",
+                })}
               </>
             )}
           </Button>

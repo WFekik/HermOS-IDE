@@ -16,6 +16,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { apiGet, ApiRequestError } from "@/lib/api-client";
+import { useTranslation } from "@/hooks/use-translation";
+import { getSkillDescription, getPresetDisplayName, getPresetDescription } from "@/lib/i18n";
 import type { LucideIcon } from "lucide-react";
 
 /* ------------------------------------------------------------------ *
@@ -120,32 +122,34 @@ async function fetchTreeFiles(): Promise<FlatFile[]> {
  * Static command list (shown when `/` is the trigger at start of message)
  * ------------------------------------------------------------------ */
 
-const STATIC_COMMANDS: Suggestion[] = [
-  {
-    id: "cmd:clear",
-    category: "command",
-    label: "/clear",
-    description: "Clear the conversation history",
-    insertText: "/clear ",
-    icon: SlashSquare,
-  },
-  {
-    id: "cmd:compact",
-    category: "command",
-    label: "/compact",
-    description: "Summarize prior messages into a shorter context",
-    insertText: "/compact ",
-    icon: SlashSquare,
-  },
-  {
-    id: "cmd:help",
-    category: "command",
-    label: "/help",
-    description: "Show available commands and shortcuts",
-    insertText: "/help ",
-    icon: SlashSquare,
-  },
-];
+function getStaticCommands(t: (k: string) => string): Suggestion[] {
+  return [
+    {
+      id: "cmd:clear",
+      category: "command",
+      label: "/clear",
+      description: t("cmd_clear_desc"),
+      insertText: "/clear ",
+      icon: SlashSquare,
+    },
+    {
+      id: "cmd:compact",
+      category: "command",
+      label: "/compact",
+      description: t("cmd_compact_desc"),
+      insertText: "/compact ",
+      icon: SlashSquare,
+    },
+    {
+      id: "cmd:help",
+      category: "command",
+      label: "/help",
+      description: t("cmd_help_desc"),
+      insertText: "/help ",
+      icon: SlashSquare,
+    },
+  ];
+}
 
 /* ------------------------------------------------------------------ *
  * MentionAutocomplete — the popover component.
@@ -159,6 +163,7 @@ export function MentionAutocomplete({
   onPick,
   onClose,
 }: MentionAutocompleteProps) {
+  const { t } = useTranslation();
   const [items, setItems] = React.useState<Suggestion[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [activeIdx, setActiveIdx] = React.useState(0);
@@ -194,7 +199,7 @@ export function MentionAutocomplete({
     }
 
     let cancelled = false;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       if (trigger.kind === "command") {
         // Build command suggestions: static + dynamic /agent and /model.
         const q = trigger.query.toLowerCase();
@@ -206,7 +211,7 @@ export function MentionAutocomplete({
             id: `agent:${p.id}`,
             category: "agent",
             label: `/agent ${p.name}`,
-            description: p.description?.slice(0, 60) || "Switch to agent preset",
+            description: getPresetDescription(p.name, p.description, t)?.slice(0, 60) || t("cmd_switch_agent"),
             insertText: `/agent ${p.name} `,
             icon: Bot,
           });
@@ -218,12 +223,12 @@ export function MentionAutocomplete({
           id: "cmd:model",
           category: "command",
           label: "/model <provider>/<model>",
-          description: "Switch model — e.g. /model openai/gpt-4o",
+          description: t("cmd_switch_model"),
           insertText: "/model ",
           icon: SlashSquare,
         });
 
-        const all = [...STATIC_COMMANDS, ...dynamic];
+        const all = [...getStaticCommands(t), ...dynamic];
         const filtered = q
           ? all.filter((s) => s.label.toLowerCase().includes(q))
           : all;
@@ -294,7 +299,7 @@ export function MentionAutocomplete({
             id: `skill:${s.id}`,
             category: "skill",
             label: s.name,
-            description: s.description?.slice(0, 60) || "skill",
+            description: getSkillDescription(s.name, s.description, t)?.slice(0, 60) || t("skill_desc"),
             insertText: `@skill:${safeName} `,
             icon: Sparkles,
           });
@@ -320,7 +325,7 @@ export function MentionAutocomplete({
             label: s.name,
             description:
               s.status === "connected"
-                ? `mcp · ${toolCount} tool${toolCount === 1 ? "" : "s"}`
+                ? t("mcp_tools_count", { count: toolCount })
                 : `mcp · ${s.status}`,
             insertText: `@mcp:${safeName} `,
             icon: Plug,
@@ -338,8 +343,8 @@ export function MentionAutocomplete({
           built.push({
             id: `agent:${p.id}`,
             category: "agent",
-            label: p.name,
-            description: p.description?.slice(0, 60) || "agent preset",
+            label: getPresetDisplayName(p.name, t),
+            description: getPresetDescription(p.name, p.description, t)?.slice(0, 60) || t("agent_preset_desc"),
             insertText: `@agent:${safeName} `,
             icon: Bot,
           });
@@ -354,9 +359,9 @@ export function MentionAutocomplete({
 
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(timer);
     };
-  }, [trigger, mcpServers, skills, agentPresets]);
+  }, [trigger, mcpServers, skills, agentPresets, t]);
 
   // Keyboard handler — attached to window so we capture ArrowUp/Down/Enter/
   // Tab/Escape regardless of which element has focus inside the textarea.
@@ -397,17 +402,17 @@ export function MentionAutocomplete({
 
   const heading =
     trigger.kind === "command"
-      ? "Commands"
+      ? t("commands")
       : (() => {
           const colonIdx = trigger.query.indexOf(":");
           if (colonIdx > 0 && colonIdx <= 6) {
             const prefix = trigger.query.slice(0, colonIdx).toLowerCase();
-            if (prefix === "file") return "Files";
-            if (prefix === "skill") return "Skills";
-            if (prefix === "mcp") return "MCP servers";
-            if (prefix === "agent") return "Agents";
+            if (prefix === "file") return t("files");
+            if (prefix === "skill") return t("skills");
+            if (prefix === "mcp") return t("mcp_servers");
+            if (prefix === "agent") return t("agents");
           }
-          return "Mention";
+          return t("mention");
         })();
 
   return (
@@ -418,9 +423,9 @@ export function MentionAutocomplete({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 6, scale: 0.98 }}
           transition={{ duration: 0.12, ease: "easeOut" }}
-          className="absolute bottom-full left-0 right-0 z-30 mb-2 mx-auto max-w-2xl"
+          className="absolute bottom-full start-0 end-0 z-30 mb-2 mx-auto max-w-2xl"
           role="listbox"
-          aria-label="Mention suggestions"
+          aria-label={t("mention_suggestions")}
         >
           <div className="rounded-lg border bg-popover shadow-lg overflow-hidden max-h-[min(420px,80vh)] flex flex-col">
             <div className="flex items-center justify-between border-b px-3 py-1.5 shrink-0">
@@ -432,17 +437,17 @@ export function MentionAutocomplete({
               )}
               {!loading && items.length > 0 && (
                 <span className="text-[10px] text-muted-foreground font-mono">
-                  {items.length} result{items.length === 1 ? "" : "s"}
+                  {items.length} {items.length === 1 ? t("result") : t("results")}
                 </span>
               )}
             </div>
             <div className="max-h-64 overflow-y-auto p-1">
               {items.length === 0 && !loading ? (
                 <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                  No matches. Try{" "}
+                  {t("mention_no_matches")}{" "}
                   <span className="font-mono">@file:</span>,{" "}
                   <span className="font-mono">@skill:</span>,{" "}
-                  <span className="font-mono">@mcp:</span>, or{" "}
+                  <span className="font-mono">@mcp:</span>, {t("or")}{" "}
                   <span className="font-mono">@agent:</span>
                 </div>
               ) : (
@@ -457,7 +462,7 @@ export function MentionAutocomplete({
                           onMouseEnter={() => setActiveIdx(i)}
                           onClick={() => onPick(s.insertText)}
                           className={cn(
-                            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
+                            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-start text-xs transition-colors",
                             active
                               ? "bg-accent text-foreground font-medium"
                               : "hover:bg-accent/60",
@@ -497,13 +502,13 @@ export function MentionAutocomplete({
             <div className="flex items-center justify-between border-t px-3 py-1 text-[10px] text-muted-foreground font-mono">
               <span className="flex items-center gap-2">
                 <span>
-                  <Hash className="inline size-2.5" /> ↑↓ navigate
+                  <Hash className="inline size-2.5" /> ↑↓ {t("navigate")}
                 </span>
-                <span>↵ select</span>
-                <span>esc dismiss</span>
+                <span>↵ {t("select")}</span>
+                <span>esc {t("dismiss")}</span>
               </span>
               <span className="hidden sm:inline">
-                prefix with <span className="text-brand">@file:</span> /{" "}
+                {t("prefix_with")} <span className="text-brand">@file:</span> /{" "}
                 <span className="text-brand">@skill:</span> /{" "}
                 <span className="text-brand">@mcp:</span> /{" "}
                 <span className="text-brand">@agent:</span>
@@ -521,12 +526,13 @@ function CategoryBadge({
 }: {
   category: Suggestion["category"];
 }) {
+  const { t } = useTranslation();
   const labels: Record<Suggestion["category"], string> = {
-    file: "file",
-    skill: "skill",
-    mcp: "mcp",
-    agent: "agent",
-    command: "cmd",
+    file: t("file"),
+    skill: t("skill"),
+    mcp: t("mcp"),
+    agent: t("agent"),
+    command: t("cmd"),
   };
   return (
     <span

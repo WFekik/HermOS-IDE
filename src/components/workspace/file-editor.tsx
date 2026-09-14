@@ -55,6 +55,7 @@ import { Minimap, type MinimapViewport } from "@/components/workspace/minimap";
 import { BreadcrumbBar } from "@/components/workspace/breadcrumb-bar";
 import { InlineAiLens } from "@/components/ide/inline-ai-lens";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /** A line-range request. `null` = default read (full file). */
 export interface FileRange {
@@ -135,6 +136,7 @@ export function FileEditor({
   onFocusSide,
   onCloseSplit,
 }: FileEditorProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = React.useState<"view" | "edit">("view");
   const [draft, setDraft] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -265,17 +267,17 @@ export function FileEditor({
     try {
       const res = await formatFile(path);
       if (res.unchanged) {
-        toast.success("File is already formatted");
+        toast.success(t("file_already_formatted"));
         return;
       }
       if (!res.ok) {
-        toast.error(res.error ?? "Format failed", {
+        toast.error(res.error ?? t("format_failed"), {
           description: res.detail,
         });
         return;
       }
       if (res.newContent === undefined || res.oldContent === undefined) {
-        toast.error("Format failed: no content returned");
+        toast.error(t("format_failed_no_content"));
         return;
       }
       setFormatResult({
@@ -284,7 +286,7 @@ export function FileEditor({
         newContent: res.newContent,
       });
     } catch (e) {
-      const msg = e instanceof ApiRequestError ? e.message : "Format failed";
+      const msg = e instanceof ApiRequestError ? e.message : t("format_failed");
       toast.error(msg);
     } finally {
       setFormatBusy(false);
@@ -297,9 +299,9 @@ export function FileEditor({
     try {
       await onSave(path, formatResult.newContent);
       setFormatResult(null);
-      toast.success("File formatted");
+      toast.success(t("file_formatted"));
     } catch (e) {
-      const msg = e instanceof ApiRequestError ? e.message : "Apply failed";
+      const msg = e instanceof ApiRequestError ? e.message : t("apply_failed");
       toast.error(msg);
     } finally {
       setFormatApplyBusy(false);
@@ -393,7 +395,7 @@ export function FileEditor({
         if (!evtPath || evtPath !== path) return;
         if (evtType === "delete") {
           closeFileTab(path);
-          toast.warning("File was deleted", { description: path });
+          toast.warning(t("file_was_deleted"), { description: path });
           return;
         }
         if (evtType === "change") {
@@ -531,11 +533,11 @@ export function FileEditor({
     const trimmed = gotoValue.trim();
     const n = parseInt(trimmed, 10);
     if (!Number.isFinite(n) || n < 1) {
-      setGotoError("Enter a positive line number");
+      setGotoError(t("enter_positive_line_number"));
       return;
     }
     if (totalLines > 0 && n > totalLines) {
-      setGotoError(`Line number out of range (max ${totalLines})`);
+      setGotoError(t("line_number_out_of_range", { max: totalLines }));
       return;
     }
     setGotoOpen(false);
@@ -571,7 +573,7 @@ export function FileEditor({
         <div className="text-center">
           <FileText className="mx-auto size-8 text-muted-foreground/40" />
           <p className="mt-2 text-xs text-muted-foreground">
-            Select a file to view or edit
+            {t("select_file_to_view_or_edit")}
           </p>
         </div>
       </div>
@@ -611,7 +613,7 @@ export function FileEditor({
           {dirty && (
             <span
               className="size-1.5 shrink-0 rounded-full bg-brand"
-              aria-label="Unsaved changes"
+              aria-label={t("unsaved_changes")}
             />
           )}
           {file && (
@@ -630,7 +632,7 @@ export function FileEditor({
           {mode === "view" ? (
             <>
               <HeaderIconButton
-                label="Inline AI Lens (⌘I)"
+                label={t("inline_ai_lens_shortcut")}
                 onClick={() => {
                   setLensCode(file?.content?.slice(0, 1000) || "");
                   setLensOpen((v) => !v);
@@ -640,14 +642,14 @@ export function FileEditor({
                 <Wand2 className={cn("size-3", lensOpen ? "text-brand" : "")} />
               </HeaderIconButton>
               <HeaderIconButton
-                label="Go to line (⌘L)"
+                label={t("go_to_line_shortcut")}
                 onClick={openGoto}
                 disabled={!file || loading}
               >
                 <Hash className="size-3" />
               </HeaderIconButton>
               <HeaderIconButton
-                label="Format file"
+                label={t("format_file")}
                 onClick={() => void runFormat()}
                 disabled={!canFormat || formatBusy}
               >
@@ -660,8 +662,8 @@ export function FileEditor({
               <HeaderIconButton
                 label={
                   fileWatchEnabled
-                    ? "File watch on — auto-refresh open files when they change on disk"
-                    : "File watch off — click to enable auto-refresh"
+                    ? t("file_watch_on_desc")
+                    : t("file_watch_off_desc")
                 }
                 onClick={toggleFileWatchEnabled}
                 disabled={!file}
@@ -676,8 +678,8 @@ export function FileEditor({
                 <HeaderIconButton
                   label={
                     splitEditorOpen
-                      ? "Close split editor (⌘\\)"
-                      : "Split editor (⌘\\)"
+                      ? t("close_split_editor_shortcut")
+                      : t("split_editor_shortcut")
                   }
                   onClick={toggleSplitEditor}
                 >
@@ -691,7 +693,7 @@ export function FileEditor({
               )}
               {showCloseSplit && (
                 <HeaderIconButton
-                  label="Close split (⌘\\)"
+                  label={t("close_split_shortcut")}
                   onClick={() => onCloseSplit?.()}
                 >
                   <X className="size-3" />
@@ -703,15 +705,15 @@ export function FileEditor({
                 className="h-6 gap-1 px-2 text-[11px]"
                 onClick={copy}
                 disabled={!file}
-                aria-label="Copy file contents"
+                aria-label={t("copy_file_contents")}
               >
                 {copied ? (
                   <>
-                    <Check className="size-3 text-brand" /> Copied
+                    <Check className="size-3 text-brand" /> {t("copied")}
                   </>
                 ) : (
                   <>
-                    <Copy className="size-3" /> Copy
+                    <Copy className="size-3" /> {t("copy")}
                   </>
                 )}
               </Button>
@@ -722,7 +724,7 @@ export function FileEditor({
                 onClick={enterEdit}
                 disabled={!file || loading}
               >
-                <Pencil className="size-3" /> Edit
+                <Pencil className="size-3" /> {t("edit")}
               </Button>
             </>
           ) : (
@@ -734,7 +736,7 @@ export function FileEditor({
                 onClick={cancelEdit}
                 disabled={saving}
               >
-                <X className="size-3" /> Cancel
+                <X className="size-3" /> {t("cancel")}
               </Button>
               <Button
                 size="sm"
@@ -745,11 +747,11 @@ export function FileEditor({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="size-3 animate-spin" /> Saving
+                    <Loader2 className="size-3 animate-spin" /> {t("saving")}
                   </>
                 ) : (
                   <>
-                    <Save className="size-3" /> Save
+                    <Save className="size-3" /> {t("save")}
                   </>
                 )}
               </Button>
@@ -794,7 +796,7 @@ export function FileEditor({
             <div className="text-center">
               <AlertTriangle className="mx-auto size-7 text-amber-500" />
               <p className="mt-2 text-xs text-muted-foreground">
-                Could not load file.
+                {t("could_not_load_file")}
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground/70 font-mono break-all">
                 {error.message}
@@ -806,7 +808,7 @@ export function FileEditor({
                   className="mt-3 h-7 gap-1 text-xs"
                   onClick={onRetry}
                 >
-                  <RotateCw className="size-3" /> Retry
+                  <RotateCw className="size-3" /> {t("retry")}
                 </Button>
               )}
             </div>
@@ -820,7 +822,7 @@ export function FileEditor({
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
-            aria-label="Edit file contents"
+            aria-label={t("edit_file_contents")}
           />
         ) : file ? (
           <div className="relative h-full">
@@ -865,11 +867,10 @@ export function FileEditor({
           <DialogHeader className="px-4 py-3 border-b">
             <DialogTitle className="text-sm font-semibold flex items-center gap-2">
               <Wand2 className="size-4 text-brand" />
-              Format preview
+              {t("format_preview")}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Review the proposed formatting changes. Apply writes the new
-              content to disk.
+              {t("format_preview_desc")}
             </DialogDescription>
           </DialogHeader>
           <div className="p-3 max-h-[60vh] overflow-y-auto">
@@ -890,7 +891,7 @@ export function FileEditor({
               onClick={() => setFormatResult(null)}
               disabled={formatApplyBusy}
             >
-              Cancel
+              {t("cancel")}
             </Button>
             <Button
               size="sm"
@@ -900,11 +901,11 @@ export function FileEditor({
             >
               {formatApplyBusy ? (
                 <>
-                  <Loader2 className="size-3.5 animate-spin" /> Applying
+                  <Loader2 className="size-3.5 animate-spin" /> {t("applying")}
                 </>
               ) : (
                 <>
-                  <Check className="size-3.5" /> Apply
+                  <Check className="size-3.5" /> {t("apply")}
                 </>
               )}
             </Button>
@@ -917,20 +918,20 @@ export function FileEditor({
           <DialogHeader>
             <DialogTitle className="text-sm font-semibold flex items-center gap-2">
               <Hash className="size-4 text-brand" />
-              Go to line
+              {t("go_to_line")}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Enter a line number between 1 and {totalLines > 0 ? totalLines : "…"}.
+              {t("enter_line_number", { max: totalLines > 0 ? totalLines : "…" })}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
-            <Label htmlFor="goto-line-input">Line number</Label>
+            <Label htmlFor="goto-line-input">{t("line_number")}</Label>
             <Input
               id="goto-line-input"
               type="number"
               min={1}
               max={totalLines > 0 ? totalLines : undefined}
-              placeholder="Line number"
+              placeholder={t("line_number")}
               value={gotoValue}
               onChange={(e) => {
                 setGotoValue(e.target.value);
@@ -956,7 +957,7 @@ export function FileEditor({
               size="sm"
               onClick={() => setGotoOpen(false)}
             >
-              Cancel
+              {t("cancel")}
             </Button>
             <Button
               size="sm"
@@ -964,7 +965,7 @@ export function FileEditor({
               disabled={!gotoValue.trim()}
               className="gap-1 bg-brand text-brand-foreground hover:bg-brand/90"
             >
-              Go
+              {t("go")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1018,6 +1019,7 @@ const CodeView = React.memo(function CodeView({
   padRight?: boolean;
 }) {
   const { resolvedTheme } = useTheme();
+  const { t } = useTranslation();
   const isDark = resolvedTheme === "dark";
   const lang = langFromPath(path);
 
@@ -1083,14 +1085,14 @@ const CodeView = React.memo(function CodeView({
           </Badge>
           {isLargeFile && (
             <Badge variant="secondary" className="text-[9px] font-mono text-amber-600 dark:text-amber-400">
-              ⚡ High-Performance Mode (Large File)
+              {t("high_performance_mode_large_file")}
             </Badge>
           )}
         </div>
         <span className="text-[10px] text-muted-foreground font-mono">
           {lineOffset > 0
-            ? `lines ${lineOffset + 1}–${lineOffset + lineCount}`
-            : `${lineCount} lines`}
+            ? t("lines_range", { start: lineOffset + 1, end: lineOffset + lineCount })
+            : t("lines_count", { count: lineCount })}
         </span>
       </div>
     </div>
@@ -1130,7 +1132,7 @@ const LineNumbers = React.memo(function LineNumbers({
   return (
     <div
       aria-hidden
-      className="select-none border-r border-border/40 bg-muted/20 px-2 pt-3 pb-6 text-right font-mono text-[12px] leading-[1.55] text-muted-foreground/60"
+      className="select-none border-e border-border/40 bg-muted/20 px-2 pt-3 pb-6 text-end font-mono text-[12px] leading-[1.55] text-muted-foreground/60"
       style={{ minWidth: "2.5rem" }}
     >
       {lineElements}

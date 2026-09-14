@@ -23,9 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
+import { useTranslation } from "@/hooks/use-translation";
+import { getSkillDisplayName, getSkillDescription, getSkillToolDescription } from "@/lib/i18n";
 import type { PluginDTO } from "@/lib/types";
 
 export function SkillsPanel() {
+  const { t } = useTranslation();
   const skills = useAppStore((s) => s.skills);
   const toggle = useAppStore((s) => s.togglePlugin);
   const setComposerDraft = useAppStore((s) => s.setComposerDraft);
@@ -74,10 +77,10 @@ export function SkillsPanel() {
       if (data.ok) {
         setResult(JSON.stringify(data.result, null, 2));
       } else {
-        setResult(`Error: ${data.error || "Execution failed"}`);
+        setResult(`${t("error")}: ${data.error || t("execution_failed")}`);
       }
     } catch (e: any) {
-      setResult(`Error: ${e.message || String(e)}`);
+      setResult(`${t("error")}: ${e.message || String(e)}`);
     } finally {
       setRunning(false);
     }
@@ -88,7 +91,7 @@ export function SkillsPanel() {
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <div className="flex items-center gap-2">
           <Sparkles className="size-4 text-brand" />
-          <span className="text-sm font-medium">Skills & Custom Tools</span>
+          <span className="text-sm font-medium">{t("skills_and_custom_tools")}</span>
           <Badge variant="secondary" className="text-[10px]">{skills.length}</Badge>
         </div>
       </div>
@@ -97,7 +100,7 @@ export function SkillsPanel() {
         <div className="p-3 grid grid-cols-1 gap-2">
           {skills.length === 0 ? (
             <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
-              No custom skills registered. Add plugins that export custom tools to see them here.
+              {t("no_custom_skills")}
             </div>
           ) : (
             skills.map((skill) => {
@@ -119,32 +122,32 @@ export function SkillsPanel() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-medium">{skill.name}</span>
+                        <span className="text-xs font-medium">{getSkillDisplayName(skill.name, t)}</span>
                         <Badge variant="outline" className="text-[9px] h-3.5 text-brand border-brand/40">
                           v{skill.version}
                         </Badge>
                       </div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">{skill.description || "No description provided."}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{getSkillDescription(skill.name, skill.description, t) || t("no_description")}</div>
                     </div>
                     <Switch
                       checked={enabled}
                       onCheckedChange={(v) => {
                         toggle(skill.id, v);
                       }}
-                      aria-label={`Toggle ${skill.name}`}
+                      aria-label={t("toggle_skill", { name: getSkillDisplayName(skill.name, t) })}
                     />
                   </div>
 
                   {manifestTools.length > 0 && (
                     <div className="border-t pt-2 mt-1 space-y-1.5">
                       <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                        Exported Tools
+                        {t("exported_tools")}
                       </div>
                       {manifestTools.map((tool: any) => (
                         <div key={tool.name} className="flex items-center justify-between gap-2 p-1.5 rounded bg-muted/40 hover:bg-muted/70 transition-colors">
                           <div className="min-w-0 flex-1">
                             <code className="text-[10px] font-mono text-brand block truncate">{tool.name}</code>
-                            <span className="text-[9px] text-muted-foreground block truncate">{tool.description}</span>
+                            <span className="text-[9px] text-muted-foreground block truncate">{getSkillToolDescription(tool.name, tool.description, t)}</span>
                           </div>
                           <div className="flex gap-1 shrink-0">
                             <Button
@@ -159,7 +162,7 @@ export function SkillsPanel() {
                                 setResult(null);
                               }}
                             >
-                              <Play className="size-2" /> Test
+                              <Play className="size-2" /> {t("test")}
                             </Button>
                           </div>
                         </div>
@@ -174,14 +177,14 @@ export function SkillsPanel() {
                       className="h-7 text-[11px] w-full"
                       onClick={() => {
                         if (!activeConversationId) {
-                          toast.error("Open a conversation first");
+                          toast.error(t("open_conversation_first"));
                           return;
                         }
-                        setComposerDraft(`Use the "@skill:${skill.name}" skill to `);
-                        toast.success(`Mentioned @skill:${skill.name} in composer`);
+                        setComposerDraft(t("use_skill_draft").replace("{name}", skill.name));
+                        toast.success(t("mentioned_skill_in_composer", { name: skill.name }));
                       }}
                     >
-                      <Bot className="size-3" /> Mention in chat
+                      <Bot className="size-3" /> {t("mention_in_chat")}
                     </Button>
                   </div>
                 </motion.div>
@@ -196,12 +199,12 @@ export function SkillsPanel() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-medium">
               <Sparkles className="size-4 text-brand" />
-              Test Tool: {invokeTool?.name} ({invoke?.name})
+              {t("test_tool", { tool: invokeTool?.name ?? "", skill: getSkillDisplayName(invoke?.name ?? "", t) })}
             </DialogTitle>
-            <DialogDescription className="text-xs">{invokeTool?.description}</DialogDescription>
+            <DialogDescription className="text-xs">{getSkillToolDescription(invokeTool?.name ?? "", invokeTool?.description, t)}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
-            <div className="text-[10px] font-semibold text-muted-foreground">INPUT ARGUMENTS (JSON)</div>
+            <div className="text-[10px] font-semibold text-muted-foreground">{t("input_arguments_json")}</div>
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -209,7 +212,7 @@ export function SkillsPanel() {
             />
             {result && (
               <>
-                <div className="text-[10px] font-semibold text-muted-foreground mt-2">OUTPUT RESULT</div>
+                <div className="text-[10px] font-semibold text-muted-foreground mt-2">{t("output_result")}</div>
                 <pre className="rounded-md border bg-muted/30 p-2.5 text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
                   {result}
                 </pre>
@@ -217,15 +220,15 @@ export function SkillsPanel() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setInvoke(null)}>Close</Button>
+            <Button variant="outline" size="sm" onClick={() => setInvoke(null)}>{t("close")}</Button>
             <Button size="sm" onClick={run} disabled={running}>
               {running ? (
                 <>
-                  <Loader2 className="size-3.5 animate-spin" /> Executing…
+                  <Loader2 className="size-3.5 animate-spin" /> {t("executing")}…
                 </>
               ) : (
                 <>
-                  <Play className="size-3.5" /> Execute
+                  <Play className="size-3.5" /> {t("execute")}
                 </>
               )}
             </Button>

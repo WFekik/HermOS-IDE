@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getPlatformShells, getDefaultShell } from "@/lib/platform";
@@ -34,16 +35,18 @@ const PROMPTS: Record<Shell, string> = {
   cmd: "C:\\>",
 };
 
-const WELCOME = "HermOS Terminal · non-interactive · type `help`";
-
 function makeLine(payload: LinePayload): Line {
   return { id: crypto.randomUUID(), ...payload };
 }
 
 export function TerminalPanel() {
+  const { t } = useTranslation();
   const runTerminal = useAppStore((s) => s.runTerminal);
+  const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   const availableShells = React.useMemo(() => getPlatformShells(), []);
   const [shell, setShell] = React.useState<Shell>(() => getDefaultShell());
+  const wsPrefix = activeWorkspace?.name ? `[${activeWorkspace.name}] ` : "";
+  const currentPrompt = `${wsPrefix}${PROMPTS[shell]}`;
 
   // Ensure shell is valid for the current platform
   React.useEffect(() => {
@@ -53,8 +56,8 @@ export function TerminalPanel() {
     }
   }, [availableShells, shell]);
   const [input, setInput] = React.useState("");
-  const [lines, setLines] = React.useState<Line[]>([
-    makeLine({ kind: "banner", text: WELCOME }),
+  const [lines, setLines] = React.useState<Line[]>(() => [
+    makeLine({ kind: "banner", text: t("terminal_welcome") }),
   ]);
   const [history, setHistory] = React.useState<string[]>([]);
   const [histIdx, setHistIdx] = React.useState<number | null>(null);
@@ -71,14 +74,14 @@ export function TerminalPanel() {
 
   const help = () =>
     append(
-      { kind: "out", text: "Available commands (sandboxed):" },
-      { kind: "out", text: "  help        — show this help" },
-      { kind: "out", text: "  echo <text> — print text" },
-      { kind: "out", text: "  ls / dir    — list files" },
-      { kind: "out", text: "  pwd         — print working directory" },
-      { kind: "out", text: "  whoami      — print current user" },
-      { kind: "out", text: "  clear       — clear the screen" },
-      { kind: "out", text: "Any other command is sent to the sandboxed /api/terminal/run endpoint." },
+      { kind: "out", text: t("terminal_help_available") },
+      { kind: "out", text: t("terminal_help_cmd_help") },
+      { kind: "out", text: t("terminal_help_cmd_echo") },
+      { kind: "out", text: t("terminal_help_cmd_ls") },
+      { kind: "out", text: t("terminal_help_cmd_pwd") },
+      { kind: "out", text: t("terminal_help_cmd_whoami") },
+      { kind: "out", text: t("terminal_help_cmd_clear") },
+      { kind: "out", text: t("terminal_help_sandboxed_desc") },
     );
 
   const handleCommand = async (raw: string) => {
@@ -89,13 +92,14 @@ export function TerminalPanel() {
     setHistIdx(null);
 
     if (cmd === "clear") {
-      setLines([makeLine({ kind: "banner", text: WELCOME })]);
+      setLines([makeLine({ kind: "banner", text: t("terminal_welcome") })]);
       return;
     }
     if (cmd === "help") {
       help();
       return;
     }
+
     if (cmd === "echo" || cmd.startsWith("echo ")) {
       append({ kind: "out", text: cmd.slice(5) });
       return;
@@ -105,11 +109,11 @@ export function TerminalPanel() {
     try {
       const res = await runTerminal({ command: cmd, shell });
       if (!res) {
-        append({ kind: "err", text: "No response from terminal service" });
+        append({ kind: "err", text: t("terminal_no_response") });
       } else if (res.blocked) {
         append({
           kind: "warn",
-          text: `Blocked: ${res.reason ?? "command not allowed in sandbox"}`,
+          text: t("terminal_blocked_prefix", { reason: res.reason ?? t("terminal_blocked_default") }),
         });
       } else {
         if (res.stdout) append({ kind: "out", text: res.stdout.replace(/\n$/, "") });
@@ -118,6 +122,11 @@ export function TerminalPanel() {
           append({ kind: "out", text: `(exit ${res.exitCode})` });
         }
       }
+    } catch (e: any) {
+      append({
+        kind: "err",
+        text: t("terminal_error_prefix", { message: e?.message ?? t("terminal_failed_default") }),
+      });
     } finally {
       setBusy(false);
     }
@@ -126,9 +135,9 @@ export function TerminalPanel() {
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      const value = input;
+      const next = input;
       setInput("");
-      void handleCommand(value);
+      void handleCommand(next);
       return;
     }
     if (e.key === "ArrowUp") {
@@ -141,7 +150,7 @@ export function TerminalPanel() {
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (histIdx === null) return;
+      if (history.length === 0 || histIdx === null) return;
       const idx = histIdx + 1;
       if (idx >= history.length) {
         setHistIdx(null);
@@ -157,23 +166,23 @@ export function TerminalPanel() {
     <div className="flex h-full flex-col bg-background text-foreground">
       <div className="flex items-center gap-2 px-2 h-8 border-b bg-muted/40">
         <TerminalIcon className="size-3.5 text-brand" />
-        <span className="text-[11px] font-medium">Terminal</span>
+        <span className="text-[11px] font-medium">{t("terminal")}</span>
         <Badge
           variant="outline"
           className="text-[9px] font-normal px-1.5 py-0 h-4 text-muted-foreground border-border/50 bg-background/50 select-none"
-          title="Commands execute in non-interactive mode (no interactive stdin)"
+          title={t("terminal_non_interactive_tooltip")}
         >
-          non-interactive
+          {t("terminal_non_interactive")}
         </Badge>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ms-auto flex items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground font-mono"
-                aria-label={`Current shell: ${shell}. Click to change shell.`}
-                title="Select shell"
+                aria-label={t("terminal_shell_aria", { shell })}
+                title={t("terminal_select_shell")}
               >
                 <span>{shell}</span>
                 <ChevronDown className="size-3 opacity-60" />
@@ -181,7 +190,7 @@ export function TerminalPanel() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold py-1">
-                Available Shells
+                {t("terminal_available_shells")}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               {availableShells.map((s) => (
@@ -207,9 +216,9 @@ export function TerminalPanel() {
             size="icon"
             variant="ghost"
             className="size-6 text-muted-foreground hover:text-foreground"
-            onClick={() => setLines([makeLine({ kind: "banner", text: WELCOME })])}
-            aria-label="Clear terminal"
-            title="Clear terminal"
+            onClick={() => setLines([makeLine({ kind: "banner", text: t("terminal_welcome") })])}
+            aria-label={t("terminal_clear")}
+            title={t("terminal_clear")}
           >
             <Trash2 className="size-3.5" />
           </Button>
@@ -222,12 +231,12 @@ export function TerminalPanel() {
         role="log"
       >
         {lines.map((l) => (
-          <LineView key={l.id} line={l} prompt={PROMPTS[shell]} />
+          <LineView key={l.id} line={l} prompt={currentPrompt} />
         ))}
       </div>
 
       <div className="flex items-center gap-2 border-t bg-muted/40 px-3 py-1.5">
-        <span className="font-mono text-[12px] text-brand">{PROMPTS[shell]}</span>
+        <span className="font-mono text-[12px] text-brand shrink-0">{currentPrompt}</span>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -236,8 +245,8 @@ export function TerminalPanel() {
           spellCheck={false}
           autoComplete="off"
           className="flex-1 bg-transparent font-mono text-[12px] text-zinc-900 dark:text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-60"
-          placeholder={busy ? "running…" : "type a command and press Enter"}
-          aria-label="Terminal input"
+          placeholder={busy ? t("terminal_running") : `${wsPrefix}${t("terminal_placeholder")}`}
+          aria-label={t("terminal_input_aria")}
         />
         <CornerDownLeft className="size-3 text-zinc-500" />
       </div>

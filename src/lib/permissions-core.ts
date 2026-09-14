@@ -7,6 +7,7 @@ export type PermissionAction =
   | "file.read"
   | "file.write"
   | "command.run"
+  | "command.outside_workspace"
   | "browser.open"
   | "browser.click"
   | "browser.type"
@@ -45,6 +46,7 @@ export const DEFAULT_PERMISSIONS: PermissionsConfig = {
     { action: "file.read", mode: "allow" },
     { action: "file.write", mode: "allow" },
     { action: "command.run", mode: "ask" },
+    { action: "command.outside_workspace", mode: "ask" },
     { action: "browser.open", mode: "ask" },
     { action: "browser.click", mode: "ask" },
     { action: "browser.type", mode: "ask" },
@@ -189,6 +191,7 @@ export function isWriteTool(toolName: string): boolean {
   return (
     action === "file.write" ||
     action === "command.run" ||
+    action === "command.outside_workspace" ||
     toolName === "create_artifact"
   );
 }

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { SymbolOutline } from "@/components/workspace/symbol-outline";
 import { useAppStore } from "@/stores/app-store";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* -------------------------------------------------------------------------- *
  * Outline panel — the right-panel tab container that renders the symbol
@@ -14,6 +15,7 @@ import { useAppStore } from "@/stores/app-store";
  * -------------------------------------------------------------------------- */
 
 export function OutlinePanel() {
+  const { t } = useTranslation();
   const activeFileTab = useAppStore((s) => s.activeFileTab);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
 
@@ -26,16 +28,16 @@ export function OutlinePanel() {
       {showOpenHint ? (
         <div className="flex h-full items-center justify-center p-6">
           <div className="text-center">
-            <p className="text-xs font-medium">No file open</p>
+            <p className="text-xs font-medium">{t("no_file_open")}</p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Open a file in the Files tab to see its outline.
+              {t("open_file_outline_desc")}
             </p>
             <button
               type="button"
               onClick={() => setRightPanelTab("files")}
               className="mt-3 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] text-foreground/90 transition-colors hover:bg-accent"
             >
-              Go to Files
+              {t("go_to_files")}
             </button>
           </div>
         </div>
