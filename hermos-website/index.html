@@ -19,7 +19,7 @@
   <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#07080a" />
+  <meta name="theme-color" content="#000000" />
   <link rel="canonical" href="https://hermos.is-a.dev/" />
 
   <!-- AI Agent & LLM Discovery Standards -->
@@ -50,7 +50,7 @@
 
   <!-- Favicons -->
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2307080a'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='%2310b981' stroke-width='2.8' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='24.5' r='2' fill='%2334d399'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000000'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='%236ee7b7' stroke-width='2.8' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='24.5' r='2' fill='%23a7f3d0'/%3E%3C/svg%3E" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
 
   <!-- High-Performance Typography -->
@@ -165,28 +165,30 @@
        DESIGN SYSTEM & PROFESSIONAL TOKENS (Linear / Cursor Sleek Aesthetic)
        ========================================================================== */
     :root {
-      --bg-base: #07080a;
-      --bg-surface: #0d0f12;
-      --bg-surface-raised: #12161b;
-      --bg-surface-elevated: #181d24;
-      --bg-surface-hover: #1e242c;
+      /* AMOLED Pure Dark System */
+      --bg-base: #000000;
+      --bg-surface: #0a0a0a;
+      --bg-surface-raised: #121212;
+      --bg-surface-elevated: #181818;
+      --bg-surface-hover: #222222;
 
-      --border-subtle: rgba(255, 255, 255, 0.06);
-      --border-default: rgba(255, 255, 255, 0.10);
-      --border-strong: rgba(255, 255, 255, 0.18);
-      --border-brand: rgba(16, 185, 129, 0.45);
+      --border-subtle: rgba(255, 255, 255, 0.07);
+      --border-default: rgba(255, 255, 255, 0.12);
+      --border-strong: rgba(255, 255, 255, 0.22);
+      --border-brand: rgba(110, 231, 183, 0.35);
 
-      /* HermOS Signature Accent: Controlled, restrained precision emerald */
-      --brand-primary: #10b981;
-      --brand-bright: #34d399;
-      --brand-dark: #059669;
-      --brand-glow: rgba(16, 185, 129, 0.20);
-      --brand-tint: rgba(16, 185, 129, 0.08);
+      /* Luminous Light Emerald Accent */
+      --brand-primary: #34d399;
+      --brand-bright: #6ee7b7;
+      --brand-light: #a7f3d0;
+      --brand-dark: #10b981;
+      --brand-glow: rgba(110, 231, 183, 0.20);
+      --brand-tint: rgba(110, 231, 183, 0.08);
 
-      --text-primary: #f3f5f7;
-      --text-secondary: #9da6b3;
-      --text-muted: #697382;
-      --text-dim: #4c5562;
+      --text-primary: #ffffff;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+      --text-dim: #52525b;
 
       --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
@@ -197,9 +199,9 @@
       --radius-xl: 20px;
       --radius-full: 9999px;
 
-      --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
-      --shadow-md: 0 12px 32px -4px rgba(0, 0, 0, 0.6);
-      --shadow-lg: 0 24px 64px -12px rgba(0, 0, 0, 0.85);
+      --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.6);
+      --shadow-md: 0 12px 32px -4px rgba(0, 0, 0, 0.85);
+      --shadow-lg: 0 24px 64px -12px rgba(0, 0, 0, 0.98);
     }
 
     *, *::before, *::after {
@@ -230,7 +232,7 @@
     }
 
     ::selection {
-      background: rgba(16, 185, 129, 0.30);
+      background: rgba(110, 231, 183, 0.25);
       color: #ffffff;
     }
 
@@ -240,31 +242,18 @@
       transition: color 0.15s ease;
     }
 
-    /* Architectural Subtle Grid Background (0% CPU Overhead, Clean & Sleek) */
+    /* AMOLED Subtle Grid Background (Pure Black, Crisp Precision) */
     .site-bg-grid {
       position: fixed;
       inset: 0;
       pointer-events: none;
       z-index: 0;
       background-image: 
-        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-      background-size: 48px 48px;
-      mask-image: radial-gradient(circle at 50% 15%, black 40%, transparent 80%);
-      -webkit-mask-image: radial-gradient(circle at 50% 15%, black 40%, transparent 80%);
-    }
-
-    .hero-subtle-glow {
-      position: fixed;
-      top: -120px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 760px;
-      height: 480px;
-      background: radial-gradient(ellipse at center, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.02) 45%, transparent 70%);
-      pointer-events: none;
-      z-index: 0;
-      filter: blur(60px);
+        linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(circle at 50% 12%, black 25%, transparent 75%);
+      -webkit-mask-image: radial-gradient(circle at 50% 12%, black 25%, transparent 75%);
     }
 
     .container {
@@ -287,7 +276,7 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(7, 8, 10, 0.85);
+      background: rgba(0, 0, 0, 0.85);
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border-subtle);
@@ -315,7 +304,7 @@
       width: 2.1rem;
       height: 2.1rem;
       border-radius: 8px;
-      background: #111419;
+      background: #0a0a0a;
       border: 1px solid var(--border-default);
       display: flex;
       align-items: center;
@@ -323,16 +312,13 @@
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     }
 
-    .brand-tag {
+    .brand-version {
       font-family: var(--font-mono);
-      font-size: 0.6875rem;
-      color: var(--brand-bright);
-      background: var(--brand-tint);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      padding: 0.15rem 0.45rem;
-      border-radius: var(--radius-sm);
-      font-weight: 600;
-      margin-left: 0.25rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-left: 0.35rem;
+      letter-spacing: -0.01em;
     }
 
     .nav-links {
@@ -413,29 +399,29 @@
     }
 
     .btn-primary {
-      background: #10b981;
-      color: #03120a;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: #6ee7b7;
+      color: #04140c;
+      border: 1px solid rgba(255, 255, 255, 0.3);
       font-weight: 700;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
     }
 
     .btn-primary:hover {
-      background: #22c55e;
+      background: #a7f3d0;
       color: #000000;
       transform: translateY(-1px);
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+      box-shadow: 0 4px 18px rgba(110, 231, 183, 0.35);
     }
 
     .btn-secondary {
-      background: var(--bg-surface-raised);
-      color: var(--text-primary);
-      border: 1px solid var(--border-default);
+      background: #0e0e0e;
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.12);
     }
 
     .btn-secondary:hover {
-      background: var(--bg-surface-hover);
-      border-color: var(--border-strong);
+      background: #181818;
+      border-color: rgba(255, 255, 255, 0.25);
       color: #ffffff;
       transform: translateY(-1px);
     }
@@ -476,27 +462,14 @@
       }
     }
 
-    .hero-eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
+    .hero-kicker {
       font-family: var(--font-mono);
       font-size: 0.75rem;
       font-weight: 600;
-      color: var(--brand-bright);
-      background: var(--brand-tint);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      padding: 0.35rem 0.85rem;
-      border-radius: var(--radius-full);
-      margin-bottom: 1.75rem;
-    }
-
-    .status-dot {
-      width: 7px;
-      height: 7px;
-      background: var(--brand-bright);
-      border-radius: 50%;
-      box-shadow: 0 0 6px var(--brand-bright);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 1.5rem;
     }
 
     .hero h1 {
@@ -640,10 +613,10 @@
     }
 
     .view-tab.active {
-      background: var(--bg-surface-elevated);
+      background: #161616;
       color: var(--brand-bright);
-      border-color: rgba(16, 185, 129, 0.35);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      border-color: rgba(110, 231, 183, 0.35);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
     }
 
     .floating-viewport-frame {
@@ -662,7 +635,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0.75rem 1.25rem;
-      background: #090b0e;
+      background: #080808;
       border-bottom: 1px solid var(--border-subtle);
     }
 
@@ -974,7 +947,7 @@
     }
 
     .engine-list {
-      background: #090b0e;
+      background: #060606;
       border-bottom: 1px solid var(--border-subtle);
       padding: 1rem;
       display: flex;
@@ -1012,8 +985,8 @@
     }
 
     .engine-item-btn.active {
-      background: var(--bg-surface-elevated);
-      border-color: rgba(16, 185, 129, 0.3);
+      background: #141414;
+      border-color: rgba(110, 231, 183, 0.3);
       color: #ffffff;
     }
 
@@ -1206,10 +1179,8 @@
       font-size: 0.6875rem;
       font-weight: 600;
       color: var(--brand-bright);
-      background: var(--brand-tint);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      padding: 0.15rem 0.5rem;
-      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
 
     .os-card-info h3 {
@@ -1228,7 +1199,7 @@
     .terminal-box {
       max-width: 46rem;
       margin: 0 auto;
-      background: #050608;
+      background: #040404;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md);
       overflow: hidden;
@@ -1493,7 +1464,6 @@
 
   <!-- Subtle Architectural Grid Background (Clean & High Performance) -->
   <div class="site-bg-grid" aria-hidden="true"></div>
-  <div class="hero-subtle-glow" aria-hidden="true"></div>
 
   <!-- Fullscreen Screenshot Lightbox -->
   <div class="lightbox-modal" id="lightbox-modal" role="dialog" aria-modal="true" aria-label="HermOS screenshot preview" aria-hidden="true" hidden>
@@ -1510,12 +1480,12 @@
         <a class="nav-brand" href="#top" aria-label="HermOS Home">
           <div class="brand-icon">
             <svg width="18" height="18" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M10 8v16M22 8v16M10 16h12" stroke="#10b981" stroke-width="2.8" stroke-linecap="round" />
-              <circle cx="16" cy="24.5" r="2" fill="#34d399" />
+              <path d="M10 8v16M22 8v16M10 16h12" stroke="#6ee7b7" stroke-width="2.8" stroke-linecap="round" />
+              <circle cx="16" cy="24.5" r="2" fill="#a7f3d0" />
             </svg>
           </div>
           <span>HermOS</span>
-          <span class="brand-tag">v1.0.8</span>
+          <span class="brand-version">v1.0.8</span>
         </a>
 
         <nav class="nav-links" id="primary-nav" aria-label="Primary Navigation">
@@ -1551,10 +1521,7 @@
          ====================================================================== -->
     <section class="hero" id="hero-section">
       <div class="container">
-        <div class="hero-eyebrow">
-          <span class="status-dot"></span>
-          <span>100% Local-First · Zero Telemetry · Free &amp; Open Source</span>
-        </div>
+        <p class="hero-kicker">100% Local-First · Zero Telemetry · MIT Open Source</p>
 
         <h1>The Open Source, Local-First <span class="highlight-text">AI Agent IDE</span></h1>
 
@@ -2131,8 +2098,8 @@
           <div class="footer-brand-title">
             <div class="brand-icon" style="width:1.65rem;height:1.65rem;">
               <svg width="13" height="13" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M10 8v16M22 8v16M10 16h12" stroke="#10b981" stroke-width="2.8" stroke-linecap="round" />
-                <circle cx="16" cy="24.5" r="2" fill="#34d399" />
+                <path d="M10 8v16M22 8v16M10 16h12" stroke="#6ee7b7" stroke-width="2.8" stroke-linecap="round" />
+              <circle cx="16" cy="24.5" r="2" fill="#a7f3d0" />
               </svg>
             </div>
             <span>HermOS IDE</span>
