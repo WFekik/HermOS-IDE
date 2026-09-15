@@ -19,7 +19,7 @@
   <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#050A05" />
   <link rel="canonical" href="https://hermos.is-a.dev/" />
 
   <!-- AI Agent & LLM Discovery Standards -->
@@ -165,12 +165,12 @@
        DESIGN SYSTEM & PROFESSIONAL TOKENS (Linear / Cursor Sleek Aesthetic)
        ========================================================================== */
     :root {
-      /* AMOLED Pure Dark System */
-      --bg-base: #000000;
-      --bg-surface: #0a0a0a;
-      --bg-surface-raised: #121212;
-      --bg-surface-elevated: #181818;
-      --bg-surface-hover: #222222;
+      /* AMOLED Dark System (#050A05) */
+      --bg-base: #050A05;
+      --bg-surface: #0B130B;
+      --bg-surface-raised: #121B12;
+      --bg-surface-elevated: #172417;
+      --bg-surface-hover: #1F2E1F;
 
       --border-subtle: rgba(255, 255, 255, 0.07);
       --border-default: rgba(255, 255, 255, 0.12);
@@ -276,7 +276,7 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(0, 0, 0, 0.85);
+      background: rgba(5, 10, 5, 0.85);
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border-subtle);
@@ -304,7 +304,7 @@
       width: 2.1rem;
       height: 2.1rem;
       border-radius: 8px;
-      background: #0a0a0a;
+      background: var(--bg-surface);
       border: 1px solid var(--border-default);
       display: flex;
       align-items: center;
@@ -414,13 +414,13 @@
     }
 
     .btn-secondary {
-      background: #0e0e0e;
+      background: var(--bg-surface);
       color: #ffffff;
       border: 1px solid rgba(255, 255, 255, 0.12);
     }
 
     .btn-secondary:hover {
-      background: #181818;
+      background: var(--bg-surface-raised);
       border-color: rgba(255, 255, 255, 0.25);
       color: #ffffff;
       transform: translateY(-1px);
@@ -613,7 +613,7 @@
     }
 
     .view-tab.active {
-      background: #161616;
+      background: var(--bg-surface-raised);
       color: var(--brand-bright);
       border-color: rgba(15, 215, 101, 0.35);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
@@ -985,7 +985,7 @@
     }
 
     .engine-item-btn.active {
-      background: #141414;
+      background: var(--bg-surface-raised);
       border-color: rgba(15, 215, 101, 0.3);
       color: #ffffff;
     }
