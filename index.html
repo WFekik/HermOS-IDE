@@ -369,7 +369,7 @@
         flex-direction: column;
         align-items: stretch;
         gap: 0.25rem;
-        background: rgba(10, 12, 15, 0.98);
+        background: rgba(5, 10, 5, 0.98);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-bottom: 1px solid var(--border-subtle);
@@ -491,7 +491,7 @@
     }
 
     .hero h1 .highlight-text {
-      background: linear-gradient(180deg, #ffffff 30%, #a7b5c6 100%);
+      background: linear-gradient(180deg, #ffffff 30%, #d4d4d8 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       display: inline;
@@ -635,7 +635,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0.75rem 1.25rem;
-      background: #080808;
+      background: var(--bg-surface-raised);
       border-bottom: 1px solid var(--border-subtle);
     }
 
@@ -673,7 +673,7 @@
     .frame-image-wrap {
       position: relative;
       width: 100%;
-      background: #040507;
+      background: var(--bg-base);
       overflow: hidden;
       aspect-ratio: 1918 / 991;
     }
@@ -691,7 +691,7 @@
       position: absolute;
       bottom: 1rem;
       right: 1rem;
-      background: rgba(13, 15, 18, 0.9);
+      background: rgba(11, 19, 11, 0.9);
       backdrop-filter: blur(8px);
       border: 1px solid var(--border-default);
       padding: 0.4rem 0.85rem;
@@ -786,20 +786,21 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--text-muted);
-      background: #0a0c0f;
+      background: var(--bg-surface-raised);
     }
 
     .comparison-table th.col-hermos {
       color: var(--brand-bright);
-      background: rgba(16, 185, 129, 0.06);
-      border-left: 1px solid rgba(16, 185, 129, 0.2);
-      border-right: 1px solid rgba(16, 185, 129, 0.2);
+      background: rgba(15, 215, 101, 0.08);
+      border-left: 1px solid rgba(15, 215, 101, 0.28);
+      border-right: 1px solid rgba(15, 215, 101, 0.28);
+      border-top: 2px solid var(--brand-bright);
     }
 
     .comparison-table td.col-hermos {
-      background: rgba(16, 185, 129, 0.03);
-      border-left: 1px solid rgba(16, 185, 129, 0.2);
-      border-right: 1px solid rgba(16, 185, 129, 0.2);
+      background: rgba(15, 215, 101, 0.035);
+      border-left: 1px solid rgba(15, 215, 101, 0.28);
+      border-right: 1px solid rgba(15, 215, 101, 0.28);
       font-weight: 600;
       color: var(--text-primary);
     }
@@ -815,6 +816,12 @@
       color: var(--brand-bright);
       font-weight: 600;
       font-size: 0.8125rem;
+    }
+
+    .table-badge-neutral {
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      font-weight: 500;
     }
 
     .table-badge-no {
@@ -947,7 +954,7 @@
     }
 
     .engine-list {
-      background: #060606;
+      background: var(--bg-surface);
       border-bottom: 1px solid var(--border-subtle);
       padding: 1rem;
       display: flex;
@@ -1044,7 +1051,7 @@
 
     .engine-spec-tag.tag-brand {
       color: var(--brand-bright);
-      border-color: rgba(16, 185, 129, 0.3);
+      border-color: var(--border-brand);
       background: var(--brand-tint);
     }
 
@@ -1093,7 +1100,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0.45rem 0.65rem;
-      background: #08090b;
+      background: var(--bg-surface-raised);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-sm);
       font-family: var(--font-mono);
@@ -1146,14 +1153,14 @@
     }
 
     .os-card:hover {
-      border-color: rgba(16, 185, 129, 0.35);
+      border-color: var(--border-brand);
       transform: translateY(-2px);
       box-shadow: var(--shadow-md);
     }
 
     .os-card.detected-os {
-      border-color: rgba(16, 185, 129, 0.45);
-      background: #12181d;
+      border-color: var(--border-brand);
+      background: var(--bg-surface-elevated);
     }
 
     .os-card-header {
@@ -1199,7 +1206,7 @@
     .terminal-box {
       max-width: 46rem;
       margin: 0 auto;
-      background: #040404;
+      background: var(--bg-base);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md);
       overflow: hidden;
@@ -1288,7 +1295,7 @@
     }
 
     .faq-block[open] {
-      border-color: rgba(16, 185, 129, 0.35);
+      border-color: var(--border-brand);
     }
 
     .faq-block summary {
@@ -1337,7 +1344,7 @@
       position: fixed;
       inset: 0;
       z-index: 100;
-      background: rgba(4, 5, 7, 0.94);
+      background: rgba(5, 10, 5, 0.96);
       backdrop-filter: blur(16px);
       display: none;
       align-items: center;
@@ -1385,7 +1392,7 @@
        ========================================================================== */
     footer {
       border-top: 1px solid var(--border-subtle);
-      background: #050608;
+      background: var(--bg-base);
       padding: 3.5rem 0 2.5rem;
       position: relative;
       z-index: 2;
@@ -1680,7 +1687,7 @@
               <tr>
                 <td><strong>Model Context Protocol (MCP)</strong></td>
                 <td class="col-hermos"><span class="table-badge-yes">✓ Full Native Client</span></td>
-                <td><span class="table-badge-yes">Supported</span></td>
+                <td><span class="table-badge-neutral">Supported</span></td>
                 <td><span class="table-badge-no">Limited</span></td>
                 <td><span class="table-badge-no">✕ Proprietary Tools</span></td>
               </tr>
