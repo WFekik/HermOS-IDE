@@ -44,6 +44,8 @@ Get the latest release for your platform:
 
 Or browse all assets on the [Releases page](https://github.com/WFekik/HermOS-IDE/releases/latest).
 
+> Free code signing provided by the [SignPath Foundation](https://signpath.org/).
+
 > **Website & Docs:** https://hermos.is-a.dev/
 
 ---
