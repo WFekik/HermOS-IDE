@@ -260,10 +260,11 @@ export function ChatView() {
     if (!activeConversationId || !isConversationStreaming || liveStreamingMessageId) return;
 
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void useAppStore.getState().refreshMessages(activeConversationId);
       void useAppStore.getState().recoverQuestionPrompt(activeConversationId);
       void useAppStore.getState().recoverPermissionPrompt(activeConversationId);
-    }, 1500);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [activeConversationId, isConversationStreaming, liveStreamingMessageId]);

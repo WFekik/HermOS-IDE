@@ -86,6 +86,7 @@ export function TopBar({
     if (!activeWorkspace) return;
     void refreshGitStatus();
     const id = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void refreshGitStatus();
     }, 30_000);
     return () => window.clearInterval(id);
@@ -184,7 +185,7 @@ export function TopBar({
                     {unstagedCount > 0 && (
                       <Badge
                         variant="outline"
-                        className="h-3 min-w-3 px-0.5 text-[8px] font-mono tabular-nums text-amber-700 dark:text-amber-400 border-amber-500/40 bg-amber-500/5"
+                        className="h-4 min-w-4 px-1 text-[10px] font-mono tabular-nums text-warning border-warning/40 bg-warning/5"
                       >
                         {unstagedCount}
                       </Badge>
@@ -192,7 +193,7 @@ export function TopBar({
                     {stagedCount > 0 && (
                       <Badge
                         variant="outline"
-                        className="h-3 min-w-3 px-0.5 text-[8px] font-mono tabular-nums text-brand border-brand/40 bg-brand/5"
+                        className="h-4 min-w-4 px-1 text-[10px] font-mono tabular-nums text-brand border-brand/40 bg-brand/5"
                       >
                         {stagedCount}
                       </Badge>
@@ -289,7 +290,7 @@ export function TopBar({
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="h-6 gap-0.5 px-0.5">
               <Avatar className="size-4">
-                <AvatarFallback className="bg-secondary text-secondary-foreground text-[8px]">
+                <AvatarFallback className="bg-secondary text-secondary-foreground text-[10px]">
                   {initials}
                 </AvatarFallback>
               </Avatar>
@@ -322,7 +323,7 @@ export function TopBar({
             <Button
               variant="ghost"
               size="icon"
-              className="size-6 hidden md:inline-flex"
+              className="size-6 inline-flex"
               onClick={onToggleRight}
               aria-label={rightCollapsed ? t("show_right_panel") : t("hide_right_panel")}
             >

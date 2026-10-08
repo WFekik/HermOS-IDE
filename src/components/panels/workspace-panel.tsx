@@ -536,7 +536,7 @@ function WorkspacePanelInner() {
 
   // Render
   return (
-    <div className="flex h-full flex-col bg-card">
+    <div className="flex h-full min-w-0 flex-col bg-card">
       <div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <Folder className="size-3.5 shrink-0 text-brand" />
@@ -549,7 +549,7 @@ function WorkspacePanelInner() {
           {treeQuery.data && (
             <Badge
               variant="outline"
-              className="ms-0.5 h-4 px-1 text-[9px] font-mono text-muted-foreground shrink-0"
+              className="ms-0.5 h-4 px-1 text-[10px] font-mono text-muted-foreground shrink-0"
             >
               {t("files_count", { count: countNodes(treeData) })}
             </Badge>
@@ -609,7 +609,7 @@ function WorkspacePanelInner() {
                   defaultSize={38}
                   minSize={20}
                   maxSize={60}
-                  className="min-w-[140px]"
+                  className="min-w-0 md:min-w-[140px]"
                 >
                   <FileTree
                     tree={treeData}
@@ -635,7 +635,7 @@ function WorkspacePanelInner() {
                 <ResizableHandle withHandle />
               </>
             )}
-            <ResizablePanel id="ws-editor" order={2} defaultSize={treeCollapsed ? 100 : 62} minSize={30} className="min-w-[200px]">
+            <ResizablePanel id="ws-editor" order={2} defaultSize={treeCollapsed ? 100 : 62} minSize={30} className="min-w-0 md:min-w-[200px]">
               <div className="flex h-full flex-col">
                 {openFiles.length > 0 && (
                   <FileTabBar
@@ -866,7 +866,7 @@ function SplitEditorContainer({
     return (
       <>
         <ResizablePanelGroup direction="horizontal" autoSaveId="hermos-ws-split-editor">
-          <ResizablePanel id="split-left" order={1} defaultSize={50} minSize={25} className="min-w-[180px]">
+          <ResizablePanel id="split-left" order={1} defaultSize={50} minSize={25} className="min-w-0 md:min-w-[180px]">
             <FileEditorContainer
               path={leftPath}
               onSave={onSave}
@@ -876,7 +876,7 @@ function SplitEditorContainer({
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="split-right" order={2} defaultSize={50} minSize={25} className="min-w-[180px]">
+          <ResizablePanel id="split-right" order={2} defaultSize={50} minSize={25} className="min-w-0 md:min-w-[180px]">
             <div
               className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center"
               onMouseDown={onActivateRight}
@@ -926,7 +926,7 @@ function SplitEditorContainer({
 
   return (
     <ResizablePanelGroup direction="horizontal" autoSaveId="hermos-ws-split-editor">
-      <ResizablePanel id="split-left" order={1} defaultSize={50} minSize={25} className="min-w-[180px]">
+      <ResizablePanel id="split-left" order={1} defaultSize={50} minSize={25} className="min-w-0 md:min-w-[180px]">
         <FileEditorContainer
           path={leftPath}
           onSave={onSave}
@@ -936,7 +936,7 @@ function SplitEditorContainer({
         />
       </ResizablePanel>
       <ResizableHandle withHandle />
-      <ResizablePanel id="split-right" order={2} defaultSize={50} minSize={25} className="min-w-[180px]">
+      <ResizablePanel id="split-right" order={2} defaultSize={50} minSize={25} className="min-w-0 md:min-w-[180px]">
         <FileEditorContainer
           path={rightPath}
           onSave={onSave}
@@ -1155,7 +1155,7 @@ function FileTabBar({
               <Badge
                 variant="outline"
                 className={cn(
-                  "h-3.5 shrink-0 px-1 text-[8px] font-mono uppercase leading-none",
+                  "h-4 shrink-0 px-1 text-[10px] font-mono uppercase leading-none",
                   isLeft
                     ? "border-brand/40 bg-brand/10 text-brand"
                     : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",

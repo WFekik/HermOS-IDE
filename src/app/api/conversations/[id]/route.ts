@@ -26,15 +26,27 @@ import {
 export const dynamic = "force-dynamic";
 
 export const GET = withErrorHandler(
-  async (_req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
     const user = await requireUser();
     const { id } = await params;
+    const url = new URL(req.url);
+    const takeParam = Number(url.searchParams.get("take") ?? "");
+    const take = Number.isFinite(takeParam) && takeParam > 0 ? Math.min(1000, Math.floor(takeParam)) : 1000;
+    const cursor = url.searchParams.get("cursor") ?? undefined;
     const row = await db.conversation.findUnique({
       where: { id },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
+      include: {
+        messages: {
+          orderBy: { createdAt: "asc" },
+          take,
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        },
+      },
     });
     if (!row || row.userId !== user.id) return notFound("Conversation not found");
-    return ok({ conversation: toConversationDTO(row) });
+    const res = ok({ conversation: toConversationDTO(row) });
+    res.headers.set("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
+    return res;
   },
 );
 

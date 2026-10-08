@@ -130,7 +130,8 @@ function emitParams(
   let params: Record<string, any> | null = null;
   try {
     params = scheme.map(level, ctx);
-  } catch {
+  } catch (e) {
+    console.warn("[reasoning] scheme.map failed", scheme.id, e instanceof Error ? e.message : e);
     params = null;
   }
   if (!params || Object.keys(params).length === 0) {

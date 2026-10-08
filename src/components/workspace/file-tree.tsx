@@ -111,6 +111,11 @@ export function FileTree(props: FileTreeProps) {
   const [renaming, setRenaming] = React.useState<string | null>(null);
   const [renameDraft, setRenameDraft] = React.useState("");
 
+  // Roving tabindex — exactly one treeitem is Tab-reachable. Follows selection
+  // initially, then keyboard focus.
+  const [focusedPath, setFocusedPath] = React.useState<string | null>(null);
+  const activeFocusedPath = focusedPath ?? selectedPath ?? tree[0]?.path ?? null;
+
   // Delete confirmation state.
   const [pendingDelete, setPendingDelete] = React.useState<{
     path: string;
@@ -164,7 +169,7 @@ export function FileTree(props: FileTreeProps) {
           <div
             key={i}
             className="h-5 rounded bg-muted/60 animate-pulse"
-            style={{ marginLeft: `${(i % 3) * 12}px` }}
+            style={{ marginInlineStart: `${(i % 3) * 12}px` }}
           />
         ))}
       </div>
@@ -198,13 +203,15 @@ export function FileTree(props: FileTreeProps) {
   return (
     <>
       <div className="h-full min-h-0 overflow-y-auto overflow-x-auto">
-        <div className="py-1.5 pe-2">
+        <div className="py-1.5 pe-2" role="tree" aria-label="Workspace files">
           {tree.map((node) => (
             <TreeNode
               key={node.path}
               node={node}
               depth={0}
               selectedPath={selectedPath}
+              focusedPath={activeFocusedPath}
+              onFocusPath={setFocusedPath}
               expanded={expanded}
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}
@@ -243,7 +250,7 @@ export function FileTree(props: FileTreeProps) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleting}
               onClick={(e) => {
                 e.preventDefault();
@@ -273,6 +280,8 @@ interface TreeNodeProps {
   node: FileNode;
   depth: number;
   selectedPath: string | null;
+  focusedPath: string | null;
+  onFocusPath: (path: string) => void;
   expanded: Set<string>;
   onToggleExpand: (path: string) => void;
   onSelectFile: (path: string) => void;
@@ -293,6 +302,8 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
     node,
     depth,
     selectedPath,
+    focusedPath,
+    onFocusPath,
     expanded,
     onToggleExpand,
     onSelectFile,
@@ -345,7 +356,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       handleClick();
     } else if (e.key === "ArrowRight" && isDir && !isOpen) {
@@ -354,6 +365,26 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
     } else if (e.key === "ArrowLeft" && isDir && isOpen) {
       e.preventDefault();
       onToggleExpand(node.path);
+    } else if (
+      e.key === "ArrowDown" ||
+      e.key === "ArrowUp" ||
+      e.key === "Home" ||
+      e.key === "End"
+    ) {
+      // Roving focus across visible treeitems in DOM order.
+      const root = (e.currentTarget as HTMLElement).closest('[role="tree"]');
+      const items = root
+        ? Array.from(root.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+        : [];
+      if (items.length === 0) return;
+      e.preventDefault();
+      const idx = items.indexOf(e.currentTarget as HTMLElement);
+      let next: HTMLElement | undefined;
+      if (e.key === "ArrowDown") next = items[idx + 1];
+      else if (e.key === "ArrowUp") next = items[idx - 1];
+      else if (e.key === "Home") next = items[0];
+      else next = items[items.length - 1];
+      next?.focus();
     }
   };
 
@@ -365,10 +396,12 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
         <ContextMenuTrigger asChild>
           <div
             role="treeitem"
+            aria-level={depth + 1}
             aria-expanded={isDir ? isOpen : undefined}
             aria-selected={isActive || undefined}
-            tabIndex={0}
+            tabIndex={focusedPath === node.path ? 0 : -1}
             onClick={handleClick}
+            onFocus={() => onFocusPath(node.path)}
             onKeyDown={handleKeyDown}
             className={cn(
               "group flex h-7 cursor-pointer items-center gap-1 rounded-sm pe-2 text-xs touch-manipulation",
@@ -377,7 +410,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
                 ? "bg-accent text-accent-foreground"
                 : "hover:bg-accent/60",
             )}
-            style={{ paddingLeft: padLeft }}
+            style={{ paddingInlineStart: padLeft }}
             title={node.path}
           >
             {isDir ? (
@@ -434,7 +467,7 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
             {!isRenaming && statusChar && (
               <span
                 className={cn(
-                  "ms-1.5 px-1 rounded-[3px] text-[9px] font-bold font-mono border select-none scale-90 origin-start shrink-0",
+                  "ms-1.5 px-1 rounded-[3px] text-[10px] font-bold font-mono border select-none shrink-0",
                   statusBadgeColor === "text-emerald-600 dark:text-emerald-400"
                     ? "bg-emerald-500/10 border-emerald-500/20"
                     : statusBadgeColor === "text-sky-600 dark:text-sky-400"
@@ -513,6 +546,8 @@ const TreeNode = React.memo(function TreeNode(props: TreeNodeProps) {
               node={child}
               depth={depth + 1}
               selectedPath={selectedPath}
+              focusedPath={focusedPath}
+              onFocusPath={onFocusPath}
               expanded={expanded}
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}

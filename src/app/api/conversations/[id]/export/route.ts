@@ -68,7 +68,7 @@ export async function GET(
   const conv = await db.conversation.findUnique({
     where: { id },
     include: {
-      messages: { orderBy: { createdAt: "asc" } },
+      messages: { orderBy: { createdAt: "asc" }, take: MAX_EXPORT_MESSAGES },
       tools: { orderBy: { createdAt: "asc" }, take: MAX_TOOL_ROWS },
     },
   });

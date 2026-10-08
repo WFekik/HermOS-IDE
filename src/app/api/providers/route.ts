@@ -89,5 +89,7 @@ export const GET = withErrorHandler(async () => {
   );
   // Suppress unused PROVIDERS warning — it's intentionally re-exported below
   void PROVIDERS;
-  return ok({ providers });
+  const res = ok({ providers });
+  res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+  return res;
 });

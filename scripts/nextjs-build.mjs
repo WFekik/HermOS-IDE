@@ -207,10 +207,14 @@ function bundlePrismaClientIntoStandalone() {
   // via scripts/ensure-extra-prisma-engines.mjs — e.g. the x86_64 engine for
   // the universal macOS bundle). The schema engine is NOT needed at runtime
   // (provisioning applies the bundled migration SQL through the query engine).
-  for (const name of readdirSync(enginesFrom)) {
-    if (/\.tmp\d*$/.test(name)) continue;
-    if (/^(?:lib)?query_engine-/.test(name) || name === "package.json" || name === "LICENSE") {
-      cpSync(join(enginesFrom, name), join(enginesTo, name));
+  if (!existsSync(enginesFrom)) {
+    console.warn("[nextjs-build] @prisma/engines missing — skipping engine copy");
+  } else {
+    for (const name of readdirSync(enginesFrom)) {
+      if (/\.tmp\d*$/.test(name)) continue;
+      if (/^(?:lib)?query_engine-/.test(name) || name === "package.json" || name === "LICENSE") {
+        cpSync(join(enginesFrom, name), join(enginesTo, name));
+      }
     }
   }
   const generatedTo = join(standaloneNodeModules, ".prisma", "client");
@@ -218,9 +222,11 @@ function bundlePrismaClientIntoStandalone() {
     join(repoNodeModules, ".prisma", "client"),
     generatedTo,
   );
-  for (const entry of readdirSync(generatedTo)) {
-    if (/\.tmp\d+$/.test(entry)) {
-      rmSync(join(generatedTo, entry), { force: true });
+  if (existsSync(generatedTo)) {
+    for (const entry of readdirSync(generatedTo)) {
+      if (/\.tmp\d+$/.test(entry)) {
+        rmSync(join(generatedTo, entry), { force: true });
+      }
     }
   }
   // The traced `node_modules/.bin` only contains a POSIX `prisma` shim that
@@ -240,25 +246,29 @@ function bundlePrismaClientIntoStandalone() {
     "chunks",
   );
   const aliasRegex = /"@prisma\/client-[0-9a-f]{16}"/;
-  for (const entry of readdirSync(chunksDir)) {
-    const chunkPath = join(chunksDir, entry);
-    if (!existsSync(chunkPath) || !entry.endsWith(".js")) continue;
-    const text = readFileSync(chunkPath, "utf8");
-    const match = text.match(aliasRegex);
-    if (match) {
-      const aliasName = match[0].slice(1, -1);
-      const aliasDir = join(standaloneNodeModules, "@prisma", aliasName.slice("@prisma/".length));
-      mkdirSync(aliasDir, { recursive: true });
-      writeFileSync(
-        join(aliasDir, "package.json"),
-        JSON.stringify({
-          name: aliasName,
-          private: true,
-          main: "../../@prisma/client/index.js",
-        }),
-      );
-      console.log(`[nextjs-build] aliased ${aliasName} -> @prisma/client`);
-      break;
+  if (!existsSync(chunksDir)) {
+    console.warn("[nextjs-build] chunks dir missing — skipping prisma alias");
+  } else {
+    for (const entry of readdirSync(chunksDir)) {
+      const chunkPath = join(chunksDir, entry);
+      if (!existsSync(chunkPath) || !entry.endsWith(".js")) continue;
+      const text = readFileSync(chunkPath, "utf8");
+      const match = text.match(aliasRegex);
+      if (match) {
+        const aliasName = match[0].slice(1, -1);
+        const aliasDir = join(standaloneNodeModules, "@prisma", aliasName.slice("@prisma/".length));
+        mkdirSync(aliasDir, { recursive: true });
+        writeFileSync(
+          join(aliasDir, "package.json"),
+          JSON.stringify({
+            name: aliasName,
+            private: true,
+            main: "../../@prisma/client/index.js",
+          }),
+        );
+        console.log(`[nextjs-build] aliased ${aliasName} -> @prisma/client`);
+        break;
+      }
     }
   }
   console.log(
@@ -316,18 +326,23 @@ if (result.error || result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-// [fix: prune env from standalone]
-pruneEnvFromStandalone();
-// [fix: make standalone portable — never load the build machine's .env]
-portableStandaloneConfig();
-// [fix: prune env + bundle prisma]
-pruneAndBundlePrisma();
-// [fix: bundle the Prisma client into the standalone]
-bundlePrismaClientIntoStandalone();
-// [fix: bundle agent-browser native binaries into standalone]
-bundleAgentBrowserIntoStandalone();
-// [fix: copy public assets into standalone]
-copyPublicIntoStandalone();
-// [fix: copy client static assets into standalone]
-copyStaticIntoStandalone();
+try {
+  // [fix: prune env from standalone]
+  pruneEnvFromStandalone();
+  // [fix: make standalone portable — never load the build machine's .env]
+  portableStandaloneConfig();
+  // [fix: prune env + bundle prisma]
+  pruneAndBundlePrisma();
+  // [fix: bundle the Prisma client into the standalone]
+  bundlePrismaClientIntoStandalone();
+  // [fix: bundle agent-browser native binaries into standalone]
+  bundleAgentBrowserIntoStandalone();
+  // [fix: copy public assets into standalone]
+  copyPublicIntoStandalone();
+  // [fix: copy client static assets into standalone]
+  copyStaticIntoStandalone();
+} catch (e) {
+  console.error("[nextjs-build] post-build step failed:", e instanceof Error ? e.message : e);
+  process.exit(1);
+}
 process.exit(result.status ?? 1);

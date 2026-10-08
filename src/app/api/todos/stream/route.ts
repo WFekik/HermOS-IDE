@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireUser } from "@/lib/session";
-import { unauthorized, apiError, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { unauthorized, apiError, withErrorHandler } from "@/app/api/_lib/helpers";
+import { withRateLimit } from "@/lib/rate-limit";
 import { subscribeTodoUpdates, loadAgentTodosForConversation } from "@/lib/todo-pubsub";
 
 /**
@@ -38,15 +39,18 @@ import { subscribeTodoUpdates, loadAgentTodosForConversation } from "@/lib/todo-
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest): Promise<Response> {
-  const blocked = enforceLoopbackRequest(req);
-  if (blocked) return blocked;
+export const GET = withErrorHandler(async (req: NextRequest): Promise<Response> => {
   let user;
   try {
     user = await requireUser();
   } catch {
     return unauthorized();
   }
+  const limited = await withRateLimit(req, `todos-stream:${user.id}`, {
+    capacity: 30,
+    refillPerSec: 30 / 60,
+  });
+  if (limited) return limited;
 
   const url = new URL(req.url);
   const conversationId = url.searchParams.get("conversationId") || "";
@@ -88,7 +92,8 @@ export async function GET(req: NextRequest): Promise<Response> {
       try {
         const list = await loadAgentTodosForConversation(user.id, conversationId);
         send("snapshot", { todos: list });
-      } catch {
+      } catch (e) {
+        console.warn("[todos/stream] snapshot load failed", e instanceof Error ? e.message : e);
         send("snapshot", { todos: [] });
       }
 
@@ -131,4 +136,4 @@ export async function GET(req: NextRequest): Promise<Response> {
       "X-Accel-Buffering": "no",
     },
   });
-}
+});

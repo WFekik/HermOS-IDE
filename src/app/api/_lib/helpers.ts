@@ -168,11 +168,9 @@ export function validateHostPolicy(req: Request): string | null {
 }
 
 function isLoopbackBind(hostname: string | undefined): boolean {
-  // When HOSTNAME is unset, Next may still be loopback-bound via CLI flag
-  // (`next dev -H 127.0.0.1` per package.json dev script). Treat unset as
-  // loopback to avoid breaking `npm run dev`; explicit non-loopback values
-  // (0.0.0.0, ::, etc.) are still blocked by the caller when no opt-in gate.
-  if (!hostname) return true;
+  if (!hostname) {
+    return process.env.NODE_ENV !== "production";
+  }
   const h = hostname.trim().toLowerCase();
   // HOSTNAME is typically bare (no port) but tolerate :port for robustness
   return isLoopbackHost(h);
@@ -211,8 +209,19 @@ export function enforceLoopbackRequest(req: Request | null | undefined): NextRes
   // Runtime bind enforcement: HermOS IDE operates in local desktop single-user mode.
   // The server MUST be bound strictly to loopback (127.0.0.1). Binding to external
   // interfaces without authenticated multi-tenant session management is strictly disallowed.
+  // NOTE: HERMOS_ALLOW_REMOTE is deliberately NOT honored here — the regression
+  // suite (security-audit-remediation.test.ts) requires that a 0.0.0.0 bind is
+  // refused even when that flag is set. Remote exposure requires an explicit
+  // product-level multi-tenant auth design, not an env toggle.
   const bindHost = process.env.HOSTNAME?.trim();
-  if (bindHost && !isLoopbackBind(bindHost)) {
+  if (!bindHost) {
+    if (process.env.NODE_ENV === "production") {
+      return apiError(
+        "Server HOSTNAME is unset in production — refusing unauthenticated request. HermOS requires loopback binding (HOSTNAME=127.0.0.1).",
+        403,
+      );
+    }
+  } else if (!isLoopbackBind(bindHost)) {
     const isAllInterfaces = bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "[::]" || bindHost === "0:0:0:0";
     const msg = isAllInterfaces
       ? "Server is bound to 0.0.0.0 (all interfaces) — refusing unauthenticated request. HermOS requires loopback binding (HOSTNAME=127.0.0.1)."
@@ -289,9 +298,10 @@ export function createGuardedHandler<TBody = unknown>(
       const { requireUser } = await import("@/lib/session");
       user = await requireUser();
     }
-    if (options.rateLimit && user) {
+    if (options.rateLimit) {
       const { withRateLimit } = await import("@/lib/rate-limit");
-      const limited = await withRateLimit(req as any, `${options.rateLimit.keyPrefix}:${user.id}`, options.rateLimit.config);
+      const key = user ? `${options.rateLimit.keyPrefix}:${user.id}` : `${options.rateLimit.keyPrefix}:anon`;
+      const limited = await withRateLimit(req as any, key, options.rateLimit.config);
       if (limited) return limited;
     }
     let parsedBody = undefined as unknown as TBody;
@@ -528,9 +538,16 @@ export async function parseJson<T = unknown>(req: Request): Promise<T | null> {
   let text: string;
   try {
     text = await req.text();
-  } catch {
+  } catch (e) {
+    console.warn("[api:parseJson] body read failed", e instanceof Error ? e.message : e);
     return null;
   }
-  return text ? (safeJsonParse<T>(text) ?? null) : null;
+  if (!text) return null;
+  const parsed = safeJsonParse<T>(text);
+  if (parsed === undefined) {
+    console.warn("[api:parseJson] malformed JSON body");
+    return null;
+  }
+  return parsed ?? null;
 }
 

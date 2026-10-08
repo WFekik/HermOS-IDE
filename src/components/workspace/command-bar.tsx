@@ -141,13 +141,13 @@ export function CommandBar({
           )}
         </div>
         <CollapsibleContent>
-          <div className="border-t bg-white dark:bg-[#0b0b0c] text-zinc-800 dark:text-zinc-200 max-h-48 overflow-y-auto">
+          <div className="border-t bg-card text-card-foreground max-h-48 overflow-y-auto">
             <div className="px-3 py-2 font-mono text-[11px] leading-relaxed space-y-3">
               {outputs.map((out, i) => (
                 <CommandOutput key={i} output={out} />
               ))}
               {running && (
-                <div className="flex items-center gap-2 text-zinc-400">
+                <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="size-3 animate-spin text-brand" />
                   <span>{t("running_prefix")}{input || (lastOutput?.command ?? "")}</span>
                 </div>
@@ -205,15 +205,15 @@ function CommandOutput({ output }: { output: OutputState }) {
   const { result } = output;
   const exitCode = result.exitCode ?? 0;
   return (
-    <div className="rounded border border-border/40 bg-zinc-500/5 p-2 space-y-1.5 font-mono text-xs my-1">
+    <div className="rounded border border-border/40 bg-muted/30 p-2 space-y-1.5 font-mono text-xs my-1">
       <div className="flex items-center gap-2">
         <Badge
           variant="outline"
           className={cn(
-            "text-[9px] h-4 font-mono border-0 shrink-0",
+            "text-[10px] h-4 font-mono border shrink-0",
             exitCode === 0
-              ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-              : "text-red-500 dark:text-red-400 bg-red-500/10 border-red-500/20"
+              ? "text-success bg-success/10 border-success/20"
+              : "text-destructive bg-destructive/10 border-destructive/20"
           )}
         >
           exit {exitCode}
@@ -222,18 +222,18 @@ function CommandOutput({ output }: { output: OutputState }) {
         <span className="break-all text-foreground font-semibold min-w-0 flex-1">{output.command}</span>
       </div>
       {result.blocked && result.reason && (
-        <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400 bg-amber-500/10 p-1.5 rounded">
+        <div className="flex items-start gap-1.5 text-warning bg-warning/10 p-1.5 rounded">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" />
           <span className="break-all">{result.reason}</span>
         </div>
       )}
       {result.stdout && (
-        <pre className="whitespace-pre-wrap break-all text-zinc-800 dark:text-zinc-200 bg-black/5 dark:bg-black/30 rounded p-1.5 max-h-64 overflow-y-auto">
+        <pre className="whitespace-pre-wrap break-all text-foreground bg-muted/50 rounded p-1.5 max-h-64 overflow-y-auto">
           {result.stdout.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")}
         </pre>
       )}
       {result.stderr && (
-        <pre className="whitespace-pre-wrap break-all text-red-600 dark:text-red-400 bg-red-500/5 rounded p-1.5 max-h-64 overflow-y-auto">
+        <pre className="whitespace-pre-wrap break-all text-destructive bg-destructive/5 rounded p-1.5 max-h-64 overflow-y-auto">
           {result.stderr.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")}
         </pre>
       )}

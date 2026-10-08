@@ -46,7 +46,7 @@ export interface UpdateCheckInfo {
 }
 
 const DEFAULT_REPO = "WFekik/HermOS-IDE";
-const FALLBACK_VERSION = "1.0.1";
+const FALLBACK_VERSION = "0.0.0-missing";
 
 let cachedVersion: string | null = null;
 let cachedBuildHash: string | null = null;
@@ -56,7 +56,7 @@ let cachedBuildHash: string | null = null;
  * 1. HERMOS_VERSION env variable
  * 2. NEXT_PUBLIC_APP_VERSION env variable
  * 3. package.json statically bundled version
- * 4. FALLBACK_VERSION ("1.0.1")
+ * 4. FALLBACK_VERSION ("0.0.0-missing" — visible failure, never a real release)
  */
 export function getAppVersion(): string {
   if (cachedVersion) return cachedVersion;
@@ -75,6 +75,7 @@ export function getAppVersion(): string {
     return cachedVersion;
   }
 
+  console.warn("[version] package.json version missing/invalid — returning visible fallback");
   cachedVersion = FALLBACK_VERSION;
   return cachedVersion;
 }

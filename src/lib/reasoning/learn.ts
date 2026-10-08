@@ -2,8 +2,30 @@
 
 import type { ReasoningSchemeId } from "./types";
 
-const rejectedHosts = new Set<string>();
-const rejectedModels = new Set<string>();
+const rejectedHosts = new Map<string, number>();
+const rejectedModels = new Map<string, number>();
+const MAX_LEARNED_ENTRIES = 1000;
+const LEARNED_TTL_MS = 60 * 60 * 1000;
+
+function pruneLearned(): void {
+  const now = Date.now();
+  for (const [k, v] of rejectedHosts) {
+    if (now - v > LEARNED_TTL_MS) rejectedHosts.delete(k);
+  }
+  for (const [k, v] of rejectedModels) {
+    if (now - v > LEARNED_TTL_MS) rejectedModels.delete(k);
+  }
+  while (rejectedHosts.size > MAX_LEARNED_ENTRIES) {
+    const oldest = rejectedHosts.keys().next().value as string | undefined;
+    if (!oldest) break;
+    rejectedHosts.delete(oldest);
+  }
+  while (rejectedModels.size > MAX_LEARNED_ENTRIES) {
+    const oldest = rejectedModels.keys().next().value as string | undefined;
+    if (!oldest) break;
+    rejectedModels.delete(oldest);
+  }
+}
 
 /** Returns true if the scheme participates in behavioral learning (`custom_effort`). */
 export function isBehavioralScheme(scheme: ReasoningSchemeId | undefined): boolean {
@@ -14,7 +36,8 @@ export function isBehavioralScheme(scheme: ReasoningSchemeId | undefined): boole
 export function rememberReasoningRejected(baseUrl: string | undefined): void {
   if (!baseUrl) return;
   try {
-    rejectedHosts.add(new URL(baseUrl).hostname.toLowerCase());
+    rejectedHosts.set(new URL(baseUrl).hostname.toLowerCase(), Date.now());
+    pruneLearned();
   } catch {
     /* ignore unparseable URLs */
   }
@@ -24,7 +47,13 @@ export function rememberReasoningRejected(baseUrl: string | undefined): void {
 export function hostRejectsReasoning(baseUrl?: string): boolean {
   if (!baseUrl) return false;
   try {
-    return rejectedHosts.has(new URL(baseUrl).hostname.toLowerCase());
+    const ts = rejectedHosts.get(new URL(baseUrl).hostname.toLowerCase());
+    if (ts === undefined) return false;
+    if (Date.now() - ts > LEARNED_TTL_MS) {
+      rejectedHosts.delete(new URL(baseUrl).hostname.toLowerCase());
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -34,7 +63,8 @@ export function hostRejectsReasoning(baseUrl?: string): boolean {
 export function rememberModelRejectsReasoning(baseUrl: string | undefined, modelId: string | undefined): void {
   if (!baseUrl || !modelId) return;
   try {
-    rejectedModels.add(`${new URL(baseUrl).hostname.toLowerCase()}|${modelId.toLowerCase()}`);
+    rejectedModels.set(`${new URL(baseUrl).hostname.toLowerCase()}|${modelId.toLowerCase()}`, Date.now());
+    pruneLearned();
   } catch {
     /* ignore unparseable URLs */
   }
@@ -44,7 +74,14 @@ export function rememberModelRejectsReasoning(baseUrl: string | undefined, model
 export function modelRejectsReasoning(baseUrl?: string, modelId?: string): boolean {
   if (!baseUrl || !modelId) return false;
   try {
-    return rejectedModels.has(`${new URL(baseUrl).hostname.toLowerCase()}|${modelId.toLowerCase()}`);
+    const key = `${new URL(baseUrl).hostname.toLowerCase()}|${modelId.toLowerCase()}`;
+    const ts = rejectedModels.get(key);
+    if (ts === undefined) return false;
+    if (Date.now() - ts > LEARNED_TTL_MS) {
+      rejectedModels.delete(key);
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }

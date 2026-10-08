@@ -4,7 +4,7 @@ import { withRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { z } from "zod";
 import { parseJson, apiError, ok, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
 import { db } from "@/lib/db";
-import { invalidateRootDirCache, invalidateResolvedWsCache } from "@/lib/workspace";
+import { invalidateRootDirCache, invalidateResolvedWsCache, sanitizeWsName } from "@/lib/workspace";
 import { statSync } from "fs";
 import path from "path";
 
@@ -70,8 +70,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     return apiError("A filesystem root cannot be opened as a workspace.", 400);
   }
 
-  const folderName = path.basename(folderPath) || "workspace";
-
   const existing = await db.workspace.findFirst({
     where: { userId: user.id, rootDir: folderPath },
   });
@@ -99,9 +97,16 @@ export async function POST(req: NextRequest): Promise<Response> {
     return ok({ workspace: { id: updated.id, name: updated.name, isActive: true } });
   }
 
-  const baseName = folderName.length > 64 ? folderName.substring(0, 64) : folderName;
+  const rawBase = path.basename(folderPath) || "workspace";
+  let sanitizedBase: string;
+  try {
+    sanitizedBase = sanitizeWsName(rawBase);
+  } catch {
+    sanitizedBase = "workspace";
+  }
+  const baseName = sanitizedBase.length > 64 ? sanitizedBase.substring(0, 64) : sanitizedBase;
 
-  // Deduplicate name against existing user workspaces
+  // Deduplicate name against existing user workspaces (suffix "-2", "-3" keeps WS_NAME_RE valid)
   const userWorkspaces = await db.workspace.findMany({
     where: { userId: user.id },
     select: { name: true },
@@ -109,9 +114,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   const existingNames = new Set(userWorkspaces.map((w) => w.name));
 
   let candidateName = baseName;
-  let counter = 1;
+  let counter = 2;
   while (existingNames.has(candidateName)) {
-    const suffix = ` (${counter})`;
+    const suffix = `-${counter}`;
     const maxBaseLen = Math.max(1, 64 - suffix.length);
     const truncatedBase = baseName.length > maxBaseLen ? baseName.substring(0, maxBaseLen) : baseName;
     candidateName = `${truncatedBase}${suffix}`;
@@ -144,11 +149,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       break;
     } catch (err: unknown) {
       if (err && typeof err === "object" && "code" in err && err.code === "P2002" && attempt < 9) {
-        counter++;
-        const suffix = ` (${counter})`;
+        const suffix = `-${counter}`;
         const maxBaseLen = Math.max(1, 64 - suffix.length);
         const truncatedBase = baseName.length > maxBaseLen ? baseName.substring(0, maxBaseLen) : baseName;
         finalName = `${truncatedBase}${suffix}`;
+        counter++;
         continue;
       }
       throw err;

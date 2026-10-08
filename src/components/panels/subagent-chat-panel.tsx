@@ -70,6 +70,7 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
     if (!isRunning) return;
 
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void fetchHistory(false);
     }, 5000);
 

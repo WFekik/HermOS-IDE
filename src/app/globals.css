@@ -242,13 +242,15 @@
   /* Hide the scrollbar on horizontal tab/breadcrumb strips while
      keeping the native scroll behaviour. Used by the workspace
      panel's file-tab bar and the editor's breadcrumb bar. */
-  .anvil-tabs-scroll,
-  .anvil-breadcrumb-scroll {
+  .hermos-tabs-scroll,
+  .hermos-breadcrumb-scroll,
+  .no-scrollbar {
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE 10+ */
   }
-  .anvil-tabs-scroll::-webkit-scrollbar,
-  .anvil-breadcrumb-scroll::-webkit-scrollbar {
+  .hermos-tabs-scroll::-webkit-scrollbar,
+  .hermos-breadcrumb-scroll::-webkit-scrollbar,
+  .no-scrollbar::-webkit-scrollbar {
     display: none; /* Chrome / Safari / Edge */
   }
 }

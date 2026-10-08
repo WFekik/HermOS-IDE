@@ -9,7 +9,6 @@ import {
   getActiveWorkspace,
   ensureDefaultWorkspace,
   writeFileWs,
-  deniedWriteExtension,
 } from "@/lib/workspace";
 import { z } from "zod";
 import {
@@ -78,13 +77,6 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
 
   let ws = await getActiveWorkspace(user.id);
   if (!ws) ws = await ensureDefaultWorkspace(user.id);
-
-  // Match PUT /api/workspace/file: reject denied executable extensions as a
-  // 400 (client-visible validation), not a 500 from writeFileWs.
-  const denied = deniedWriteExtension(parsed.data.path);
-  if (denied) {
-    return apiError(`Writing files with the "${denied}" extension is not allowed.`, 400);
-  }
 
   try {
     // writeFileWs enforces: safePath (no traversal), 1 MB content cap,

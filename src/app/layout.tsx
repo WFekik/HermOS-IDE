@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { Providers } from "@/components/providers";
 import { DEFAULT_FONT_SIZE, FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_KEY } from "@/lib/font";
@@ -51,8 +50,7 @@ export default function RootLayout({
       <body className="antialiased bg-background text-foreground">
         <Providers>
           {children}
-          <Toaster />
-          <SonnerToaster position="top-right" richColors closeButton />
+          <SonnerToaster position="top-center" closeButton toastOptions={{ style: { background: "var(--popover)", color: "var(--popover-foreground)", border: "1px solid var(--border)" } }} />
         </Providers>
       </body>
     </html>

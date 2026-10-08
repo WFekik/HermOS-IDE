@@ -441,20 +441,21 @@ function BrowserPanelInner() {
               <button
                 type="button"
                 onClick={() => setBrowserAgentActive(false)}
-                className="text-[9px] font-sans font-bold bg-white/20 hover:bg-white/30 text-white border border-white/30 rounded px-1.5 py-0.5 transition-colors cursor-pointer"
+                className="text-[10px] font-sans font-bold bg-white/20 hover:bg-white/30 text-white border border-white/30 rounded px-1.5 py-0.5 transition-colors cursor-pointer"
               >
                 {t("browser_unlock")}
               </button>
-              <Badge variant="outline" className="text-[8px] h-4 text-white border-white/40">{t("live")}</Badge>
+              <Badge variant="outline" className="text-[10px] h-4 text-white border-white/40">{t("live")}</Badge>
             </div>
           </div>
-          <div className="absolute inset-x-0 bottom-0 top-[28px] z-[50] bg-transparent pointer-events-auto cursor-not-allowed" />
+          <div className="absolute inset-x-0 bottom-0 top-[28px] z-[5] bg-transparent pointer-events-auto cursor-not-allowed" />
         </>
       )}
-      {/* Toolbar — kept above the agent lock-shield (z-[60] vs z-[50]) so the
+      {/* Toolbar — kept above the agent lock-shield (z-10 vs z-[5]) so the
           view toggle stays reachable while the agent drives; interactive
-          controls are individually disabled/gated instead. */}
-      <div className="relative z-[60] flex h-10 shrink-0 items-center gap-1.5 border-b px-2">
+          controls are individually disabled/gated instead. Both stay below
+          app modals (dialog overlay/content are z-50). */}
+      <div className="relative z-10 flex h-10 shrink-0 items-center gap-1.5 border-b px-2">
         <Input
           value={urlInput}
           onChange={(e) => setUrlInput(e.target.value)}

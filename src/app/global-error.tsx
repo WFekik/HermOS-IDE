@@ -16,13 +16,23 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const attemptsRef = React.useRef(0);
   React.useEffect(() => {
     console.error("[Global Error Boundary]:", error);
   }, [error]);
 
+  const handleReset = React.useCallback(() => {
+    attemptsRef.current += 1;
+    if (attemptsRef.current > 3) {
+      window.location.reload();
+      return;
+    }
+    reset();
+  }, [reset]);
+
   return (
     <html lang="en">
-      <body style={{ margin: 0, backgroundColor: "#09090b", color: "#fafafa" }}>
+      <body style={{ margin: 0, backgroundColor: "var(--background, #ffffff)", color: "var(--foreground, #09090b)", colorScheme: "light dark" }}>
         <div
           style={{
             minHeight: "100vh",
@@ -39,14 +49,18 @@ export default function GlobalError({
               maxWidth: "480px",
               width: "100%",
               borderRadius: "12px",
-              border: "1px solid #27272a",
-              backgroundColor: "#18181b",
+              border: "1px solid var(--border, #e4e4e7)",
+              backgroundColor: "var(--card, #ffffff)",
               padding: "28px",
               textAlign: "center",
             }}
           >
-            <div style={{ fontSize: "36px", lineHeight: 1, marginBottom: "12px" }}>
-              ⚠️
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "12px" }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
             </div>
             <h1
               style={{
@@ -62,7 +76,7 @@ export default function GlobalError({
               style={{
                 fontSize: "13px",
                 lineHeight: 1.6,
-                color: "#a1a1aa",
+                color: "var(--muted-foreground, #71717a)",
                 margin: "0 0 16px",
               }}
             >
@@ -76,7 +90,7 @@ export default function GlobalError({
                   fontSize: "11px",
                   fontFamily:
                     "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace",
-                  color: "#71717a",
+                  color: "var(--muted-foreground, #71717a)",
                   margin: "0 0 16px",
                 }}
               >
@@ -86,11 +100,11 @@ export default function GlobalError({
             <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
               <button
                 type="button"
-                onClick={reset}
+                onClick={handleReset}
                 style={{
-                  border: "1px solid #3f3f46",
-                  backgroundColor: "#fafafa",
-                  color: "#09090b",
+                  border: "1px solid var(--border, #d4d4d8)",
+                  backgroundColor: "var(--primary, #18181b)",
+                  color: "var(--primary-foreground, #fafafa)",
                   borderRadius: "8px",
                   padding: "8px 14px",
                   fontSize: "13px",
@@ -104,9 +118,9 @@ export default function GlobalError({
                 type="button"
                 onClick={() => window.location.reload()}
                 style={{
-                  border: "1px solid #3f3f46",
+                  border: "1px solid var(--border, #d4d4d8)",
                   backgroundColor: "transparent",
-                  color: "#fafafa",
+                  color: "inherit",
                   borderRadius: "8px",
                   padding: "8px 14px",
                   fontSize: "13px",

@@ -21,7 +21,7 @@ import { Agent } from "undici";
  *     hostile domain resolving to 127.0.0.1 cannot inherit localhost privileges (DNS rebinding).
  */
 
-const STRICT = process.env.SSRF_BLOCK_PRIVATE !== "false";
+const isStrictPolicy = (): boolean => process.env.SSRF_BLOCK_PRIVATE !== "false";
 
 type HostClass = "public" | "loopback" | "private" | "linklocal" | "unspecified";
 
@@ -114,7 +114,7 @@ export function hostClassError(cls: HostClass): string | null {
   if (cls === "linklocal" || cls === "unspecified") {
     return "Requests to link-local, metadata, or unspecified addresses are not allowed.";
   }
-  if (STRICT && (cls === "loopback" || cls === "private")) {
+  if (isStrictPolicy() && (cls === "loopback" || cls === "private")) {
     return "Requests to private/internal networks are not allowed (set SSRF_BLOCK_PRIVATE=false to allow).";
   }
   return null;
@@ -241,6 +241,14 @@ export function getSsrfDispatcher(): Agent {
             .then((addrs) => {
               const safeAddrs = addrs.filter((a) => {
                 const cls = a.family === 6 ? classifyIpv6(a.address) : classifyIpv4(a.address);
+                if (isLocalAiHost(hostname)) {
+                  if (cls === "linklocal") return false;
+                  return true;
+                }
+                if (cls === "linklocal" || cls === "unspecified") return false;
+                if (isStrictPolicy() && (cls === "loopback" || cls === "private")) {
+                  return false;
+                }
                 return policyErrorFor(hostname, cls) === null;
               });
               if (safeAddrs.length === 0) {

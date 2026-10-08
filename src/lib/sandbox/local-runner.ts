@@ -79,6 +79,18 @@ export class LocalSandboxRunner implements ISandboxRunner {
       let stderr = "";
       let timedOut = false;
       let aborted = false;
+      let truncated = false;
+      const MAX_OUTPUT = 10 * 1024 * 1024;
+      const appendCapped = (cur: string, chunk: string): string => {
+        if (cur.length >= MAX_OUTPUT) {
+          truncated = true;
+          return cur;
+        }
+        const next = cur + chunk;
+        if (next.length <= MAX_OUTPUT) return next;
+        truncated = true;
+        return next.slice(0, MAX_OUTPUT);
+      };
 
       let child: ReturnType<typeof spawn>;
       try {
@@ -121,14 +133,16 @@ export class LocalSandboxRunner implements ISandboxRunner {
 
       child.stdout?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8");
-        stdout += text;
-        onProgress?.(text);
+        const wasCapped = truncated;
+        stdout = appendCapped(stdout, text);
+        if (!wasCapped) onProgress?.(text);
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8");
-        stderr += text;
-        onProgress?.(text);
+        const wasCapped = truncated;
+        stderr = appendCapped(stderr, text);
+        if (!wasCapped) onProgress?.(text);
       });
 
       child.on("close", (code) => {
@@ -161,8 +175,8 @@ export class LocalSandboxRunner implements ISandboxRunner {
 
         resolve({
           ok: code === 0,
-          stdout,
-          stderr,
+          stdout: truncated ? stdout + "\n...[output truncated - cap reached]\n" : stdout,
+          stderr: truncated ? stderr + "\n...[output truncated - cap reached]\n" : stderr,
           exitCode: code ?? 0,
           durationMs: Date.now() - startTime,
         });

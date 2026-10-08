@@ -41,6 +41,22 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.0.9" || tag === "1.0.9") {
+    return `### HermOS IDE ${tag} — Hardening, Performance Caps & Visual Polish
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### 🔒 What's New in ${tag}
+- **🛡️ Workspace Confinement**: Strict workspace-name validation at creation, traversal-safe resolution for existing workspaces, safeUserId-scoped storage roots, and absolute-path rootDir checks.
+- **🔐 API & SSRF Hardening**: Fail-closed loopback binding in production, anon-keyed rate limiting, dynamic SSRF policy evaluation, TTL-bounded reasoning memory, and UUID todo IDs with server-side caps.
+- **⚡ Performance Caps**: Bounded transcripts with pagination, capped command output with backpressure-safe progress, 32-wide tree stat limiting, grep time/byte budgets, cached provider data, and visibility-aware background polling.
+- **🎨 Visual & Accessibility**: Phone layout support, theme-token consistency, logical-property RTL, tree/minimap keyboard support, themed toasts, and light/dark crash screens with bounded retry.
+- **🔌 Skills & Agent Freedom**: Fixed Skills panel data feed, script file creation unblocked, and unfiltered directory listings across tree, grep, glob, and list_directory.
+- **✅ Verified End-to-End**: typecheck clean, eslint clean, 1617 tests passed (91 files), cargo check clean, production build green (Azure test gate).
+
+#### 📦 Downloads & Verification
+All installer binaries and signatures are signed with the HermOS Tauri release key. Download the installer for your platform below.`;
+  }
   if (tag === "v1.0.8" || tag === "1.0.8") {
     return `### HermOS IDE ${tag} — Security Hardening & Agent Reliability
 

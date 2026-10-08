@@ -138,10 +138,15 @@ function updateCargoToml(newVersion) {
 function updateCargoLock(newVersion) {
   if (!fs.existsSync(CARGO_LOCK_PATH)) return;
   let content = fs.readFileSync(CARGO_LOCK_PATH, "utf-8");
-  content = content.replace(
-    /(\[\[package\]\]\r?\nname = "app"\r?\nversion = )"[^"]+"/m,
-    `$1"${newVersion}"`
-  );
+  const hermosStanza = /(\[\[package\]\]\r?\nname = "hermos-ide"\r?\nversion = )"[^"]+"/m;
+  if (hermosStanza.test(content)) {
+    content = content.replace(hermosStanza, `$1"${newVersion}"`);
+  } else {
+    content = content.replace(
+      /(\[\[package\]\]\r?\nname = "app"\r?\nversion = )"[^"]+"/m,
+      `$1"${newVersion}"`
+    );
+  }
   fs.writeFileSync(CARGO_LOCK_PATH, content, "utf-8");
 }
 
@@ -149,7 +154,7 @@ function updateHermosWebsite(newVersion) {
   if (!fs.existsSync(WEBSITE_PATH)) return;
   let content = fs.readFileSync(WEBSITE_PATH, "utf-8");
   content = content.replace(/"softwareVersion":\s*"[^"]+"/g, `"softwareVersion": "${newVersion}"`);
-  content = content.replace(/version:\s*"[^"]+"/g, `version: "${newVersion}"`);
+  content = content.replace(/("softwareVersion"\s*,\s*"version"\s*:\s*)"[^"]+"/g, `$1"${newVersion}"`);
   // Versioned installer filenames baked into static download hrefs
   // (e.g. HermOS.IDE_1.0.6_x64-setup.exe) — otherwise the site keeps
   // pointing at the previous release's assets after a bump.

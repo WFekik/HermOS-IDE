@@ -38,7 +38,7 @@ import { HermOSLogo } from "@/components/brand/hermos-logo";
 import { ErrorBoundary } from "@/components/ide/error-boundary";
 import { dispatchExportConversation } from "@/components/ide/chat-export-button";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
-import { useIsTablet } from "@/hooks/use-mobile";
+import { useIsTablet, useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
@@ -74,6 +74,7 @@ export function IdeShell() {
   const activeConversationId = useAppStore((s) => s.activeConversationId);
 
   const isTablet = useIsTablet();
+  const isMobile = useIsMobile();
   const openSettings = React.useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
 
   // Warm the code-split settings chunks while the shell idles so the first
@@ -88,13 +89,16 @@ export function IdeShell() {
   }, []);
 
   // Auto-collapse sidebar & right panel into 48px rails on tablet screens
-  // (768px-1024px) to preserve main chat/editor width.
+  // (768px-1024px) to preserve main chat/editor width. Phones collapse fully.
   React.useEffect(() => {
-    if (isTablet) {
+    if (isMobile) {
+      setSidebarCollapsed(true);
+      setRightPanelOpen(false);
+    } else if (isTablet) {
       setSidebarCollapsed(true);
       setRightPanelOpen(false);
     }
-  }, [isTablet, setRightPanelOpen]);
+  }, [isTablet, isMobile, setRightPanelOpen]);
 
   // Keep the local collapse state in sync with the global rightPanelOpen
   // store flag (opened from the rail, top bar, or ⌘J).
@@ -295,7 +299,7 @@ export function IdeShell() {
                 />
               ) : (
                 <>
-                  <ResizablePanel id="sidebar" order={1} defaultSize={25} minSize={12} maxSize={70} className="min-w-[260px] max-w-[750px]">
+                  <ResizablePanel id="sidebar" order={1} defaultSize={25} minSize={12} maxSize={70} className="min-w-0 md:min-w-[260px] md:max-w-[750px]">
                     <ErrorBoundary fallbackTitle="Sidebar encountered an error">
                       <Sidebar
                         onOpenSettings={openSettings}
@@ -306,7 +310,7 @@ export function IdeShell() {
                   <ResizableHandle withHandle />
                 </>
               )}
-              <ResizablePanel id="main" order={2} defaultSize={52} minSize={15}>
+              <ResizablePanel id="main" order={2} defaultSize={52} minSize={15} className="min-w-0">
                 <ErrorBoundary fallbackTitle="Chat View encountered an error">
                   <ChatView />
                 </ErrorBoundary>
@@ -325,7 +329,7 @@ export function IdeShell() {
               ) : (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel id="right-panel" order={3} defaultSize={23} minSize={18} maxSize={85} className="min-w-[280px]">
+                  <ResizablePanel id="right-panel" order={3} defaultSize={23} minSize={18} maxSize={85} className="min-w-0 md:min-w-[280px]">
                     <ErrorBoundary fallbackTitle="Panel encountered an error">
                       <RightPanel />
                     </ErrorBoundary>
@@ -334,7 +338,7 @@ export function IdeShell() {
               )}
             </ResizablePanelGroup>
         </div>
-        <div className="hidden md:block shrink-0">
+        <div className="shrink-0">
           <StatusBar />
         </div>
         <TaskProgress />
@@ -428,7 +432,7 @@ function SubagentRailBadge() {
   );
   if (runningCount === 0) return null;
   return (
-    <span className="absolute -top-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full bg-sky-500 text-[8px] font-mono font-semibold text-white leading-none shadow-2xs animate-pulse">
+    <span className="absolute -top-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full bg-brand text-[10px] font-mono font-semibold text-brand-foreground leading-none shadow-2xs animate-pulse">
       {runningCount > 9 ? "9+" : runningCount}
     </span>
   );

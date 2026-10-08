@@ -1,12 +1,10 @@
 import { NextRequest } from "next/server";
 import { db, dbReady } from "@/lib/db";
-import { ok, apiError, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { ok, apiError, withErrorHandler } from "@/app/api/_lib/helpers";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
-  const blocked = enforceLoopbackRequest(req);
-  if (blocked) return blocked;
+export const GET = withErrorHandler(async (req: NextRequest) => {
   const token = process.env.HERMOS_INSTANCE_TOKEN;
   const tokenHeader: Record<string, string> | undefined = token
     ? { "X-HermOS-Instance-Token": token }
@@ -41,4 +39,4 @@ export async function GET(req: NextRequest) {
     const msg = error instanceof Error ? error.message : "Health check failed";
     return apiError(msg, 503, { status: "unhealthy" });
   }
-}
+});

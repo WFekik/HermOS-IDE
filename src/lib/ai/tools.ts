@@ -42,7 +42,6 @@ import {
   isSubpathOrEqual,
   isAbsoluteInsideBase,
   grepWorkspace,
-  deniedWriteExtension,
 } from "@/lib/workspace";
 import { computeDiff, type DiffLine } from "@/lib/diff";
 import {
@@ -2402,9 +2401,6 @@ async function runToolImpl(
         if (!target) return { ok: false, result: { error: "Invalid path." } };
         const twGuard = truncationWriteGuard(target);
         if (twGuard) return twGuard;
-        if (target.isArtifact && deniedWriteExtension(target.rel)) {
-          return { ok: false, result: { error: `Writing artifacts with the "${path.extname(target.rel).slice(1)}" extension is not allowed.` } };
-        }
         try {
           // Capture prior content for diffs on overwrite; for new files set created: true.
           let oldContent: string | undefined;
@@ -2474,11 +2470,6 @@ async function runToolImpl(
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
 
         const filename = path.basename(rawPath);
-        // Same executable-extension policy write_file enforces.
-        const deniedExt = deniedWriteExtension(filename);
-        if (deniedExt) {
-          return { ok: false, result: { error: `Writing artifacts with the "${deniedExt.replace(/^\./, "")}" extension is not allowed.` } };
-        }
         const convId = convScope(ctx) || "global";
         const artifactDir = path.join(/* turbopackIgnore: true */ ARTIFACTS_DIR, ctx.userId, convId);
 

@@ -28,7 +28,41 @@ function userRoot(userId: string): string {
   // Fallback path under the persistent workspaces root (used when a
   // workspace has no rootDir set). Normal workspaces (from-folder) store
   // their real path directly.
-  return path.join(WORKSPACES_ROOT, userId);
+  return path.join(WORKSPACES_ROOT, safeUserId(userId));
+}
+
+const WS_NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+
+export function assertValidWsName(wsName: string): string {
+  if (typeof wsName !== "string" || !WS_NAME_RE.test(wsName)) {
+    throw new Error("Invalid workspace name.");
+  }
+  return wsName;
+}
+
+/**
+ * Traversal check for resolution paths (safePath, readTree, resolveRootDir).
+ * Strict `assertValidWsName` governs creation (open/rename/from-folder), but
+ * workspaces created before sanitization may legitimately contain spaces or
+ * parens (e.g. "my project", "proj-2"). Those must keep resolving — only
+ * path separators and ".." segments can escape the user root, so only those
+ * are rejected here.
+ */
+export function isSafeWsName(wsName: string): boolean {
+  if (typeof wsName !== "string" || wsName.length === 0 || wsName.length > 64) return false;
+  if (wsName.includes("/") || wsName.includes("\\")) return false;
+  if (wsName.split("/").some((s) => s === "..")) return false;
+  if (wsName === "." || wsName === "..") return false;
+  return true;
+}
+
+export function sanitizeWsName(name: string): string {
+  const clean = (name || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .slice(0, 64);
+  if (!clean || !WS_NAME_RE.test(clean)) throw new Error("Invalid workspace name.");
+  return clean;
 }
 
 /** Per-user agent scratch dir (`<APP_DATA_DIR>/agent-temp/<userId>`), exposed via HERMOS_TEMP_DIR. */
@@ -81,6 +115,7 @@ const rootDirCache = new Map<string, string>();
 
 /** Resolve a workspace's actual rootDir from the DB (cached). */
 export async function resolveRootDir(userId: string, wsName: string): Promise<string> {
+  if (!isSafeWsName(wsName)) throw new Error("Invalid workspace name.");
   const key = `${userId}:${wsName}`;
   const cached = rootDirCache.get(key);
   if (cached && existsSync(cached)) return cached;
@@ -97,7 +132,7 @@ export async function resolveRootDir(userId: string, wsName: string): Promise<st
   } catch { /* fall through */ }
   // Don't cache the fallback — it would pin a stale path if the real
   // rootDir is later restored.
-  return path.join(WORKSPACES_ROOT, userId, wsName);
+  return path.join(WORKSPACES_ROOT, safeUserId(userId), wsName);
 }
 
 /** Invalidate the rootDir cache for a workspace (e.g. after switching). */
@@ -150,6 +185,7 @@ export function invalidateResolvedWsCache(userId?: string, conversationId?: stri
 
 /** Resolve a relative path inside the workspace, rejecting traversal escapes. */
 export function safePath(userId: string, wsName: string, rel: string, rootDir?: string): string | null {
+  if (!isSafeWsName(wsName)) return null;
   const base = rootDir ?? rootDirCache.get(`${userId}:${wsName}`) ?? path.join(userRoot(userId), wsName);
   return safePathFromRoot(base, rel);
 }
@@ -387,14 +423,13 @@ export async function openWorkspace(
   name: string,
   rootDir?: string,
 ): Promise<WorkspaceInfo> {
-  const cleanName = name
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "-")
-    .slice(0, 64);
-  if (!cleanName) throw new Error("Invalid workspace name.");
+  const cleanName = sanitizeWsName(name);
+  if (rootDir !== undefined && (typeof rootDir !== "string" || !path.isAbsolute(rootDir))) {
+    throw new Error("Invalid workspace rootDir.");
+  }
   // Persistent default workspace under WORKSPACES_ROOT (NOT a temp dir) so
   // files survive restarts. The desktop app should use from-folder instead.
-  const dir = rootDir ?? path.join(WORKSPACES_ROOT, userId, cleanName);
+  const dir = rootDir ?? path.join(WORKSPACES_ROOT, safeUserId(userId), cleanName);
   // Ensure the workspace directory exists before anything tries to run
   // commands in it (parity with ensureDefaultWorkspace; a missing cwd makes
   // assertCwdInsideWorkspace throw at spawn time).
@@ -461,7 +496,7 @@ export async function ensureDefaultWorkspace(
 ): Promise<WorkspaceInfo> {
   // Persistent fallback workspace under WORKSPACES_ROOT (NOT a temp dir) so
   // the default workspace's files survive restarts.
-  const rootDir = path.join(WORKSPACES_ROOT, userId);
+  const rootDir = path.join(WORKSPACES_ROOT, safeUserId(userId));
   await ensureDir(rootDir);
   const ws = await db.workspace.upsert({
     where: { userId_name: { userId, name: "default" } },
@@ -604,17 +639,18 @@ export async function renameWorkspace(
   workspaceId: string,
   newName: string,
 ): Promise<WorkspaceInfo> {
+  const cleanName = sanitizeWsName(newName);
   const ws = await db.workspace.findFirst({
     where: { id: workspaceId, userId },
   });
   if (!ws) throw new Error("Workspace not found");
   const existing = await db.workspace.findFirst({
-    where: { userId, name: newName, NOT: { id: workspaceId } },
+    where: { userId, name: cleanName, NOT: { id: workspaceId } },
   });
-  if (existing) throw new Error(`A workspace named "${newName}" already exists`);
+  if (existing) throw new Error(`A workspace named "${cleanName}" already exists`);
   const updated = await db.workspace.update({
     where: { id: workspaceId },
-    data: { name: newName },
+    data: { name: cleanName },
   });
   // Drop the old-name rootDir entry — otherwise a later workspace reusing the
   // old name could resolve via the stale cached dir.
@@ -650,33 +686,15 @@ export async function readTree(
   maxDepth = 6,
   rootDir?: string,
 ): Promise<FileNode[]> {
+  if (!isSafeWsName(wsName)) return [];
+  const clampedDepth = Math.max(1, Math.min(8, Math.floor(maxDepth) || 6));
   const base = rootDir ?? path.join(userRoot(userId), wsName);
   if (!existsSync(base)) return [];
   const state = { count: 0 };
-  return readTreeRec(base, base, "", 0, maxDepth, state);
+  return readTreeRec(base, base, "", 0, clampedDepth, state);
 }
 
 const MAX_TREE_NODES = 50_000;
-
-const IGNORED_TREE_ENTRIES: ReadonlySet<string> = new Set([
-  "node_modules",
-  ".git",
-  ".next",
-  ".next-build",
-  ".gemini",
-  ".hermos",
-  ".artifacts",
-  "npm-cache",
-  ".npm",
-  "dist",
-  "build",
-  "out",
-  "coverage",
-  ".vercel",
-  ".turbo",
-  ".eslintcache",
-  ".cache",
-]);
 
 async function readTreeRec(
   base: string,
@@ -689,11 +707,8 @@ async function readTreeRec(
   if (depth > maxDepth || state.count >= MAX_TREE_NODES) return [];
   const entries = await fs.readdir(abs, { withFileTypes: true }).catch(() => []);
   const nodes: FileNode[] = [];
-  const filePromises: Promise<FileNode>[] = [];
+  const pendingFiles: Array<{ name: string; abs: string; rel: string }> = [];
   for (const e of entries) {
-    if (IGNORED_TREE_ENTRIES.has(e.name)) {
-      continue;
-    }
     const childAbs = path.join(abs, e.name);
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     state.count++;
@@ -710,23 +725,31 @@ async function readTreeRec(
       };
       nodes.push(node);
     } else if (e.isFile()) {
-      filePromises.push(
-        fs.stat(childAbs).then((stat) => ({
-          name: e.name,
-          path: childRel,
-          type: "file" as const,
-          size: stat.size,
-        })).catch(() => ({
-          name: e.name,
-          path: childRel,
-          type: "file" as const,
-        }))
-      );
+      pendingFiles.push({ name: e.name, abs: childAbs, rel: childRel });
     }
   }
 
-  if (filePromises.length > 0) {
-    const fileNodes = await Promise.all(filePromises);
+  // True concurrency limiter: stat promises are created per chunk, so at most
+  // 32 file stats are ever in flight (no EMFILE burst on huge directories).
+  if (pendingFiles.length > 0) {
+    const fileNodes: FileNode[] = [];
+    for (let i = 0; i < pendingFiles.length; i += 32) {
+      const batch = await Promise.all(
+        pendingFiles.slice(i, i + 32).map((f) =>
+          fs.stat(f.abs).then((stat): FileNode => ({
+            name: f.name,
+            path: f.rel,
+            type: "file" as const,
+            size: stat.size,
+          })).catch((): FileNode => ({
+            name: f.name,
+            path: f.rel,
+            type: "file" as const,
+          }))
+        ),
+      );
+      fileNodes.push(...batch);
+    }
     nodes.push(...fileNodes);
   }
   // dirs first, then files, alpha within.
@@ -991,35 +1014,6 @@ export async function globWs(
   };
 }
 
-export const DENIED_WRITE_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".exe",
-  ".bat",
-  ".cmd",
-  ".com",
-  ".ps1",
-  ".dll",
-  ".scr",
-  ".lnk",
-]);
-
-/** Return denied extension for `rel` (handling NTFS ADS suffixes), or null if allowed. */
-export function deniedWriteExtension(rel: string): string | null {
-  const noAds = rel.split("::")[0];
-  const base = (noAds.split(/[\\/]/).pop() ?? noAds).replace(/[. ]+$/, "");
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const ext = base.slice(dot).toLowerCase();
-  return DENIED_WRITE_EXTENSIONS.has(ext) ? ext : null;
-}
-
-/** Throw when `rel` targets a denied executable extension. */
-function assertWritableExtension(rel: string): void {
-  const denied = deniedWriteExtension(rel);
-  if (denied) {
-    throw new Error(`Writing files with the "${denied}" extension is not allowed.`);
-  }
-}
-
 /** Atomically write `content` to `abs` via a temp file in the same directory. */
 async function atomicWriteFile(abs: string, content: string): Promise<void> {
   const tmp = `${abs}.hermos-tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1046,7 +1040,6 @@ export async function writeFileWs(
   content: string,
   rootDir?: string,
 ): Promise<{ path: string; bytes: number }> {
-  assertWritableExtension(rel);
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
   
@@ -1136,7 +1129,6 @@ export async function editFileWs(
   replaceAll = false,
   rootDir?: string,
 ): Promise<{ path: string; occurrences: number }> {
-  assertWritableExtension(rel);
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
   const original = await fs.readFile(/* turbopackIgnore: true */ abs, "utf8");
@@ -1186,7 +1178,6 @@ export async function multiEditWs(
   oldContent: string;
   newContent: string;
 }> {
-  assertWritableExtension(rel);
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
   if (!Array.isArray(edits) || edits.length === 0) {
@@ -1273,9 +1264,6 @@ export async function renamePathWs(
   to: string,
   rootDir?: string,
 ): Promise<{ from: string; to: string }> {
-  // Renaming INTO a denied executable extension is a write of that
-  // extension (e.g. notes.txt -> evil.bat) — enforce the same deny-list.
-  assertWritableExtension(to);
   const fromAbs = safePath(userId, wsName, from, rootDir);
   const toAbs = safePath(userId, wsName, to, rootDir);
   if (!fromAbs || !toAbs) throw new Error("Invalid path.");
@@ -1292,6 +1280,13 @@ const MAX_COMMAND_OUTPUT = 10 * 1024 * 1024; // 10MB per stream
 function truncateOut(s: string): string {
   if (s.length <= MAX_COMMAND_OUTPUT) return s;
   return s.slice(0, MAX_COMMAND_OUTPUT) + "\n...[output truncated]\n";
+}
+
+function appendCapped(current: string, chunk: string): string {
+  if (current.length >= MAX_COMMAND_OUTPUT) return current;
+  const next = current + chunk;
+  if (next.length <= MAX_COMMAND_OUTPUT) return next;
+  return next.slice(0, MAX_COMMAND_OUTPUT) + "\n...[output truncated - cap reached]\n";
 }
 
 export interface ExecResult extends TerminalResponse {
@@ -2149,14 +2144,16 @@ export function startBackgroundCommand(
 
   child.stdout?.on("data", (chunk: Buffer) => {
     const text = decodeBuffer(chunk);
-    stdout += text;
-    opts?.onProgress?.(text);
+    const wasCapped = stdout.length >= MAX_COMMAND_OUTPUT;
+    stdout = appendCapped(stdout, text);
+    if (!wasCapped) opts?.onProgress?.(text);
   });
 
   child.stderr?.on("data", (chunk: Buffer) => {
     const text = decodeBuffer(chunk);
-    stderr += text;
-    opts?.onProgress?.(text);
+    const wasCapped = stderr.length >= MAX_COMMAND_OUTPUT;
+    stderr = appendCapped(stderr, text);
+    if (!wasCapped) opts?.onProgress?.(text);
   });
 
   registerCommand(userId, conversationId, child, rawCommand, execId);
@@ -2593,28 +2590,32 @@ export async function runCommandWs(
       child.stderr?.removeAllListeners("data");
       child.stdout?.on("data", (d: Buffer) => {
         const text = decodeBuffer(d);
-        stdout += text;
+        const wasCapped = stdout.length >= MAX_COMMAND_OUTPUT;
+        stdout = appendCapped(stdout, text);
         const entry = runningCommands.get(commandKey(userId, opts.conversationId!));
-        if (entry) entry.stdout += text;
-        opts?.onProgress?.(text);
+        if (entry) entry.stdout = appendCapped(entry.stdout, text);
+        if (!wasCapped) opts?.onProgress?.(text);
       });
       child.stderr?.on("data", (d: Buffer) => {
         const text = decodeBuffer(d);
-        stderr += text;
+        const wasCapped = stderr.length >= MAX_COMMAND_OUTPUT;
+        stderr = appendCapped(stderr, text);
         const entry = runningCommands.get(commandKey(userId, opts.conversationId!));
-        if (entry) entry.stderr += text;
-        opts?.onProgress?.(text);
+        if (entry) entry.stderr = appendCapped(entry.stderr, text);
+        if (!wasCapped) opts?.onProgress?.(text);
       });
     } else {
       child.stdout?.on("data", (d: Buffer) => {
         const text = decodeBuffer(d);
-        stdout += text;
-        opts?.onProgress?.(text);
+        const wasCapped = stdout.length >= MAX_COMMAND_OUTPUT;
+        stdout = appendCapped(stdout, text);
+        if (!wasCapped) opts?.onProgress?.(text);
       });
       child.stderr?.on("data", (d: Buffer) => {
         const text = decodeBuffer(d);
-        stderr += text;
-        opts?.onProgress?.(text);
+        const wasCapped = stderr.length >= MAX_COMMAND_OUTPUT;
+        stderr = appendCapped(stderr, text);
+        if (!wasCapped) opts?.onProgress?.(text);
       });
     }
 
@@ -2685,10 +2686,6 @@ const BINARY_EXTS = new Set([
   "node", "wasm", "pyc", "pyo",
   "lockb",
 ]);
-
-// Directories we never descend into — they're either noise (deps, build
-// artifacts) or expensive.
-const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "dist", "build", ".turbo", ".cache"]);
 
 const MAX_FILE_BYTES = 1_000_000; // 1 MB
 
@@ -2793,7 +2790,7 @@ export async function grepWorkspace(
       .trim()
       .replace(/^\.?\//, "")
       .replace(/\/+$/, "");
-    if (subPathRel.includes("..")) throw new Error("Invalid search path.");
+    if (subPathRel.split("/").some((s) => s === "..")) throw new Error("Invalid search path.");
   } else {
     const resolvedRoot = safePath(userId, wsName, ".", opts?.rootDir);
     if (!resolvedRoot) throw new Error("Invalid search path.");
@@ -2809,6 +2806,11 @@ export async function grepWorkspace(
 
   const queryLower = q.toLowerCase();
   const matches: GrepMatch[] = [];
+  const deadline = Date.now() + 8000;
+  let totalBytes = 0;
+  const MAX_TOTAL_BYTES = 20_000_000;
+  let visitedDirs = 0;
+  const MAX_VISITED_DIRS = 5000;
 
   // Prepend the sub-path prefix (if any) so the returned `path` is always
   // relative to the workspace root, as the GrepMatch contract requires.
@@ -2847,9 +2849,13 @@ export async function grepWorkspace(
 
   // Breadth-first traversal keeps memory bounded and produces results roughly
   // in directory order, which is friendlier for incremental rendering.
+  // Index pointer instead of shift() — shift() is O(n) per dir.
   const stack: Array<{ abs: string; rel: string }> = [{ abs: searchRootAbs, rel: "" }];
-  while (stack.length > 0 && matches.length < maxResults) {
-    const { abs, rel } = stack.shift()!;
+  let stackIdx = 0;
+  while (stackIdx < stack.length && matches.length < maxResults) {
+    if (Date.now() > deadline || totalBytes > MAX_TOTAL_BYTES || visitedDirs > MAX_VISITED_DIRS) break;
+    const { abs, rel } = stack[stackIdx++]!;
+    visitedDirs++;
     let entries: import("fs").Dirent[];
     try {
       entries = await fs.readdir(abs, { withFileTypes: true });
@@ -2859,7 +2865,6 @@ export async function grepWorkspace(
     for (const entry of entries) {
       if (matches.length >= maxResults) break;
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
         stack.push({
           abs: path.join(abs, entry.name),
           rel: rel ? `${rel}/${entry.name}` : entry.name,
@@ -2879,6 +2884,8 @@ export async function grepWorkspace(
         continue;
       }
       if (!stat.isFile() || stat.size > MAX_FILE_BYTES) continue;
+      if (totalBytes + stat.size > MAX_TOTAL_BYTES) break;
+      totalBytes += stat.size;
 
       let content: string;
       try {

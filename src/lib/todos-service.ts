@@ -11,6 +11,7 @@ export interface TodoItem {
 }
 
 export const MAX_TODOS = 50;
+export const MAX_TODO_TEXT = 1000;
 
 export function todosPluginName(conversationId: string): string {
   return `__todo_list_${conversationId}__`;
@@ -60,7 +61,11 @@ export async function saveTodos(
   conversationId: string,
   todos: TodoItem[],
 ): Promise<void> {
-  const json = JSON.stringify(todos.slice(0, MAX_TODOS));
+  const sanitized = todos
+    .filter((t) => t && typeof t.id === "string" && typeof t.text === "string" && typeof t.completed === "boolean")
+    .map((t) => ({ ...t, text: t.text.slice(0, MAX_TODO_TEXT) }))
+    .slice(0, MAX_TODOS);
+  const json = JSON.stringify(sanitized);
   const name = todosPluginName(conversationId);
   await db.plugin.upsert({
     where: { userId_name: { userId, name } },

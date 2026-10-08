@@ -312,10 +312,14 @@ export function OfficePanel() {
     }
   }, [activeWorkspace?.id, setActiveOfficeDoc, fetchDocuments]);
 
-  // Initial fetch and background poll scoped to workspace
+  // Initial fetch and background poll scoped to workspace. Skipped while the
+  // tab is hidden — polling a never-visible panel only burns requests.
   React.useEffect(() => {
     void fetchDocuments();
-    const interval = setInterval(() => void fetchDocuments(), 8000);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void fetchDocuments();
+    }, 8000);
     return () => clearInterval(interval);
   }, [fetchDocuments]);
 

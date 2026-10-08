@@ -95,13 +95,14 @@ export function GitPanel() {
   const [worktreeDialogOpen, setWorktreeDialogOpen] = React.useState(false);
   const [showAllCommits, setShowAllCommits] = React.useState(false);
 
-  // Initial load + 30s poll. We always poll while the panel is
-  // mounted — the store dedupes concurrent requests and the top-bar
-  // poller also writes to the same field, so duplicate renders are
-  // cheap.
+  // Initial load + 30s poll, skipped while the tab is hidden. We always
+  // poll while the panel is mounted and visible — the store dedupes
+  // concurrent requests and the top-bar poller also writes to the same
+  // field, so duplicate renders are cheap.
   React.useEffect(() => {
     void refreshGitStatus();
     const id = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void refreshGitStatus();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);

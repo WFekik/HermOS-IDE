@@ -22,7 +22,7 @@ const MCP_TRANSPORTS = ["stdio", "sse", "streamable-http"] as const;
 const SHELLS = ["bash", "pwsh", "cmd", "zsh"] as const;
 
 export const providerIdSchema = z.string().trim().min(1).max(100).refine(
-  (val) => (PROVIDER_IDS as readonly string[]).includes(val) || val.startsWith("custom"),
+  (val) => (PROVIDER_IDS as readonly string[]).includes(val) || /^custom-[a-z0-9-]{1,32}$/.test(val),
   { message: "Invalid provider ID" }
 );
 export const agentModeSchema = z.enum(AGENT_MODES);

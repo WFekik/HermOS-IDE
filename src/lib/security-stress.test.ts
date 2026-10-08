@@ -157,15 +157,15 @@ describe("Security Stress — Encryption, Rate Limit, Permissions & Subagents", 
   });
 
   describe("2. Rate limit bucket eviction of inactive keys (>1h)", () => {
-    it("demonstrates bucket eviction behavior and identifies eviction condition defect", async () => {
+    it("evicts inactive buckets purely on TTL, even when partially used", async () => {
       const key = `test-key-${Date.now()}`;
       await rateLimit(key, { capacity: 5, refillPerSec: 1 });
 
-      // evictExpiredBuckets checks `t - bucket.lastRefill > ttlSec && bucket.tokens >= bucket.capacity`
-      // Because rateLimit decrements bucket.tokens to 4 (below capacity=5), bucket.tokens >= capacity is false!
+      // evictExpiredBuckets evicts purely on `t - bucket.lastRefill > ttlSec`
+      // (1.0.9 fix: partially-used buckets must not leak). With ttl=-1 every
+      // bucket is expired regardless of token count.
       const evicted = evictExpiredBuckets(-1);
-      // Eviction returns 0 because tokens < capacity
-      expect(evicted).toBe(0);
+      expect(evicted).toBe(1);
     });
   });
 

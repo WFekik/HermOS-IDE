@@ -440,11 +440,10 @@ export function FileEditor({
     }
     const body = editorBodyRef.current;
     if (!body) return;
-    // Radix ScrollArea exposes its scrollable element via the
-    // `[data-radix-scroll-area-viewport]` attribute.
-    const scroller = body.querySelector(
-      "[data-radix-scroll-area-viewport]",
-    ) as HTMLElement | null;
+    const scroller =
+      (body.querySelector("[data-code-scroller]") as HTMLElement | null) ??
+      (body.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null) ??
+      (body.firstElementChild as HTMLElement | null);
     if (!scroller) return;
 
     // The SyntaxHighlighter uses 12px font * 1.55 line-height ≈ 18.6px
@@ -602,7 +601,7 @@ export function FileEditor({
       onMouseDown={onFocusSide}
       onFocus={onFocusSide}
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3 overflow-x-auto no-scrollbar">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span
             className="truncate font-mono text-xs text-foreground/80"
@@ -617,12 +616,12 @@ export function FileEditor({
             />
           )}
           {file && (
-            <span className="shrink-0 text-[10px] text-muted-foreground font-mono">
+            <span className="hidden sm:inline shrink-0 text-[10px] text-muted-foreground font-mono">
               {formatBytes(file.size)}
             </span>
           )}
           {totalLines > 0 && (
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+            <span className="hidden sm:inline shrink-0 font-mono text-[10px] text-muted-foreground">
               L{visibleStart}-L{visibleEnd}
             </span>
           )}
@@ -1028,10 +1027,10 @@ const CodeView = React.memo(function CodeView({
   const isLargeFile = content.length > 350_000 || lineCount > 3500;
 
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden">
+    <div className="h-full overflow-y-auto overflow-x-hidden" data-code-scroller="true">
       <div
         className="min-w-full bg-card"
-        style={padRight ? { paddingRight: "60px" } : undefined}
+        style={padRight ? { paddingInlineEnd: "60px" } : undefined}
       >
         <div className="flex">
           <LineNumbers
@@ -1058,7 +1057,7 @@ const CodeView = React.memo(function CodeView({
                 customStyle={{
                   margin: 0,
                   padding: "0.75rem 1rem 1.5rem 0.75rem",
-                  background: "transparent",
+                  background: "var(--card)",
                   fontSize: "12px",
                   lineHeight: "1.55",
                   fontFamily:

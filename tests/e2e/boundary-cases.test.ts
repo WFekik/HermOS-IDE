@@ -30,7 +30,6 @@ import {
   ensureDefaultWorkspace,
   switchWorkspace,
   resolveCommandSafety,
-  deniedWriteExtension,
 } from "@/lib/workspace";
 import {
   truncateHistory,
@@ -237,27 +236,17 @@ describe("Boundary Cases — E2E Boundaries & Edge Conditions", () => {
       }
     });
 
-    it("2.5 should block writing to denied dangerous executable extensions", async () => {
-      expect(deniedWriteExtension("trojan.exe")).toBe(".exe");
-      expect(deniedWriteExtension("malicious.bat")).toBe(".bat");
-      expect(deniedWriteExtension("script.cmd")).toBe(".cmd");
-      expect(deniedWriteExtension("payload.ps1")).toBe(".ps1");
-      expect(deniedWriteExtension("library.dll")).toBe(".dll");
-      expect(deniedWriteExtension("safe.txt")).toBeNull();
+    it("2.5 should allow writing script and executable extensions", async () => {
+      const exe = await writeFileWs(TEST_USER_ID, TEST_WS_NAME, "bin/tool.exe", "MZ...", testRootDir);
+      expect(exe.path).toBe("bin/tool.exe");
 
-      await expect(
-        writeFileWs(TEST_USER_ID, TEST_WS_NAME, "bin/malware.exe", "MZ...", testRootDir),
-      ).rejects.toThrow('Writing files with the ".exe" extension is not allowed.');
+      const ps1 = await writeFileWs(TEST_USER_ID, TEST_WS_NAME, "hack.ps1", "Write-Host 'hi'", testRootDir);
+      expect(ps1.path).toBe("hack.ps1");
 
-      await expect(
-        writeFileWs(TEST_USER_ID, TEST_WS_NAME, "hack.ps1", "Write-Host 'hack'", testRootDir),
-      ).rejects.toThrow('Writing files with the ".ps1" extension is not allowed.');
-
-      // Also renaming into a denied extension must be blocked
+      // Renaming into a script extension is also allowed
       await writeFileWs(TEST_USER_ID, TEST_WS_NAME, "normal.txt", "content", testRootDir);
-      await expect(
-        renamePathWs(TEST_USER_ID, TEST_WS_NAME, "normal.txt", "normal.bat", testRootDir),
-      ).rejects.toThrow('Writing files with the ".bat" extension is not allowed.');
+      const renamed = await renamePathWs(TEST_USER_ID, TEST_WS_NAME, "normal.txt", "normal.bat", testRootDir);
+      expect(renamed.to).toBe("normal.bat");
     });
   });
 

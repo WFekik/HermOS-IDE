@@ -15,6 +15,9 @@ const nextConfig: NextConfig = {
       "framer-motion",
       "date-fns",
       "recharts",
+      "react-syntax-highlighter",
+      "@tanstack/react-virtual",
+      "@tanstack/react-query",
     ],
   },
   // Prisma ships `turbopackIgnore: true`, so Turbopack would otherwise bundle

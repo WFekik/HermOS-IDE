@@ -66,8 +66,8 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   }
 
   const newTodo: TodoItem = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    text: parsed.data.text,
+    id: crypto.randomUUID(),
+    text: parsed.data.text.slice(0, MAX_TEXT),
     completed: false,
     createdAt: new Date().toISOString(),
   };

@@ -12,7 +12,6 @@ import {
   createFileWs,
   deletePathWs,
   mkdirWs,
-  deniedWriteExtension,
 } from "@/lib/workspace";
 import { parseJson, apiError, ok, withErrorHandler } from "@/app/api/_lib/helpers";
 import { noNulBytes } from "@/lib/validation";
@@ -292,10 +291,6 @@ export const PUT = withErrorHandler(async (req: NextRequest) => {
   }
 
   const ws = await resolveWs(user.id);
-  const denied = deniedWriteExtension(parsed.data.path);
-  if (denied) {
-    return apiError(`Writing files with the "${denied}" extension is not allowed.`, 400);
-  }
   const res = await writeFileWs(user.id, ws.name, parsed.data.path, parsed.data.content, ws.rootDir);
   return ok({ file: res });
 });
@@ -314,13 +309,9 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const ws = await resolveWs(user.id);
   if (parsed.data.type === "dir") {
     // Directory creation is not a file write — a folder named `evil.bat`
-    // is harmless, so the executable-extension deny-list does not apply.
+    // is harmless.
     const res = await mkdirWs(user.id, ws.name, parsed.data.path, ws.rootDir);
     return ok({ dir: res });
-  }
-  const denied = deniedWriteExtension(parsed.data.path);
-  if (denied) {
-    return apiError(`Creating files with the "${denied}" extension is not allowed.`, 400);
   }
   const res = await createFileWs(user.id, ws.name, parsed.data.path, parsed.data.content ?? "", ws.rootDir);
   return ok({ file: res });

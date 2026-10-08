@@ -1,5 +1,5 @@
 /**
- * Tests for the write-path extension denylist in src/lib/workspace.
+ * Tests for the workspace file-write paths in src/lib/workspace.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -7,87 +7,17 @@ import path from "path";
 import os from "os";
 import fs from "fs/promises";
 import {
-  deniedWriteExtension,
   writeFileWs,
   createFileWs,
   globToRegex,
+  readTree,
+  safePath,
+  isSafeWsName,
+  assertValidWsName,
 } from "./workspace";
 
-describe("deniedWriteExtension — denylist coverage", () => {
-  it("rejects every extension in the denylist", () => {
-    const cases: Array<[string, string]> = [
-      ["evil.exe", ".exe"],
-      ["evil.bat", ".bat"],
-      ["evil.cmd", ".cmd"],
-      ["evil.com", ".com"],
-      ["evil.ps1", ".ps1"],
-      ["evil.dll", ".dll"],
-      ["evil.scr", ".scr"],
-      ["evil.lnk", ".lnk"],
-    ];
-    for (const [rel, ext] of cases) {
-      expect(deniedWriteExtension(rel)).toBe(ext);
-    }
-  });
-
-  it("is case-insensitive", () => {
-    expect(deniedWriteExtension("evil.EXE")).toBe(".exe");
-    expect(deniedWriteExtension("EvIl.ExE")).toBe(".exe");
-    expect(deniedWriteExtension("evil.BAT")).toBe(".bat");
-    expect(deniedWriteExtension("evil.DlL")).toBe(".dll");
-  });
-
-  it("strips trailing dots/spaces before extension extraction (Windows aliasing)", () => {
-    expect(deniedWriteExtension("evil.exe.")).toBe(".exe");
-    expect(deniedWriteExtension("evil.exe ")).toBe(".exe");
-    expect(deniedWriteExtension("evil.exe. ")).toBe(".exe");
-    expect(deniedWriteExtension("evil.exe  .")).toBe(".exe");
-  });
-
-  it("rejects denied extensions in nested paths with both separators", () => {
-    expect(deniedWriteExtension("dist/evil.dll")).toBe(".dll");
-    expect(deniedWriteExtension("dist\\evil.bat")).toBe(".bat");
-    expect(deniedWriteExtension("a/b/c/evil.ps1")).toBe(".ps1");
-    expect(deniedWriteExtension("a\\b\\evil.cmd")).toBe(".cmd");
-  });
-});
-
-describe("deniedWriteExtension — allowed paths", () => {
-  it("allows safe source/text extensions", () => {
-    expect(deniedWriteExtension("main.ts")).toBeNull();
-    expect(deniedWriteExtension("app.js")).toBeNull();
-    expect(deniedWriteExtension("README.txt")).toBeNull();
-    expect(deniedWriteExtension("data.json")).toBeNull();
-  });
-
-  it("allows files without an extension", () => {
-    expect(deniedWriteExtension("README")).toBeNull();
-    expect(deniedWriteExtension("Makefile")).toBeNull();
-  });
-
-  it("allows hidden files whose name starts with a dot", () => {
-    expect(deniedWriteExtension(".env")).toBeNull();
-    expect(deniedWriteExtension(".gitignore")).toBeNull();
-  });
-
-  it("allows files with a dot but no denied extension", () => {
-    expect(deniedWriteExtension("notes.exe.md")).toBeNull();
-    expect(deniedWriteExtension("script.ps1.txt")).toBeNull();
-  });
-
-  it("only inspects the final path segment — directories named like a denied extension are not blocked", () => {
-    expect(deniedWriteExtension("foo.exe/bar.txt")).toBeNull();
-    expect(deniedWriteExtension("src/evil.exe/baz.ts")).toBeNull();
-    expect(deniedWriteExtension("scripts/bat")).toBeNull();
-  });
-
-  it("allows a trailing-slash directory path", () => {
-    expect(deniedWriteExtension("evil.exe/")).toBeNull();
-  });
-});
-
-describe("writeFileWs — denylist enforcement at the FS layer", () => {
-  const root = path.join(os.tmpdir(), "hermos-denywrite-test");
+describe("writeFileWs — script and executable extensions are writable", () => {
+  const root = path.join(os.tmpdir(), "hermos-write-test");
   beforeAll(async () => {
     await fs.rm(root, { recursive: true, force: true });
     await fs.mkdir(root, { recursive: true });
@@ -96,14 +26,12 @@ describe("writeFileWs — denylist enforcement at the FS layer", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("throws before writing when the target has a denied extension", async () => {
-    await expect(
-      writeFileWs("u1", "ws1", "evil.exe", "x", root),
-    ).rejects.toThrow('Writing files with the ".exe" extension is not allowed.');
-    await expect(
-      writeFileWs("u1", "ws1", "nested/evil.ps1.", "x", root),
-    ).rejects.toThrow('Writing files with the ".ps1" extension is not allowed.');
-    expect(await fs.stat(path.join(root, "evil.exe")).then(() => true).catch(() => false)).toBe(false);
+  it("writes script files (.bat, .sh, .ps1, .cmd)", async () => {
+    for (const name of ["run.bat", "run.sh", "run.ps1", "run.cmd"]) {
+      const res = await writeFileWs("u1", "ws1", name, "echo hi", root);
+      expect(res.path).toBe(name);
+      expect(await fs.readFile(path.join(root, name), "utf8")).toBe("echo hi");
+    }
   });
 
   it("writes files with allowed extensions", async () => {
@@ -113,10 +41,63 @@ describe("writeFileWs — denylist enforcement at the FS layer", () => {
     expect(content).toBe("hello");
   });
 
-  it("createFileWs rejects denied extensions via delegation", async () => {
-    await expect(
-      createFileWs("u1", "ws1", "evil.bat", "x", root),
-    ).rejects.toThrow('Writing files with the ".bat" extension is not allowed.');
+  it("createFileWs delegates to writeFileWs", async () => {
+    const res = await createFileWs("u1", "ws1", "evil.bat", "x", root);
+    expect(res.path).toBe("evil.bat");
+  });
+});
+
+describe("readTree — no directory filtering (list_directory shows everything)", () => {
+  const root = path.join(os.tmpdir(), "hermos-tree-nofilter-test");
+  beforeAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+    for (const d of ["node_modules/pkg", ".git/objects", "dist", "src"]) {
+      await fs.mkdir(path.join(root, d), { recursive: true });
+    }
+    await fs.writeFile(path.join(root, "node_modules/pkg/index.js"), "x", "utf8");
+    await fs.writeFile(path.join(root, ".git/HEAD"), "ref", "utf8");
+    await fs.writeFile(path.join(root, "dist/bundle.js"), "y", "utf8");
+    await fs.writeFile(path.join(root, "src/app.ts"), "z", "utf8");
+  });
+  afterAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("lists dependency/build/vcs directories instead of filtering them", async () => {
+    const tree = await readTree("u1", "ws1", 6, root);
+    const names = tree.map((n) => n.name);
+    for (const expected of ["node_modules", ".git", "dist", "src"]) {
+      expect(names).toContain(expected);
+    }
+    const nm = tree.find((n) => n.name === "node_modules");
+    expect(nm?.children?.map((c) => c.name)).toContain("pkg");
+  });
+});
+
+describe("workspace names — strict at creation, traversal-only at resolution", () => {
+  it("assertValidWsName enforces the strict charset for new workspaces", () => {
+    expect(assertValidWsName("my-project_1.0")).toBe("my-project_1.0");
+    expect(() => assertValidWsName("my project")).toThrow("Invalid workspace name.");
+    expect(() => assertValidWsName("../evil")).toThrow("Invalid workspace name.");
+  });
+
+  it("isSafeWsName allows legacy names but blocks traversal", () => {
+    expect(isSafeWsName("my project")).toBe(true);
+    expect(isSafeWsName("proj (2)")).toBe(true);
+    expect(isSafeWsName("../evil")).toBe(false);
+    expect(isSafeWsName("a/b")).toBe(false);
+    expect(isSafeWsName("a\\b")).toBe(false);
+    expect(isSafeWsName("")).toBe(false);
+  });
+
+  it("safePath/readTree resolve legacy names but reject traversal names", async () => {
+    const root = path.join(os.tmpdir(), "hermos-wsname-test");
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.mkdir(root, { recursive: true });
+    expect(safePath("u1", "my project", "f.txt", root)).not.toBeNull();
+    expect(safePath("u1", "../evil", "f.txt", root)).toBeNull();
+    expect(await readTree("u1", "../evil", 6, root)).toEqual([]);
+    await fs.rm(root, { recursive: true, force: true });
   });
 });
 

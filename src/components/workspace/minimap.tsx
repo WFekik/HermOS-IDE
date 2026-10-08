@@ -12,9 +12,9 @@ import { cn } from "@/lib/utils";
  * line's length (capped so very long lines don't fill the whole minimap).
  *
  * Clicking the minimap scrolls the editor to that line (calls onScrollTo).
- * A translucent emerald-tinted "viewport" rectangle shows the currently
+ * A translucent brand-tinted "viewport" rectangle shows the currently
  * visible portion of the file. The active line (cursor / go-to-line target)
- * is highlighted with a thin emerald bar.
+ * is highlighted with a thin brand bar.
  *
  * The minimap is purely visual — it does not render the actual characters
  * (text is too small to read at ~3px). Instead each line is a thin colored
@@ -119,10 +119,12 @@ export function Minimap({
       ref={rootRef}
       role="slider"
       aria-label="Minimap — click to scroll the editor"
+      aria-orientation="vertical"
       aria-valuemin={1}
       aria-valuemax={Math.max(1, lineCount)}
       aria-valuenow={activeLine ?? undefined}
-      tabIndex={0}
+      aria-valuetext={activeLine ? `Line ${activeLine} of ${lineCount}` : undefined}
+      tabIndex={lineCount > 0 ? 0 : -1}
       onClick={handleClick}
       onKeyDown={(e) => {
         // Allow keyboard activation: Up/Down moves the active line,
@@ -145,7 +147,6 @@ export function Minimap({
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/40",
         className,
       )}
-      aria-hidden={false}
     >
       {/* Line bars — render as flexbox column so they fill the height.
           Each line is a thin bar whose width is the precomputed %. We
@@ -170,7 +171,7 @@ export function Minimap({
         })}
       </div>
 
-      {/* Viewport indicator — translucent emerald rectangle showing the
+      {/* Viewport indicator — translucent brand rectangle showing the
           currently visible portion of the file. Pointer-events disabled so
           clicks pass through to the underlying click handler. */}
       {viewportStyle && (

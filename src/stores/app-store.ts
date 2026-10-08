@@ -140,8 +140,9 @@ function loadPendingConversations(): PendingConversation[] {
         p.id.startsWith(PENDING_CONVERSATION_PREFIX) &&
         typeof p.title === "string" &&
         (!p.createdAt || new Date(p.createdAt).getTime() > cutoff),
-    );
-  } catch {
+    ).slice(0, 20);
+  } catch (e) {
+    console.warn("[store] pending conversations load failed", e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -150,8 +151,10 @@ function savePendingConversations(list: PendingConversation[]): void {
   if (typeof window === "undefined") return;
   try {
     if (list.length === 0) window.localStorage.removeItem(PENDING_CONVERSATIONS_KEY);
-    else window.localStorage.setItem(PENDING_CONVERSATIONS_KEY, JSON.stringify(list));
-  } catch {}
+    else window.localStorage.setItem(PENDING_CONVERSATIONS_KEY, JSON.stringify(list.slice(0, 20)));
+  } catch (e) {
+    console.warn("[store] pending conversations save failed", e instanceof Error ? e.message : e);
+  }
 }
 
 function loadComposerDrafts(): Record<string, string> {
@@ -1038,6 +1041,7 @@ function loadContextConfig(): ContextConfig {
 
 /** In-flight materializations of pending conversations (dedupes rapid double-sends). */
 const ensureRealConversationInFlight = new Map<string, Promise<string | null>>();
+let securitySettingsSeq = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: DEFAULT_LOCAL_USER,
@@ -1251,7 +1255,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await apiGet<{ user: UserDTO | null }>("/api/auth/me");
       const user = data?.user ?? DEFAULT_LOCAL_USER;
       set({ currentUser: user, authChecked: true, authLoading: false });
-    } catch {
+    } catch (e) {
+      console.warn("[store] refreshAuth failed, using local fallback", e instanceof Error ? e.message : e);
       set({ currentUser: DEFAULT_LOCAL_USER, authChecked: true, authLoading: false });
     }
   },
@@ -1867,8 +1872,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   refreshSkills: async () => {
     try {
-      const data = await apiGet<{ skills: PluginDTO[] }>("/api/skills");
-      set({ skills: data?.skills ?? [] });
+      // Skills share the /api/plugins collection (rows with type "skill");
+      // there is no /api/skills endpoint. Mirror refreshPlugins filtering.
+      const data = await apiGet<{ plugins: PluginDTO[] }>("/api/plugins");
+      set({ skills: (data?.plugins ?? []).filter((p) => p.type === "skill" && !p.name.startsWith("__")) });
     } catch (e) {
       console.error("[store] refreshSkills failed:", e);
     }
@@ -2074,32 +2081,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       try {
         const pending = get().pendingConversations.find((p) => p.id === id);
         if (!pending) {
-          // Cross-tab race: another tab may have materialized this pending chat.
-          // Refresh conversations and fall back to an existing real row for this workspace.
           try {
             await get().refreshConversations();
-          } catch {}
-          const wsId = get().selectedProjectId ?? get().activeWorkspace?.id ?? undefined;
-          const convs = get().conversations;
-          const fallback =
-            (wsId ? convs.find((c) => c.workspaceId === wsId) : undefined) ?? convs[0] ?? null;
-          if (fallback) {
-            const isActive = get().activeConversationId === id;
-            set((s) => {
-              const { [id]: _d, ...restDrafts } = s.composerDrafts;
-              return {
-                pendingConversations: s.pendingConversations.filter((p) => p.id !== id),
-                activeConversationId: isActive ? fallback.id : s.activeConversationId,
-                composerDrafts: restDrafts,
-              };
-            });
-            savePendingConversations(get().pendingConversations);
-            saveComposerDrafts(get().composerDrafts);
-            if (isActive) {
-              void get().refreshMessages(fallback.id);
-            }
-            broadcastTabSync("refresh_conversations");
-            return fallback.id;
+          } catch (e) {
+            console.warn("[store] ensureRealConversation refresh failed", e instanceof Error ? e.message : e);
           }
           return null;
         }
@@ -2877,33 +2862,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   setFindInFilesOpen: (v) => set({ findInFilesOpen: v }),
   toggleFindInFilesOpen: () => set((s) => ({ findInFilesOpen: !s.findInFilesOpen })),
 
-  openFileTab: (path) =>
+  openFileTab: (path) => {
+    if (/\.(pptx|docx|pdf)$/i.test(path)) {
+      const wsQuery = get().activeWorkspace?.id ? `&workspaceId=${encodeURIComponent(get().activeWorkspace!.id)}` : "";
+      set({ rightPanelTab: "office", rightPanelOpen: true });
+      apiGet<{ ok: boolean; document: { manifest?: OfficeDocManifest } }>(
+        `/api/office/document?path=${encodeURIComponent(path)}${wsQuery}`
+      )
+        .then((res) => {
+          if (res.ok && res.document.manifest) {
+            const manifest =
+              res.document.manifest.path === path
+                ? res.document.manifest
+                : { ...res.document.manifest, path };
+            set({ activeOfficeDoc: manifest, rightPanelTab: "office", rightPanelOpen: true });
+          }
+        })
+        .catch((e) => {
+          console.warn("[store] office document load failed", e instanceof Error ? e.message : e);
+        });
+      return;
+    }
     set((s) => {
-      // Office documents (.pptx, .docx, .pdf) live exclusively in the Office Studio
-      if (/\.(pptx|docx|pdf)$/i.test(path)) {
-        const wsQuery = s.activeWorkspace?.id ? `&workspaceId=${encodeURIComponent(s.activeWorkspace.id)}` : "";
-        apiGet<{ ok: boolean; document: { manifest?: OfficeDocManifest } }>(
-          `/api/office/document?path=${encodeURIComponent(path)}${wsQuery}`
-        )
-          .then((res) => {
-            if (res.ok && res.document.manifest) {
-              // Normalize to the requested workspace-relative path so the
-              // Office panel's polling doesn't treat it as a foreign doc.
-              const manifest =
-                res.document.manifest.path === path
-                  ? res.document.manifest
-                  : { ...res.document.manifest, path };
-              set({ activeOfficeDoc: manifest, rightPanelTab: "office", rightPanelOpen: true });
-            } else {
-              set({ rightPanelTab: "office", rightPanelOpen: true });
-            }
-          })
-          .catch(() => {
-            set({ rightPanelTab: "office", rightPanelOpen: true });
-          });
-        return { rightPanelTab: "office", rightPanelOpen: true };
-      }
-
       if (s.openFiles.includes(path)) {
         return { activeFileTab: path };
       }
@@ -2923,7 +2903,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       next.push(path);
       return { openFiles: next, activeFileTab: path };
-    }),
+    });
+  },
 
   closeFileTab: (path) =>
     set((s) => {
@@ -3074,6 +3055,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ contextConfig: next });
   },
   setSecuritySettings: (cfg) => {
+    securitySettingsSeq += 1;
+    const mySeq = securitySettingsSeq;
     const next = { ...get().securitySettings, ...cfg };
     set({ securitySettings: next });
     try {
@@ -3081,16 +3064,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         window.localStorage.setItem(SECURITY_SETTINGS_KEY, JSON.stringify(next));
       }
     } catch { /* ignore */ }
-    // Persist settings to server with rollback on failure
-    apiPatch<{ settings: SecuritySettings }>("/api/security/settings", cfg).catch(() => {
-      void get().refreshSecuritySettings();
-    });
+    apiPatch<{ settings: SecuritySettings }>("/api/security/settings", cfg)
+      .then((res) => {
+        if (res?.settings && mySeq === securitySettingsSeq) set({ securitySettings: res.settings });
+      })
+      .catch(() => {
+        if (mySeq === securitySettingsSeq) void get().refreshSecuritySettings();
+      });
   },
 
   refreshSecuritySettings: async () => {
+    const mySeq = securitySettingsSeq;
     try {
       const data = await apiGet<{ settings: SecuritySettings }>("/api/security/settings");
-      if (data?.settings) {
+      if (data?.settings && mySeq === securitySettingsSeq) {
         set({ securitySettings: data.settings });
         try {
           if (typeof window !== "undefined") {

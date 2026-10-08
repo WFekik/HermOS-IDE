@@ -4,19 +4,29 @@ import * as React from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export default function GlobalError({
+export default function Error({
   error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const attemptsRef = React.useRef(0);
   React.useEffect(() => {
     console.error("[Root Error Boundary Catch]:", error);
   }, [error]);
 
+  const handleReset = React.useCallback(() => {
+    attemptsRef.current += 1;
+    if (attemptsRef.current > 3) {
+      window.location.reload();
+      return;
+    }
+    reset();
+  }, [reset]);
+
   return (
-    <div className="flex h-screen w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
+    <div role="alert" className="flex h-screen w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
       <div className="flex max-w-md flex-col items-center text-center space-y-4 rounded-xl border bg-card p-6 shadow-lg">
         <div className="rounded-full bg-destructive/10 p-3 text-destructive">
           <AlertTriangle className="size-8" />
@@ -36,7 +46,7 @@ export default function GlobalError({
           <Button
             variant="default"
             size="sm"
-            onClick={() => reset()}
+            onClick={handleReset}
             className="gap-2 text-xs"
           >
             <RefreshCw className="size-3.5" />

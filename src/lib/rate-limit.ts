@@ -18,7 +18,7 @@ export function evictExpiredBuckets(ttlSec = BUCKET_TTL_SEC): number {
   const t = nowSec();
   let evicted = 0;
   for (const [key, bucket] of buckets.entries()) {
-    if (t - bucket.lastRefill > ttlSec && bucket.tokens >= bucket.capacity) {
+    if (t - bucket.lastRefill > ttlSec) {
       buckets.delete(key);
       evicted++;
     }
