@@ -1492,7 +1492,7 @@
             </svg>
           </div>
           <span>HermOS</span>
-          <span class="brand-version">v1.0.8</span>
+          <span class="brand-version" id="brand-version"></span>
         </a>
 
         <nav class="nav-links" id="primary-nav" aria-label="Primary Navigation">
@@ -2147,7 +2147,7 @@
       var CONFIG = {
         base: "https://hermos.is-a.dev",
         repo: "https://github.com/WFekik/HermOS-IDE",
-        version: "1.0.8",
+        version: "1.0.9",
         releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
       };
 
@@ -2203,6 +2203,15 @@
         highlightDetectedPlatform();
       }
 
+      // Nav badge renders from CONFIG.version — never hardcoded, so it tracks
+      // version.mjs lockstep and the live GitHub tag sync below.
+      function updateBrandVersion() {
+        var badge = document.getElementById("brand-version");
+        if (badge && /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(CONFIG.version)) {
+          badge.textContent = "v" + CONFIG.version;
+        }
+      }
+
       // Safe GitHub Release sync with regex validation
       fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
         .then(function(res) { return res.ok ? res.json() : null; })
@@ -2246,10 +2255,12 @@
             }
           }
           updateDownloadLinks();
+          updateBrandVersion();
         })
         .catch(function() { /* Graceful fallback */ });
 
       updateDownloadLinks();
+      updateBrandVersion();
 
       // ----------------------------------------------------------------------
       // HERO VIEWPORT TAB SWITCHER
