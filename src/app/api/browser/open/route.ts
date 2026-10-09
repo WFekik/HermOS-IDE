@@ -50,5 +50,5 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     JSON.stringify({ url: parsed.data.url.slice(0, 200), title: r.title.slice(0, 200) }),
     getClientIp(req),
   );
-  return ok({ session: r.session, title: r.title, snapshot: r.snapshot });
+  return ok({ session: r.session, title: r.title, snapshot: r.snapshot, trust: r.trust });
 });

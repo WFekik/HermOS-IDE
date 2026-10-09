@@ -5,7 +5,8 @@ import {
   browserClose,
   browserSnapshot,
 } from "./browser";
-import { normalizeBrowserUrl, isLocalOrPrivateUrl } from "@/components/browser/types";
+import { normalizeBrowserUrl } from "@/components/browser/types";
+import { classifyBrowserTrust } from "./browser-trust";
 
 // Mock the CLI transport so the shared-session regression can exercise the
 // full open path without spawning a real headless browser.
@@ -87,10 +88,14 @@ describe("Browser Session Registry", () => {
     if (!opened.ok) return;
 
     // ...and the panel path resolves the exact same session object.
+    // The session URL follows the LIVE page (post-redirect), not just the
+    // requested URL — the mock CLI reports .../final as the live URL.
     const seen = getBrowserSession("user_A");
     expect(seen).not.toBeNull();
-    expect(seen!.url).toBe("https://example.com");
+    expect(seen!.url).toBe("https://example.com/final");
     expect(seen!.title).toBe("Mock Page Title");
+    expect(seen!.trust).toBe("public");
+    expect(typeof seen!.seq).toBe("number");
 
     // Snapshot reads hit the same shared session too.
     const snap = await browserSnapshot("user_A");
@@ -98,6 +103,35 @@ describe("Browser Session Registry", () => {
 
     await browserClose("user_A");
     expect(getBrowserSession("user_A")).toBeNull();
+  });
+
+  it("installs network guards as batch command strings (not stdin-JSON arrays)", async () => {
+    mockCliSuccess();
+    const opened = await browserOpen("https://example.com", "user_guards");
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    // Find the `batch` invocation: every route must be a single command
+    // string ("network route <glob> --abort") — JSON-array argv is stdin-only
+    // and would silently install nothing.
+    const batchCall = execFileMock.mock.calls.find((c: unknown[]) =>
+      (c[1] as string[]).includes("batch"),
+    );
+    expect(batchCall).toBeDefined();
+    const argv = batchCall![1] as string[];
+    // Host-anchored, multi-segment (`/**`) globs with explicit-port twins —
+    // portless-only or single-segment patterns would fail open on
+    // `host:port/...` and `/latest/meta-data/...` shapes.
+    expect(argv).toContain("network route *://169.254.169.254/** --abort");
+    expect(argv).toContain("network route *://169.254.169.254:*/** --abort");
+    expect(argv).toContain("network route *://10.*/** --abort");
+    expect(argv).toContain("network route *://172.20.*/** --abort");
+    expect(argv).toContain("network route *://localhost:*/** --abort");
+    expect(argv).toContain("network route *://*.localhost:*/** --abort");
+    for (const a of argv) {
+      expect(a.startsWith("["), `must not be a JSON array: ${a}`).toBe(false);
+    }
+    await browserClose("user_guards");
   });
 
   it("spawns the browser CLI using process.execPath for portability", async () => {
@@ -149,22 +183,24 @@ describe("Browser URL Normalization & Local Dev Classification", () => {
     expect(normalizeBrowserUrl("")).toBe("");
   });
 
-  it("identifies localhost, loopback, and private LAN addresses as local", () => {
-    expect(isLocalOrPrivateUrl("http://localhost:3000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://127.0.0.1:5173")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://0.0.0.0:8080")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://[::1]:3000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://192.168.1.50:3000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://10.0.0.1:8000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://172.16.0.5:3000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://app.local:3000")).toBe(true);
-    expect(isLocalOrPrivateUrl("http://site.localhost:3000")).toBe(true);
+  it("classifies loopback as trusted-loopback, LAN/mDNS as local-network", () => {
+    expect(classifyBrowserTrust("http://localhost:3000").tier).toBe("trusted-loopback");
+    expect(classifyBrowserTrust("http://127.0.0.1:5173").tier).toBe("trusted-loopback");
+    expect(classifyBrowserTrust("http://[::1]:3000").tier).toBe("trusted-loopback");
+    expect(classifyBrowserTrust("http://site.localhost:3000").tier).toBe("trusted-loopback");
+    expect(classifyBrowserTrust("http://192.168.1.50:3000").tier).toBe("local-network");
+    expect(classifyBrowserTrust("http://10.0.0.1:8000").tier).toBe("local-network");
+    expect(classifyBrowserTrust("http://172.16.0.5:3000").tier).toBe("local-network");
+    expect(classifyBrowserTrust("http://app.local:3000").tier).toBe("local-network");
+    // Unspecified addresses are never trusted, even though normalization
+    // keeps them as http URLs.
+    expect(classifyBrowserTrust("http://0.0.0.0:8080").tier).toBe("public");
   });
 
-  it("identifies public internet domains as non-local", () => {
-    expect(isLocalOrPrivateUrl("https://example.com")).toBe(false);
-    expect(isLocalOrPrivateUrl("http://plain-http.org")).toBe(false);
-    expect(isLocalOrPrivateUrl("https://github.com/WFekik/HermOS-IDE")).toBe(false);
-    expect(isLocalOrPrivateUrl("https://duckduckgo.com")).toBe(false);
+  it("classifies public internet domains as public", () => {
+    expect(classifyBrowserTrust("https://example.com").tier).toBe("public");
+    expect(classifyBrowserTrust("http://plain-http.org").tier).toBe("public");
+    expect(classifyBrowserTrust("https://github.com/WFekik/HermOS-IDE").tier).toBe("public");
+    expect(classifyBrowserTrust("https://duckduckgo.com").tier).toBe("public");
   });
 });

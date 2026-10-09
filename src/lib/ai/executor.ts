@@ -27,6 +27,7 @@ import {
   type PermissionMode,
 } from "@/lib/permissions";
 import { ensureHermosTempDir } from "@/lib/paths";
+import { isTrustedLoopbackBrowserOpen } from "@/lib/browser-trust";
 import {
   createPendingApproval,
   cancelPendingForConversation,
@@ -6024,6 +6025,33 @@ const thinkInstruction = thinkPlan.kind === "params"
             console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
             permissionMode = "ask"; // fail-closed: ask the user on errors
 
+          }
+
+          // Trusted-loopback exemption: opening the user's OWN dev server
+          // (canonical loopback literal — pure sync check, no DNS, so no
+          // rebinding oracle) skips the permission prompt. This only fires
+          // when evaluation says "ask": explicit user deny rules and
+          // architect-mode deny ("deny") are never overridden, and the SSRF
+          // policy inside browserOpen still applies.
+          if (
+            tc.toolName === "browser_open" &&
+            permissionMode === "ask" &&
+            isTrustedLoopbackBrowserOpen(tc.toolName, tc.args)
+          ) {
+            permissionMode = "allow";
+            try {
+              await audit(
+                user.id,
+                "browser_open_trusted_local",
+                JSON.stringify({
+                  url: String(
+                    (tc.args as Record<string, unknown> | null)?.url ?? "",
+                  ).slice(0, 200),
+                }),
+              );
+            } catch {
+              /* ignore audit failures */
+            }
           }
 
           const entry: ToolEntry = {

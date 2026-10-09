@@ -5,8 +5,9 @@ import { mkdir, readFile, unlink, readdir, stat } from "fs/promises";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
-import { SCREENSHOT_DIR } from "@/lib/paths";
+import { SCREENSHOT_DIR, APP_DATA_DIR, safeUserId } from "@/lib/paths";
 import { checkUrlHost } from "@/lib/ssrf";
+import { classifyBrowserTrust, type BrowserTrustTier } from "@/lib/browser-trust";
 import { EventEmitter } from "events";
 
 export const browserEvents = new EventEmitter();
@@ -185,6 +186,25 @@ export interface BrowserSession {
   url: string;
   title: string;
   createdAt: number;
+  /** Trust tier of the session URL — drives preview sandbox + permission UX. */
+  trust: BrowserTrustTier;
+  /** Monotonic state version — lets the panel discard stale poll responses. */
+  seq: number;
+}
+
+/** Global monotonic browser-state version (wraps safely at MAX_SAFE_INTEGER). */
+let browserStateSeq = 0;
+function nextSeq(): number {
+  browserStateSeq = (browserStateSeq + 1) % Number.MAX_SAFE_INTEGER;
+  return browserStateSeq;
+}
+
+/** Emit a session change to SSE subscribers with an immutable snapshot. */
+function emitSessionChange(key: string, session: BrowserSession | null): void {
+  browserEvents.emit("change", {
+    sessionKey: key,
+    session: session ? { ...session } : null,
+  });
 }
 
 // Session state keyed by sessionKey (bare userId — the agent tools and the
@@ -234,6 +254,21 @@ function getCleanSessionKey(sessionKey = "default"): string {
 }
 
 function getSafeBrowserEnv(sessionKey: string): NodeJS.ProcessEnv {
+  // Chromium honors HTTP(S)_PROXY for ALL traffic including page subresources.
+  // Guarantee loopback bypass regardless of host proxy configuration so
+  // user dev servers are always reached directly (and page JS cannot be
+  // tricked into proxying loopback traffic outward). `127.0.0.0/8` uses
+  // Chromium's native CIDR bypass notation to cover the whole loopback
+  // range (plain `127.*` wildcards are not reliably expanded); exact
+  // entries are kept alongside for stacks that only do literal matching.
+  const noProxyParts = (process.env.NO_PROXY || process.env.no_proxy || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const h of ["127.0.0.1", "127.0.0.0/8", "localhost", "::1", "[::1]"]) {
+    if (!noProxyParts.includes(h)) noProxyParts.push(h);
+  }
+  const noProxy = noProxyParts.join(",");
   return {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV ?? "development",
@@ -251,6 +286,8 @@ function getSafeBrowserEnv(sessionKey: string): NodeJS.ProcessEnv {
     TEMP: process.env.TEMP || os.tmpdir(),
     TMP: process.env.TMP || os.tmpdir(),
     TMPDIR: process.env.TMPDIR || os.tmpdir(),
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
     LANG: process.env.LANG || "en_US.UTF-8",
     TZ: process.env.TZ || "UTC",
     AGENT_BROWSER_HEADED: "false",
@@ -265,10 +302,138 @@ interface RunResult {
   error?: string;
 }
 
+/**
+ * In-page network guards: SSRF policy covers top-level navigations, but JS
+ * running INSIDE the page (XHR/fetch/WebSocket/subresources) bypasses it.
+ * These `network route --abort` rules run inside the session so evil-page JS
+ * cannot probe what the address bar cannot reach.
+ * - Metadata/link-local: ALWAYS aborted (never legit for any page).
+ * - Loopback/private ranges: additionally aborted when the target itself is
+ *   public (a public page has no business touching the intranet). Skipped for
+ *   local targets so dev apps keep working (HMR, same-origin APIs).
+ * Patterns are host-anchored so they never match path segments
+ * (`example.com/localhost/guide` keeps working). Glob star must not be
+ * relied on to span slashes, so every pattern ends in a recursive
+ * double-star suffix (multi-segment paths like `/latest/meta-data/iam/...`
+ * are covered), and literal hosts get an explicit-port twin (a portless
+ * pattern alone would miss `host:3000` URLs). Subdomain forms
+ * (`*.localhost`, `*.local`, …) are covered because a public outer page
+ * must not reach those either.
+ * `?` is NOT a single-char wildcard in this engine (it matches a literal
+ * `?`), so 172.16–31 is enumerated explicitly. Single-label dev names and
+ * IPv6 ULA cannot be globbed portably and stay best-effort gaps (documented,
+ * not silent: SSRF still gates top-level navigation to them).
+ * Best-effort defense-in-depth (SSRF remains the enforcer): installed via a
+ * single `batch` call — argv form is one command STRING per arg (JSON arrays
+ * are stdin-only), no `--bail` so one rejected pattern can't kill the rest.
+ */
+function hostPatterns(host: string): string[] {
+  return [`*://${host}/**`, `*://${host}:*/**`];
+}
+
+const METADATA_GUARD_PATTERNS = [
+  ...hostPatterns("169.254.169.254"),
+  ...hostPatterns("169.254.169.253"),
+  "*://169.254.*/**",
+  ...hostPatterns("100.100.100.200"),
+  ...hostPatterns("metadata.google.internal"),
+  ...hostPatterns("metadata.google"),
+];
+
+const PRIVATE_172_GUARDS = Array.from(
+  { length: 16 },
+  (_, i) => `*://172.${16 + i}.*/**`,
+);
+
+const PRIVATE_GUARD_PATTERNS = [
+  "*://10.*/**",
+  "*://192.168.*/**",
+  ...PRIVATE_172_GUARDS,
+  "*://127.*/**",
+  // Decimal/hex/octal loopback spellings: Chromium resolves them to 127/8
+  // but the `127.*` glob sees the un-normalized string — belt and braces.
+  "*://2130706433*/**",
+  "*://0x7f.*/**",
+  "*://0177.*/**",
+  ...hostPatterns("localhost"),
+  ...hostPatterns("localhost.localdomain"),
+  ...hostPatterns("*.localhost"),
+  ...hostPatterns("*.local"),
+  ...hostPatterns("*.internal"),
+  ...hostPatterns("*.lan"),
+  ...hostPatterns("*.home"),
+  ...hostPatterns("0.0.0.0"),
+  // IPv6 literals without brackets (glob `[` opens a character class, so
+  // bracketed forms can't be written portably). `::1`/`fe80:` substrings are
+  // high-signal for the host area; a path containing them is vanishingly
+  // rare, and aborting such a subresource only degrades — never exposes.
+  "*://*::1*/**",
+  "*://*fe80:*/**",
+];
+
+async function installNetworkGuards(
+  key: string,
+  publicTarget: boolean,
+): Promise<void> {
+  try {
+    const patterns = publicTarget
+      ? [...METADATA_GUARD_PATTERNS, ...PRIVATE_GUARD_PATTERNS]
+      : METADATA_GUARD_PATTERNS;
+    // `batch` argv mode takes one command STRING per arg (JSON arrays are
+    // stdin-only). No `--bail`: patterns are independent, so one rejected
+    // pattern must not cancel the rest. Verified against agent-browser 0.38.2.
+    const batchArgs = [
+      "batch",
+      ...patterns.map((p) => `network route ${p} --abort`),
+    ];
+    const r = await runCli(batchArgs, key);
+    if (!r.ok) {
+      console.warn("[browser] network guards not installed:", r.error);
+    }
+  } catch (e) {
+    console.warn("[browser] network guard install threw:", e);
+  }
+}
+
+/**
+ * Re-arm guards after a tier transition mid-session (page-driven navigation
+ * crossed tiers). Clears all routes first so a public→local downgrade does
+ * not leave stale intranet aborts breaking the dev app's HMR/APIs.
+ */
+async function resetNetworkGuards(
+  key: string,
+  publicTarget: boolean,
+): Promise<void> {
+  try {
+    const r = await runCli(["network", "unroute"], key);
+    if (!r.ok) {
+      console.warn("[browser] network unroute failed:", r.error);
+    }
+  } catch (e) {
+    console.warn("[browser] network unroute threw:", e);
+  }
+  await installNetworkGuards(key, publicTarget);
+}
+
+/** Isolated Chrome profile per user — cookies/storage never cross tenants. */
+function getBrowserProfileDir(sessionKey: string): string {
+  return path.join(APP_DATA_DIR, "browser-profiles", safeUserId(sessionKey));
+}
+
 async function runCli(args: string[], sessionKey = "default"): Promise<RunResult> {
   const safeKey = getCleanSessionKey(sessionKey).replace(/[^a-zA-Z0-9_-]/g, "_");
   const cliPath = findAgentBrowserCli();
-  const cliArgs = ["--session", safeKey, ...args];
+  // Best-effort profile isolation: a missing/uncreatable dir falls back to
+  // the CLI default rather than failing the browser command.
+  let profileArgs: string[] = [];
+  try {
+    const profileDir = getBrowserProfileDir(sessionKey);
+    await mkdir(profileDir, { recursive: true });
+    profileArgs = ["--profile", profileDir];
+  } catch {
+    profileArgs = [];
+  }
+  const cliArgs = ["--session", safeKey, ...profileArgs, ...args];
   return new Promise((resolve) => {
     const child = execFile(
       process.execPath,
@@ -341,19 +506,32 @@ async function getUrl(sessionKey = "default"): Promise<string> {
 /**
  * Validate the live browser URL against SSRF policy after navigation or redirects.
  * If the navigated URL is prohibited, immediately blanks out the page and returns an error.
+ *
+ * `ownerId` is not needed: the owner is captured internally at entry, which
+ * is exactly the identity the caller is acting on.
  */
 async function enforceCurrentUrlSsrf(key: string): Promise<string | null> {
+  // Capture the owner BEFORE the awaited reads so a close/reopen racing them
+  // can be detected afterwards — the blanking navigation below must never
+  // fire against a recycled key.
+  const entryOwner = sessions.get(key)?.id;
   const currentUrl = await getUrl(key);
   if (!currentUrl || currentUrl === "about:blank") return null;
   const blocked = await checkUrlHost(currentUrl);
   if (blocked) {
-    // Proactively blank out the page and notify session listeners
+    const live = sessions.get(key);
+    if (entryOwner !== undefined && (!live || live.id !== entryOwner)) return null;
+    // Proactively blank out the page and notify session listeners. Re-check
+    // after the blanking navigation too — the key may have recycled during it.
     await runCli(["open", "about:blank"], key);
     const s = sessions.get(key);
+    if (entryOwner !== undefined && (!s || s.id !== entryOwner)) return null;
     if (s) {
       s.url = "about:blank";
       s.title = "Blocked by SSRF Policy";
-      browserEvents.emit("change", { sessionKey: key, session: { ...s } });
+      s.trust = "public";
+      s.seq = nextSeq();
+      emitSessionChange(key, s);
     }
     return `SSRF policy blocked navigation to target host (${currentUrl}): ${blocked}`;
   }
@@ -372,10 +550,16 @@ async function syncSessionState(key: string): Promise<void> {
   if (url && url !== "about:blank") {
     const blocked = await checkUrlHost(url);
     if (blocked) {
+      // Identity-gated blanking (see enforceCurrentUrlSsrf): never destroy
+      // a session that recycled this key mid-check.
+      if (sessions.get(key) !== s) return;
       await runCli(["open", "about:blank"], key);
+      if (sessions.get(key) !== s) return;
       s.url = "about:blank";
       s.title = "Blocked by SSRF Policy";
-      browserEvents.emit("change", { sessionKey: key, session: { ...s } });
+      s.trust = "public";
+      s.seq = nextSeq();
+      emitSessionChange(key, s);
       return;
     }
   }
@@ -386,8 +570,21 @@ async function syncSessionState(key: string): Promise<void> {
   let changed = false;
   if (url && url !== s.url) { s.url = url; changed = true; }
   if (title && title !== s.title) { s.title = title; changed = true; }
+  // Trust follows the live URL: page-driven navigation (links, redirects)
+  // can cross tiers mid-session. Re-arm guards on ANY tier transition so a
+  // newly-entered public page cannot probe loopback, and a downgrade back
+  // to local does not leave stale aborts breaking dev HMR/APIs.
+  const trust = classifyBrowserTrust(s.url).tier;
+  if (trust !== s.trust) {
+    s.trust = trust;
+    changed = true;
+    await resetNetworkGuards(key, trust === "public");
+  }
   touchSession(key);
-  if (changed) browserEvents.emit("change", { sessionKey: key, session: { ...s } });
+  if (changed) {
+    s.seq = nextSeq();
+    emitSessionChange(key, s);
+  }
 }
 
 /** Opens a URL in the session, returning an interactive snapshot and page title. */
@@ -395,7 +592,7 @@ export async function browserOpen(
   url: string,
   sessionKey = "default",
 ): Promise<
-  | { ok: true; session: BrowserSession; title: string; snapshot: string }
+  | { ok: true; session: BrowserSession; title: string; snapshot: string; trust: BrowserTrustTier }
   | { ok: false; error: string }
 > {
   const key = getCleanSessionKey(sessionKey);
@@ -406,7 +603,16 @@ export async function browserOpen(
   // Validate host against SSRF policy.
   const blocked = await checkUrlHost(url);
   if (blocked) return err(blocked);
-  // Navigate (this also launches the browser if needed).
+  const requestedTrust = classifyBrowserTrust(url).tier;
+  // Stage 1: launch on about:blank and arm in-page network guards BEFORE any
+  // page JS runs, so there is no TOCTOU window where the fresh page's scripts
+  // can probe the intranet/metadata before routes exist.
+  const launchRes = await runCli(["open"], key);
+  if (!launchRes.ok) {
+    return err(launchRes.error || `Failed to launch browser for ${url}.`);
+  }
+  await installNetworkGuards(key, requestedTrust === "public");
+  // Stage 2: navigate (browser already running from stage 1).
   const openRes = await runCli(["open", url], key);
   if (!openRes.ok) {
     return err(openRes.error || `Failed to open ${url}.`);
@@ -420,11 +626,23 @@ export async function browserOpen(
     return err(postNavBlocked);
   }
 
+  // Stage 3: live truth — redirects (e.g. an open redirect on a dev server)
+  // may have crossed tiers. Session url AND trust follow the live page, and
+  // guards are re-armed when the tier moved.
+  const liveUrl = await getUrl(key);
+  const finalUrl = liveUrl && liveUrl !== "about:blank" ? liveUrl : url;
+  const finalTrust = classifyBrowserTrust(finalUrl).tier;
+  if (finalTrust !== requestedTrust) {
+    await resetNetworkGuards(key, finalTrust === "public");
+  }
+
   const session: BrowserSession = {
     id: randomUUID(),
-    url: url,
+    url: finalUrl,
     title: "", // updated below
     createdAt: Date.now(),
+    trust: finalTrust,
+    seq: nextSeq(),
   };
   sessions.set(key, session);
 
@@ -432,13 +650,14 @@ export async function browserOpen(
   const title = await getTitle(key);
   session.title = title;
 
-  browserEvents.emit("change", { sessionKey: key, session });
+  emitSessionChange(key, session);
 
   return {
     ok: true,
     session,
     title,
     snapshot: snapResult.ok ? snapResult.stdout : "",
+    trust: session.trust,
   };
 }
 
@@ -508,7 +727,9 @@ export async function browserType(
   const cleanRef = ref.replace(/^@/, "");
   const r = await runCli(["fill", cleanRef, text], key);
   if (!r.ok) return err(r.error || `Failed to fill ${ref}.`);
-  const snap = await snapshotCompact(key);
+  // Typing can submit forms / trigger SPA navigation — sync url/trust/seq
+  // like the other mutating actions.
+  const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
   if (!snap.ok) return err(snap.error || "Fill succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }
@@ -618,7 +839,8 @@ export async function browserScroll(
   touchSession(key);
   const r = await runCli(["scroll", direction, String(amount)], key);
   if (!r.ok) return err(r.error || "Failed to scroll.");
-  const snap = await snapshotCompact(key);
+  // Infinite-scroll pages can lazy-load new routes — keep trust/seq fresh.
+  const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
   if (!snap.ok) return err(snap.error || "Scroll succeeded but snapshot failed.");
   return { ok: true, snapshot: snap.stdout };
 }
@@ -695,7 +917,7 @@ export async function browserClose(
   // so a stale handle can never be reused.
   await runCli(["close"], key);
   sessions.delete(key);
-  browserEvents.emit("change", { sessionKey: key, session: null });
+  emitSessionChange(key, null);
   return { ok: true };
 }
 

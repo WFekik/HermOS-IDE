@@ -26,10 +26,14 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
         const key = payload?.sessionKey ?? "";
         if (key !== user.id && !key.startsWith(user.id + ":")) return;
         try {
-          // Carry the live url/title in the event itself so the panel can
-          // update instantly without waiting for its next poll.
+          // Carry the live url/title/trust/seq in the event itself so the
+          // panel can update instantly without waiting for its next poll.
+          // `seq` is monotonic: the panel ignores events older than the
+          // freshest state it has already applied (stale-poll protection).
           const s = payload?.session;
-          const body = s ? JSON.stringify({ url: s.url, title: s.title }) : "";
+          const body = s
+            ? JSON.stringify({ id: s.id, url: s.url, title: s.title, trust: s.trust, seq: s.seq })
+            : "";
           controller.enqueue(encoder.encode(body ? `data: ${body}\n\n` : "data: update\n\n"));
         } catch {
           // Stream may already be closed

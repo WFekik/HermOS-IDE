@@ -15,12 +15,17 @@ export interface BrowserSession {
   url: string;
   title: string;
   createdAt: number;
+  /** Trust tier of the session URL (server-classified). Absent on pre-1.1 payloads. */
+  trust?: "trusted-loopback" | "local-network" | "public";
+  /** Monotonic state version (server). Absent on pre-1.1 payloads. */
+  seq?: number;
 }
 
 export interface BrowserOpenResponse {
   session: BrowserSession;
   title?: string;
   snapshot: string;
+  trust?: "trusted-loopback" | "local-network" | "public";
 }
 
 export interface BrowserSnapshotResponse {
@@ -117,26 +122,6 @@ export async function closeBrowser(): Promise<BrowserCloseResponse> {
 }
 
 /* ----------------------------- URL helpers ----------------------------- */
-
-/**
- * Check if a raw host or URL points to a local/loopback/private network address.
- */
-export function isLocalOrPrivateUrl(rawUrl: string): boolean {
-  try {
-    const target = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `http://${rawUrl}`;
-    const u = new URL(target);
-    const h = u.hostname.toLowerCase();
-    if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
-    if (h === "127.0.0.1" || h === "0.0.0.0" || h === "::1" || h === "[::1]") return true;
-    if (/^127\.\d+\.\d+\.\d+$/.test(h)) return true;
-    if (/^10\.\d+\.\d+\.\d+$/.test(h)) return true;
-    if (/^192\.168\.\d+\.\d+$/.test(h)) return true;
-    if (/^172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Normalize a user-entered or agent string into a URL the backend/preview can open.

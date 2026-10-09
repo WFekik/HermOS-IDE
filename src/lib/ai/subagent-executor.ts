@@ -40,6 +40,8 @@ import {
   stopRunningCommand,
 } from "@/lib/workspace";
 import { evaluateToolPermission, getPermissions, isReadOnlyTool, isWriteTool, type PermissionMode } from "@/lib/permissions";
+import { isTrustedLoopbackBrowserOpen } from "@/lib/browser-trust";
+import { audit } from "@/app/api/_lib/helpers";
 import {
   configureRequestBody,
   parseSseReasoningChunk,
@@ -680,6 +682,34 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           (isExplicitlyAllowedSubagentTool || session.allowedTools.length === 0)
         ) {
           permissionMode = "allow";
+        }
+
+        // Trusted-loopback exemption (mirrors the main executor gate): a
+        // subagent opening the user's own dev server never needs user
+        // approval — background "ask" would otherwise always reject it.
+        if (tc.name === "browser_open" && permissionMode === "ask") {
+          try {
+            const parsed: unknown = JSON.parse(tc.arguments || "{}");
+            if (isTrustedLoopbackBrowserOpen(tc.name, parsed)) {
+              permissionMode = "allow";
+              try {
+                await audit(
+                  session.userId,
+                  "browser_open_trusted_local",
+                  JSON.stringify({
+                    subagent: sessionId,
+                    url: String(
+                      (parsed as Record<string, unknown> | null)?.url ?? "",
+                    ).slice(0, 200),
+                  }),
+                );
+              } catch {
+                /* ignore audit failures */
+              }
+            }
+          } catch {
+            /* unparseable args — stay gated */
+          }
         }
 
         if (permissionMode === "deny") {

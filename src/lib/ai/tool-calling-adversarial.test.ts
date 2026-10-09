@@ -306,18 +306,20 @@ describe("Empirical Stress-Test: Browser Tool Return Value Structures", () => {
     // Test success case
     vi.spyOn(browserModule, "browserOpen").mockResolvedValueOnce({
       ok: true,
-      session: { id: "s1", url: "https://example.com", title: "Example", createdAt: 100 },
+      session: { id: "s1", url: "https://example.com", title: "Example", createdAt: 100, trust: "public", seq: 7 },
       title: "Example",
       snapshot: "Page snapshot",
+      trust: "public",
     });
 
     const resSuccess = await runTool("browser_open", { url: "https://example.com" });
     expect(resSuccess).toEqual({
       ok: true,
       result: {
-        session: { id: "s1", url: "https://example.com", title: "Example", createdAt: 100 },
+        session: { id: "s1", url: "https://example.com", title: "Example", createdAt: 100, trust: "public", seq: 7 },
         title: "Example",
         snapshot: "Page snapshot",
+        trust: "public",
       },
     });
 

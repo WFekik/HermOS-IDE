@@ -26,6 +26,8 @@ import {
   Eye,
   ListTree,
   Info,
+  Monitor,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -62,12 +64,16 @@ import {
   fetchScreenshot,
   closeBrowser,
   normalizeBrowserUrl,
-  isLocalOrPrivateUrl,
   toErrorMessage,
   PRESSABLE_KEYS,
   type ScrollDirection,
   type BrowserSession,
 } from "@/components/browser/types";
+import {
+  sandboxForTier,
+  classifyBrowserTrust,
+  type BrowserTrustTier,
+} from "@/lib/browser-trust";
 import { useAppStore } from "@/stores/app-store";
 import { useTranslation } from "@/hooks/use-translation";
 
@@ -105,13 +111,14 @@ const QUICK_LINKS = [
  * sessions so the user's preferred mode is restored on next open. */
 const MODE_STORAGE_KEY = "hermos:browser-mode";
 
-type BrowserMode = "snapshot" | "preview";
+type BrowserMode = "snapshot" | "preview" | "mirror";
 
 function loadMode(): BrowserMode {
   if (typeof window === "undefined") return "snapshot";
   try {
     const raw = window.localStorage.getItem(MODE_STORAGE_KEY);
-    return raw === "preview" ? "preview" : "snapshot";
+    if (raw === "preview" || raw === "mirror") return raw;
+    return "snapshot";
   } catch {
     return "snapshot";
   }
@@ -173,10 +180,21 @@ function BrowserPanelInner() {
   // While the user is editing the URL bar, incoming session syncs must not
   // clobber what they are typing.
   const urlInputFocusedRef = React.useRef(false);
-  // Timestamp of the freshest live state applied outside polling (SSE payload
-  // or a successful open). An older in-flight poll response landing later
-  // must never revert it (URL flap during rapid agent navigation).
-  const liveUpdateAtRef = React.useRef(0);
+  // Freshest server state applied outside polling, keyed by session id +
+  // monotonic seq. A response (SSE or poll) for an already-applied session
+  // with an older seq must never revert it (URL flap during rapid agent
+  // navigation). A different session id always wins (fresh open / restart).
+  const liveIdRef = React.useRef<string | null>(null);
+  const liveSeqRef = React.useRef(0);
+  // Wall-clock of the last live apply — only used to forgive a stale NULL
+  // poll (fetched before an open completed). Existence is server truth.
+  const liveAppliedAtRef = React.useRef(0);
+  // Consecutive forgiven nulls — at most one stale null is ever forgiven, so
+  // a genuine close always lands on the next poll instead of sticking.
+  const liveNullStreakRef = React.useRef(0);
+  // Current view mode for event handlers (auto-reload preview on nav).
+  // Synced every render next to the activeMode computation below.
+  const modeRef = React.useRef<BrowserMode>("snapshot");
 
   // Subscribe to real-time browser events to avoid polling.
   React.useEffect(() => {
@@ -184,17 +202,68 @@ function BrowserPanelInner() {
     try {
       es = new EventSource("/api/browser/events");
       es.onmessage = (ev) => {
-        // Navigation events carry { url, title } — apply instantly instead of
-        // waiting for the next poll round-trip.
+        // Navigation events carry { id, url, title, trust, seq } — apply
+        // instantly instead of waiting for the next poll round-trip.
         if (ev.data && ev.data !== "update") {
           try {
-            const payload = JSON.parse(ev.data) as { url?: string; title?: string };
+            const payload = JSON.parse(ev.data) as {
+              id?: string;
+              url?: string;
+              title?: string;
+              trust?: BrowserTrustTier;
+              seq?: number;
+            };
             if (payload.url) {
-              liveUpdateAtRef.current = Date.now();
-              setSession((cur) =>
-                cur ? { ...cur, url: payload.url!, title: payload.title ?? cur.title } : cur,
-              );
-              if (!urlInputFocusedRef.current) setUrlInput(payload.url);
+              const seq = typeof payload.seq === "number" ? payload.seq : 0;
+              const sameSession =
+                !!payload.id && payload.id === liveIdRef.current;
+              if (!sameSession || seq > liveSeqRef.current) {
+                if (payload.id) liveIdRef.current = payload.id;
+                // A new session id resets the version baseline (server
+                // restarts reset the counter) — never max() across ids or a
+                // stale high-water mark would freeze updates forever.
+                liveSeqRef.current = sameSession
+                  ? Math.max(liveSeqRef.current, seq)
+                  : seq;
+                liveAppliedAtRef.current = Date.now();
+                liveNullStreakRef.current = 0;
+                // Abort any poll fetched during the transition gap so its
+                // stale null cannot wipe this fresh state on arrival.
+                void queryClient.cancelQueries({ queryKey: browserKeys.session });
+                const nextUrl = payload.url;
+                const nextTitle = payload.title ?? "";
+                const nextTrust = payload.trust ?? "public";
+                setSession((cur) =>
+                  cur
+                    ? {
+                        ...cur,
+                        url: nextUrl,
+                        title: payload.title ?? cur.title,
+                        trust: payload.trust ?? cur.trust,
+                        seq,
+                      }
+                    : payload.id
+                      ? {
+                          // No local session yet (fresh panel load, agent
+                          // opened first): seed a minimal one so the view is
+                          // instant; the poll backfill completes it.
+                          id: payload.id,
+                          url: nextUrl,
+                          title: nextTitle,
+                          createdAt: Date.now(),
+                          trust: nextTrust,
+                          seq,
+                        }
+                      : cur,
+                );
+                if (!urlInputFocusedRef.current) setUrlInput(nextUrl);
+                // Agent navigated while the user watches Preview — reload the
+                // iframe so it tracks the live page (Snapshot/Mirror update
+                // via query invalidation below).
+                if (modeRef.current === "preview") {
+                  setPreviewNonce((n) => n + 1);
+                }
+              }
             }
           } catch {
             /* legacy opaque tick */
@@ -202,6 +271,11 @@ function BrowserPanelInner() {
         }
         void queryClient.invalidateQueries({ queryKey: browserKeys.session });
         void queryClient.invalidateQueries({ queryKey: browserKeys.snapshot });
+      };
+      es.onerror = () => {
+        // EventSource reconnects automatically with backoff; polling below
+        // covers the gap while the stream is down.
+        console.warn("[BrowserPanel] SSE stream error — relying on polling until it recovers.");
       };
     } catch (err) {
       console.warn("[BrowserPanel] SSE unavailable — relying on query polling:", err);
@@ -222,7 +296,13 @@ function BrowserPanelInner() {
   const openMut = useMutation({
     mutationFn: (url: string) => openBrowser(url),
     onSuccess: (data) => {
-      liveUpdateAtRef.current = Date.now();
+      liveIdRef.current = data.session.id;
+      liveSeqRef.current = data.session.seq ?? 0;
+      liveAppliedAtRef.current = Date.now();
+      liveNullStreakRef.current = 0;
+      // Abort any in-flight session poll fetched before this open completed
+      // so its stale null cannot wipe the fresh session on arrival.
+      void queryClient.cancelQueries({ queryKey: browserKeys.session });
       setSession(data.session);
       setUrlInput(data.session.url);
       queryClient.setQueryData(browserKeys.snapshot, { snapshot: data.snapshot });
@@ -247,6 +327,10 @@ function BrowserPanelInner() {
   const closeMut = useMutation({
     mutationFn: () => closeBrowser(),
     onSuccess: () => {
+      liveIdRef.current = null;
+      liveSeqRef.current = 0;
+      liveNullStreakRef.current = 0;
+      lastMirrorKeyRef.current = "";
       setSession(null);
       setUrlInput("");
       setSelectedRef(null);
@@ -316,17 +400,43 @@ function BrowserPanelInner() {
     const prev = prevPolledRef.current;
     prevPolledRef.current = polledSession;
     if (polledSession) {
-      // A live update (SSE payload / successful open) newer than this poll's
-      // fetch is authoritative — don't let the stale response revert it.
-      if (liveUpdateAtRef.current > sessionFetchedAt) return;
+      // A live update (SSE payload / successful open) for the same session
+      // with a newer-or-equal seq is authoritative — don't let a stale
+      // in-flight poll response revert it. A new session id resets the
+      // baseline (server restarts reset the counter).
+      const seq = polledSession.seq ?? 0;
+      const sameSession =
+        !!liveIdRef.current && polledSession.id === liveIdRef.current;
+      if (sameSession && liveSeqRef.current > 0 && seq <= liveSeqRef.current) {
+        return;
+      }
+      liveIdRef.current = polledSession.id;
+      liveSeqRef.current = sameSession
+        ? Math.max(liveSeqRef.current, seq)
+        : seq;
+      liveNullStreakRef.current = 0;
       setSession(polledSession);
       if (!urlInputFocusedRef.current && polledSession.url !== urlInput) {
         setUrlInput(polledSession.url);
       }
-    } else if (prev && liveUpdateAtRef.current <= sessionFetchedAt) {
+    } else if (prev) {
       // Server session disappeared (agent closed it or TTL eviction) —
-      // reset the panel locally; no API call needed. Guarded like above: a
-      // null response older than our freshest live update must not wipe it.
+      // reset the panel locally; no API call needed. Forgiven only when the
+      // null was clearly fetched BEFORE our live apply (stale in-flight
+      // poll racing a just-completed open) — and at most once in a row, so
+      // a genuine close always lands on the following poll.
+      if (
+        liveIdRef.current &&
+        prev.id === liveIdRef.current &&
+        sessionFetchedAt < liveAppliedAtRef.current &&
+        liveNullStreakRef.current === 0
+      ) {
+        liveNullStreakRef.current = 1;
+        return;
+      }
+      liveIdRef.current = null;
+      liveSeqRef.current = 0;
+      liveNullStreakRef.current = 0;
       setSession(null);
       setSelectedRef(null);
       setBusyRef(null);
@@ -345,17 +455,80 @@ function BrowserPanelInner() {
   React.useEffect(() => {
     if (!browserAgentActive) setAgentViewOverride(null);
   }, [browserAgentActive]);
-  const isLocalSession = !!session?.url && isLocalOrPrivateUrl(session.url);
+  // Trust tier is server-classified per live URL; fall back to a local
+  // classification for pre-1.1 payloads that lack it.
+  const sessionTrust: BrowserTrustTier =
+    session?.trust ??
+    (session?.url ? classifyBrowserTrust(session.url).tier : "public");
+  const isLocalSession = !!session?.url && sessionTrust !== "public";
   const activeMode: BrowserMode = browserAgentActive
     ? agentViewOverride ?? (isLocalSession ? "preview" : "snapshot")
     : mode;
+  React.useEffect(() => {
+    modeRef.current = activeMode;
+  });
 
-  // Screenshot is fetched on-demand when the dialog opens.
+  // Screenshot is fetched on-demand when the dialog opens, and drives the
+  // Mirror view (live pixels of the agent's headless browser).
   const screenshotQuery = useQuery({
     queryKey: ["browser", "screenshot"] as const,
     queryFn: () => fetchScreenshot(),
     enabled: false, // manual only
   });
+
+  // Mirror auto-refresh: every new server state (agent action) pulls a fresh
+  // frame while Mirror is visible. Throttled to one frame per 1.5s so rapid
+  // action bursts don't queue screenshot storms; a throttled-behind state is
+  // retried via timer so the mirror never sticks on an old frame. Skipped
+  // while a capture is already in flight (single CLI capture at a time).
+  // Keyed by session id + seq: seq alone resets on server restart, so an
+  // id-less key could collide with a previously rendered frame.
+  const lastMirrorAtRef = React.useRef(0);
+  const lastMirrorKeyRef = React.useRef("");
+  const mirrorTimerRef = React.useRef<number | null>(null);
+  const [mirrorTick, setMirrorTick] = React.useState(0);
+  React.useEffect(() => {
+    return () => {
+      if (mirrorTimerRef.current) {
+        window.clearTimeout(mirrorTimerRef.current);
+        mirrorTimerRef.current = null;
+      }
+    };
+  }, []);
+  React.useEffect(() => {
+    if (activeMode !== "mirror" || !session) return;
+    const key = `${session.id}:${session.seq ?? 0}`;
+    if (key === lastMirrorKeyRef.current) return;
+    if (screenshotQuery.isFetching) {
+      // A capture is running long — retry shortly after instead of
+      // dropping this state (nothing else re-triggers the effect).
+      if (mirrorTimerRef.current) window.clearTimeout(mirrorTimerRef.current);
+      mirrorTimerRef.current = window.setTimeout(
+        () => setMirrorTick((tick) => tick + 1),
+        500,
+      );
+      return;
+    }
+    const wait =
+      lastMirrorKeyRef.current === ""
+        ? 0
+        : Math.max(0, 1500 - (Date.now() - lastMirrorAtRef.current));
+    if (wait > 0) {
+      if (mirrorTimerRef.current) window.clearTimeout(mirrorTimerRef.current);
+      mirrorTimerRef.current = window.setTimeout(
+        () => setMirrorTick((tick) => tick + 1),
+        wait,
+      );
+      return;
+    }
+    if (mirrorTimerRef.current) {
+      window.clearTimeout(mirrorTimerRef.current);
+      mirrorTimerRef.current = null;
+    }
+    lastMirrorKeyRef.current = key;
+    lastMirrorAtRef.current = Date.now();
+    void screenshotQuery.refetch();
+  }, [activeMode, session?.id, session?.seq, mirrorTick]);
 
   // Handlers
 
@@ -492,12 +665,12 @@ function BrowserPanelInner() {
           )}
           {t("browser_go")}
         </Button>
-        {/* Snapshot / Preview toggle */}
+        {/* Snapshot / Preview / Mirror toggle */}
         <ToggleGroup
           type="single"
           value={activeMode}
           onValueChange={(v) => {
-            if (v === "snapshot" || v === "preview") {
+            if (v === "snapshot" || v === "preview" || v === "mirror") {
               handleModeChange(v);
               // Explicit user choice wins over the agent-mirroring heuristic.
               setAgentViewOverride(v);
@@ -522,15 +695,35 @@ function BrowserPanelInner() {
             <Eye className="size-3" />
             <span className="hidden xl:inline">{t("browser_preview")}</span>
           </ToggleGroupItem>
+          <ToggleGroupItem
+            value="mirror"
+            className="h-6 px-1.5 text-[11px] gap-1 data-[state=on]:bg-accent"
+            aria-label={t("browser_mirror_view_aria")}
+          >
+            <Monitor className="size-3" />
+            <span className="hidden xl:inline">{t("browser_mirror")}</span>
+          </ToggleGroupItem>
         </ToggleGroup>
         <ToolbarIconButton
-          label={activeMode === "snapshot" ? t("browser_refresh_snapshot") : t("browser_reload_preview")}
+          label={
+            activeMode === "snapshot"
+              ? t("browser_refresh_snapshot")
+              : activeMode === "preview"
+                ? t("browser_reload_preview")
+                : t("browser_reload_mirror")
+          }
           onClick={() =>
             activeMode === "snapshot"
               ? void refreshMut.mutate()
-              : setPreviewNonce((n) => n + 1)
+              : activeMode === "preview"
+                ? setPreviewNonce((n) => n + 1)
+                : void screenshotQuery.refetch()
           }
-          disabled={!session || refreshMut.isPending}
+          disabled={
+            !session ||
+            refreshMut.isPending ||
+            (activeMode === "mirror" && screenshotQuery.isFetching)
+          }
         >
           <RefreshCw
             className={cn(
@@ -559,7 +752,8 @@ function BrowserPanelInner() {
         </ToolbarIconButton>
       </div>
 
-      {/* Body — Snapshot (accessibility tree) or Preview (live iframe) */}
+      {/* Body — Snapshot (accessibility tree), Preview (live iframe), or
+          Mirror (agent-browser pixels, immune to framing blocks) */}
       <div className="min-h-0 flex-1">
         {!session ? (
           openMut.isPending ? (
@@ -568,7 +762,20 @@ function BrowserPanelInner() {
             <EmptyState onQuickLink={handleQuickLink} />
           )
         ) : activeMode === "preview" ? (
-          <PreviewView url={session.url} nonce={previewNonce} />
+          <PreviewView url={session.url} nonce={previewNonce} trust={session.trust} />
+        ) : activeMode === "mirror" ? (
+          <MirrorView
+            url={session.url}
+            trust={session.trust}
+            dataUrl={screenshotQuery.data?.dataUrl ?? null}
+            loading={screenshotQuery.isFetching}
+            error={
+              screenshotQuery.isError
+                ? toErrorMessage(screenshotQuery.error)
+                : null
+            }
+            onRetry={() => void screenshotQuery.refetch()}
+          />
         ) : snapshotQuery.isLoading && !snapshot ? (
           <SnapshotSkeleton />
         ) : snapshotQuery.isError && !snapshot ? (
@@ -593,9 +800,9 @@ function BrowserPanelInner() {
         )}
       </div>
 
-      {/* Action bar — hidden in Preview mode (click/type/press only work
-          in Snapshot mode). Shows a hint instead. */}
-      {activeMode === "preview" && session ? (
+      {/* Action bar — hidden in Preview/Mirror mode (click/type/press only
+          work in Snapshot mode). Shows a hint instead. */}
+      {(activeMode === "preview" || activeMode === "mirror") && session ? (
         <div className="flex h-10 shrink-0 items-center gap-2 border-t px-3 text-[11px] text-muted-foreground">
           <Info className="size-3 text-brand" />
           <span>{t("browser_switch_to_snapshot")}</span>
@@ -760,24 +967,72 @@ function BrowserPanelInner() {
 
 /* --------------------------- Sub-components ---------------------------- */
 
+function TrustBadge({ trust }: { trust?: BrowserTrustTier }) {
+  const { t } = useTranslation();
+  const tier: BrowserTrustTier = trust ?? "public";
+  const label =
+    tier === "trusted-loopback"
+      ? t("browser_trust_trusted_loopback")
+      : tier === "local-network"
+        ? t("browser_trust_local_network")
+        : t("browser_trust_public");
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium",
+        tier === "trusted-loopback" && "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+        tier === "local-network" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
+        tier === "public" && "border-sky-500/40 text-sky-600 dark:text-sky-400",
+      )}
+      title={tier}
+    >
+      <ShieldCheck className="size-2.5" />
+      {label}
+    </span>
+  );
+}
+
 /* PreviewView — live iframe of the current browser session URL.
+ *
+ * Sandboxing: the iframe ALWAYS carries a `sandbox` attribute derived from
+ * the server-classified trust tier (see src/lib/browser-trust.ts). Local
+ * tiers keep `allow-same-origin` so dev apps work (localStorage, HMR,
+ * same-origin fetch); the public tier renders with an opaque origin. No
+ * tier ever allows top-navigation or downloads, so framed content — even a
+ * compromised or attacker-controlled page the agent was tricked into
+ * opening — cannot navigate or script the IDE window.
+ *
+ * Routing: public URLs render through /api/browser/proxy (which strips
+ * upstream framing headers and re-serves with an opaque-origin CSP);
+ * local URLs load directly so HMR/websockets keep working. Sites that send
+ * X-Frame-Options/CSP frame-ancestors (like a hardened local app) still
+ * refuse the iframe — Mirror mode covers exactly that case.
  *
  * Many sites block iframe embedding via X-Frame-Options or
  * frame-ancestors CSP. The iframe still renders in those cases, but
  * shows the browser's own "refused to connect" error. We can't detect
  * the block from JS (the iframe's onLoad fires even for blocked
  * loads), so we render a small, always-visible notice bar above the
- * iframe with an "Open in new tab" link. If the iframe is still
+ * iframe with trust badge + "Open in new tab" link. If the iframe is still
  * blank after 6 seconds, we additionally overlay a fallback panel
  * with the same guidance.
  */
-function PreviewView({ url, nonce }: { url: string; nonce: number }) {
+function PreviewView({
+  url,
+  nonce,
+  trust,
+}: {
+  url: string;
+  nonce: number;
+  trust?: BrowserTrustTier;
+}) {
   const { t } = useTranslation();
   const [showFallback, setShowFallback] = React.useState(false);
   const timerRef = React.useRef<number | null>(null);
 
-  // Reset the fallback timer whenever the URL or nonce (manual reload)
-  // changes. If onLoad hasn't fired within 6s, we surface the fallback.
+  // Reset the fallback timer whenever the URL or nonce (manual reload /
+  // agent navigation) changes. If onLoad hasn't fired within 6s, we surface
+  // the fallback.
   React.useEffect(() => {
     setShowFallback(false);
     if (timerRef.current) {
@@ -801,16 +1056,20 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
     setShowFallback(false);
   };
 
-  const isLocal = isLocalOrPrivateUrl(url);
-  const iframeSrc = isLocal ? url : `/api/browser/proxy?url=${encodeURIComponent(url)}`;
+  // Fail closed when the tier is unknown (pre-1.1 session payloads): proxy +
+  // strict sandbox.
+  const tier: BrowserTrustTier = trust ?? "public";
+  const iframeSrc =
+    tier === "public" ? `/api/browser/proxy?url=${encodeURIComponent(url)}` : url;
 
   return (
     <div className="relative flex h-full flex-col bg-background">
-      {/* Small notice bar — always visible so the user has the
-          "open in new tab" affordance regardless of load state. */}
+      {/* Small notice bar — always visible so the user has the trust badge
+          and "open in new tab" affordance regardless of load state. */}
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
         <Info className="size-2.5 shrink-0 text-brand" />
         <span className="truncate font-mono">{url}</span>
+        <TrustBadge trust={tier} />
         <a
           href={url}
           target="_blank"
@@ -824,10 +1083,12 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
       </div>
       <div className="relative min-h-0 flex-1">
         <iframe
-          key={`${url}-${nonce}`}
+          key={`${tier}:${url}-${nonce}`}
           src={iframeSrc}
           title={`Preview of ${url}`}
           className="size-full border-0 bg-white"
+          sandbox={sandboxForTier(tier)}
+          referrerPolicy="no-referrer"
           onLoad={handleLoad}
         />
         {/* Overlay fallback — shown only after the 6s timer fires with
@@ -851,6 +1112,83 @@ function PreviewView({ url, nonce }: { url: string; nonce: number }) {
                 {t("browser_open_new_tab")}
               </a>
             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* MirrorView — live pixels of the agent's headless browser.
+ *
+ * Unlike Preview (a second renderer: direct iframe or proxy re-fetch), the
+ * mirror shows EXACTLY what the agent sees, because it is a screenshot of
+ * the agent's own page. It is immune to X-Frame-Options / frame-ancestors
+ * blocks (no framing involved) and to cookie/storage divergence. View-only
+ * by design: interaction stays in Snapshot mode.
+ */
+function MirrorView({
+  url,
+  trust,
+  dataUrl,
+  loading,
+  error,
+  onRetry,
+}: {
+  url: string;
+  trust?: BrowserTrustTier;
+  dataUrl: string | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="relative flex h-full flex-col bg-background">
+      <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+        <Monitor className="size-2.5 shrink-0 text-brand" />
+        <span className="truncate font-mono">{url}</span>
+        <TrustBadge trust={trust} />
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="ms-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-brand hover:bg-accent transition-colors"
+          aria-label={t("browser_open_new_tab")}
+        >
+          <ExternalLink className="size-2.5" />
+          <span>{t("open")}</span>
+        </a>
+      </div>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-2">
+        {error && !dataUrl ? (
+          <div className="flex flex-col items-center gap-2 text-center">
+            <AlertTriangle className="size-5 text-amber-500" />
+            <p className="max-w-sm text-xs text-amber-600 dark:text-amber-400">{error}</p>
+            <Button size="sm" variant="outline" onClick={onRetry}>
+              {t("retry")}
+            </Button>
+          </div>
+        ) : !dataUrl && loading ? (
+          <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-5 animate-spin" />
+            <span>{t("browser_mirror_desc")}</span>
+          </div>
+        ) : dataUrl ? (
+          <img
+            src={dataUrl}
+            alt={`Mirror of ${url}`}
+            className="max-h-full max-w-full rounded border object-contain shadow-sm"
+          />
+        ) : (
+          <p className="max-w-sm px-4 text-center text-xs text-muted-foreground">
+            {t("browser_mirror_desc")}
+          </p>
+        )}
+        {loading && dataUrl && (
+          <div className="absolute end-3 top-3 flex items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur-sm">
+            <Loader2 className="size-2.5 animate-spin" />
+            <span>{t("live")}</span>
           </div>
         )}
       </div>
