@@ -82,7 +82,7 @@
           "availability": "https://schema.org/InStock"
         },
         "license": "https://opensource.org/licenses/MIT",
-        "softwareVersion": "1.0.8",
+        "softwareVersion": "1.1.0",
         "downloadUrl": "https://github.com/WFekik/HermOS-IDE/releases/latest",
         "featureList": [
           "100% Local-first desktop execution with zero cloud telemetry",
@@ -1492,7 +1492,7 @@
             </svg>
           </div>
           <span>HermOS</span>
-          <span class="brand-version">v1.0.8</span>
+          <span class="brand-version" id="brand-version"></span>
         </a>
 
         <nav class="nav-links" id="primary-nav" aria-label="Primary Navigation">
@@ -1537,7 +1537,7 @@
         </p>
 
         <div class="hero-cta-group">
-          <a class="btn btn-lg btn-primary" id="hero-primary-download-btn" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.8_x64-setup.exe">
+          <a class="btn btn-lg btn-primary" id="hero-primary-download-btn" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.0_x64-setup.exe">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
             <span id="hero-download-label">Download for Windows (x64)</span>
           </a>
@@ -1947,10 +1947,10 @@
                 <p>Windows 10 / 11 · 64-bit .exe &amp; .msi</p>
               </div>
               <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.8_x64-setup.exe" target="_blank" rel="noopener noreferrer" style="flex:1;">
+                <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.0_x64-setup.exe" target="_blank" rel="noopener noreferrer" style="flex:1;">
                   Download .exe
                 </a>
-                <a class="btn btn-sm btn-secondary" data-dl="win-msi" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.8_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
+                <a class="btn btn-sm btn-secondary" data-dl="win-msi" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.0_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
                   .msi
                 </a>
               </div>
@@ -1968,7 +1968,7 @@
                 <h3>macOS</h3>
                 <p>Apple Silicon &amp; Intel · Universal .dmg</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.8_universal.dmg" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.0_universal.dmg" target="_blank" rel="noopener noreferrer">
                 Download .dmg
               </a>
             </div>
@@ -1985,7 +1985,7 @@
                 <h3>Linux</h3>
                 <p>Ubuntu / Debian / Fedora · .deb &amp; AppImage</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.0.8_amd64.deb" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.0_amd64.deb" target="_blank" rel="noopener noreferrer">
                 Download .deb
               </a>
             </div>
@@ -2129,7 +2129,7 @@
 
       <div class="footer-sub-bar">
         <span>&copy; <span id="year-val">2026</span> HermOS Contributors · MIT Open Source License</span>
-        <span>Built with Tauri 2.0 &amp; Model Context Protocol</span>
+        <span>Built with Tauri 2.0 &amp; Model Context Protocol · Free code signing provided by <a href="https://signpath.org/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">SignPath Foundation</a></span>
       </div>
     </div>
   </footer>
@@ -2147,7 +2147,7 @@
       var CONFIG = {
         base: "https://hermos.is-a.dev",
         repo: "https://github.com/WFekik/HermOS-IDE",
-        version: "1.0.8",
+        version: "1.1.0",
         releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
       };
 
@@ -2203,6 +2203,15 @@
         highlightDetectedPlatform();
       }
 
+      // Nav badge renders from CONFIG.version — never hardcoded, so it tracks
+      // version.mjs lockstep and the live GitHub tag sync below.
+      function updateBrandVersion() {
+        var badge = document.getElementById("brand-version");
+        if (badge && /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(CONFIG.version)) {
+          badge.textContent = "v" + CONFIG.version;
+        }
+      }
+
       // Safe GitHub Release sync with regex validation
       fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
         .then(function(res) { return res.ok ? res.json() : null; })
@@ -2246,10 +2255,12 @@
             }
           }
           updateDownloadLinks();
+          updateBrandVersion();
         })
         .catch(function() { /* Graceful fallback */ });
 
       updateDownloadLinks();
+      updateBrandVersion();
 
       // ----------------------------------------------------------------------
       // HERO VIEWPORT TAB SWITCHER
