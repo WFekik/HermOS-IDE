@@ -125,11 +125,15 @@ export async function apiPatch<T>(
 
 export async function apiDelete<T>(
   path: string,
-  opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: { signal?: AbortSignal; timeoutMs?: number; body?: unknown } = {},
 ): Promise<T> {
   const res = await fetch(path, {
     method: "DELETE",
-    headers: { Accept: "application/json" },
+    headers:
+      opts.body === undefined
+        ? { Accept: "application/json" }
+        : { Accept: "application/json", "Content-Type": "application/json" },
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: withTimeout(opts.signal, opts.timeoutMs),
     credentials: "include",
   });

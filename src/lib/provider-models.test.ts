@@ -1,5 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { parseModelsColumn, mergeReasoningCapability, type ProviderModelConfig } from "./provider-models";
+import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ProviderModelConfig } from "./provider-models";
+
+describe("shouldPersistFetchedModels (never wipe stored config on empty fetch)", () => {
+  it("persists when the fetch listed models", () => {
+    expect(shouldPersistFetchedModels(5, 3)).toBe(true);
+    expect(shouldPersistFetchedModels(1, 0)).toBe(true);
+  });
+
+  it("persists an empty fetch only when nothing is stored", () => {
+    expect(shouldPersistFetchedModels(0, 0)).toBe(true);
+  });
+
+  it("refuses to overwrite stored models with an empty fetch", () => {
+    // The transient-failure case: endpoint silent, user has curated config.
+    expect(shouldPersistFetchedModels(0, 4)).toBe(false);
+  });
+});
 
 describe("parseModelsColumn", () => {
   it("should return empty array for null/undefined/empty input", () => {

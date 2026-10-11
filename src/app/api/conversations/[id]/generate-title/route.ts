@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireUser } from "@/lib/session";
 import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
-import { PROVIDERS } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { decrypt } from "@/lib/encryption";
 import type { ProviderId } from "@/lib/types";
 import {
@@ -174,8 +174,9 @@ export const POST = withErrorHandler(
       console.warn("[generate-title] Failed to decrypt API key:", err instanceof Error ? err.message : err);
       return ok({ title: conv.title, failed: true });
     }
-    const baseUrl = row.baseUrl || PROVIDERS[providerId]?.baseUrl || "";
-    const model = conv.model ?? PROVIDERS[providerId]?.models[0]?.id ?? "";
+    const titleInfo = getProvider(providerId) ?? PROVIDERS[providerId];
+    const baseUrl = row.baseUrl || titleInfo?.baseUrl || "";
+    const model = conv.model ?? titleInfo?.models[0]?.id ?? "";
     if (!model) return ok({ title: conv.title });
 
     let title: string;

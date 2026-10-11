@@ -68,6 +68,23 @@ describe("color-theme: luminance and contrast", () => {
   });
 });
 
+describe("color-theme: surface derivation memo", () => {
+  it("returns the cached palette for identical inputs (preset-switch hot path)", () => {
+    const a = deriveSurfaceColors(true, "#0E140F", "#CCCCCC", "#CC7800");
+    const b = deriveSurfaceColors(true, "#0E140F", "#CCCCCC", "#CC7800");
+    expect(b).toBe(a);
+  });
+
+  it("re-derives when any input changes", () => {
+    const a = deriveSurfaceColors(true, "#0E140F", "#CCCCCC", "#CC7800");
+    const b = deriveSurfaceColors(true, "#0E140F", "#CCCCCC", "#10B981");
+    expect(b).not.toBe(a);
+    expect(b.brand).toBe("#10B981");
+    const c = deriveSurfaceColors(false, "#0E140F", "#CCCCCC", "#CC7800");
+    expect(c).not.toBe(a);
+  });
+});
+
 describe("color-theme: surface derivation", () => {
   it("derives consistent dark mode surfaces", () => {
     const palette = deriveSurfaceColors(true, "#0E140F", "#CCCCCC", "#CC7800");

@@ -285,6 +285,33 @@ describe("Validation Schemas — all schemas", () => {
       expect(providerIdSchema.safeParse("invalid").success).toBe(false);
     });
 
+    it("should accept named custom providers (custom:<name> colon form)", () => {
+      // The whole frontend (providers tab, model picker, conversation
+      // records) plus getProvider() uses `custom:<display name>`.
+      for (const id of [
+        "custom:Ollama",
+        "custom:My LM Studio",
+        "custom:vLLM-GPU",
+        "custom:prod_server.json",
+        "custom:a",
+      ]) {
+        expect(providerIdSchema.safeParse(id).success, id).toBe(true);
+      }
+      // Legacy dash form still accepted for older rows.
+      expect(providerIdSchema.safeParse("custom-ollama1").success).toBe(true);
+      // Rejected: second colon (breaks split(":")[1] labels), illegal
+      // chars, empty suffix, overlong suffix.
+      for (const id of [
+        "custom:evil:extra",
+        "custom:<script>",
+        "custom:",
+        `custom:${"x".repeat(65)}`,
+        "customfoo",
+      ]) {
+        expect(providerIdSchema.safeParse(id).success, id).toBe(false);
+      }
+    });
+
     it("should validate agent modes", () => {
       expect(agentModeSchema.safeParse("agent").success).toBe(true);
       expect(agentModeSchema.safeParse("chat").success).toBe(true);

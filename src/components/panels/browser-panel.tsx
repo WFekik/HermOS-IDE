@@ -979,10 +979,13 @@ function TrustBadge({ trust }: { trust?: BrowserTrustTier }) {
   return (
     <span
       className={cn(
+        // Theme-synced tiers: trusted-loopback follows the success token,
+        // local-network the warning token, and public/isolated follows the
+        // active theme accent (brand) — never a hardcoded blue/sky.
         "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium",
         tier === "trusted-loopback" && "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
         tier === "local-network" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
-        tier === "public" && "border-sky-500/40 text-sky-600 dark:text-sky-400",
+        tier === "public" && "border-brand/40 text-brand",
       )}
       title={tier}
     >
@@ -1160,9 +1163,13 @@ function MirrorView({
           <span>{t("open")}</span>
         </a>
       </div>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-2">
+      {/* Fit-width (not contain): the screenshot is viewport-sized, so
+          stretching it to the panel width + vertical scroll reads like a
+          real browser tab. object-contain letterboxed it into a small
+          centered frame with dead space on all sides. */}
+      <div className="relative flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted/20 p-2">
         {error && !dataUrl ? (
-          <div className="flex flex-col items-center gap-2 text-center">
+          <div className="flex flex-col items-center gap-2 text-center self-center">
             <AlertTriangle className="size-5 text-amber-500" />
             <p className="max-w-sm text-xs text-amber-600 dark:text-amber-400">{error}</p>
             <Button size="sm" variant="outline" onClick={onRetry}>
@@ -1170,7 +1177,7 @@ function MirrorView({
             </Button>
           </div>
         ) : !dataUrl && loading ? (
-          <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground self-center">
             <Loader2 className="size-5 animate-spin" />
             <span>{t("browser_mirror_desc")}</span>
           </div>
@@ -1178,10 +1185,11 @@ function MirrorView({
           <img
             src={dataUrl}
             alt={`Mirror of ${url}`}
-            className="max-h-full max-w-full rounded border object-contain shadow-sm"
+            className="h-auto w-full rounded border shadow-sm"
+            draggable={false}
           />
         ) : (
-          <p className="max-w-sm px-4 text-center text-xs text-muted-foreground">
+          <p className="max-w-sm px-4 text-center text-xs text-muted-foreground self-center">
             {t("browser_mirror_desc")}
           </p>
         )}

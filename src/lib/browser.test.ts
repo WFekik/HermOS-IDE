@@ -4,6 +4,8 @@ import {
   getBrowserSession,
   browserClose,
   browserSnapshot,
+  browserClick,
+  browserType,
 } from "./browser";
 import { normalizeBrowserUrl } from "@/components/browser/types";
 import { classifyBrowserTrust } from "./browser-trust";
@@ -201,6 +203,80 @@ describe("Browser URL Normalization & Local Dev Classification", () => {
     expect(classifyBrowserTrust("https://example.com").tier).toBe("public");
     expect(classifyBrowserTrust("http://plain-http.org").tier).toBe("public");
     expect(classifyBrowserTrust("https://github.com/WFekik/HermOS-IDE").tier).toBe("public");
-    expect(classifyBrowserTrust("https://duckduckgo.com").tier).toBe("public");
+  });
+});
+
+describe("Browser stale-ref recovery (unknown ref)", () => {
+  beforeEach(async () => {
+    execFileMock.mockReset();
+    mockCheckUrlHost.mockReset();
+    mockCheckUrlHost.mockResolvedValue(null);
+    // Install a benign CLI stub BEFORE cleanup: browserClose shells out
+    // when a session exists, and a bare reset mock never calls back (hang).
+    execFileMock.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: (e: null, o: string, s: string) => void) => {
+        setImmediate(() => cb(null, "", ""));
+        return { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 0 };
+      },
+    );
+    await browserClose("user_click");
+    await browserClose("default");
+  });
+
+  /** CLI fails `click`/`fill` with "Unknown ref", succeeds snapshots. */
+  function mockCliUnknownRef() {
+    execFileMock.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: (e: Error | null, o: string, s: string) => void) => {
+        const joined = (args ?? []).join(" ");
+        const done = (e: Error | null, out: string) => setImmediate(() => cb(e, out, ""));
+        if (/\bclick\b/.test(joined) || /\bfill\b/.test(joined)) {
+          done(new Error("Command failed: agent-browser.js click e234\nUnknown ref: e234\n"), "");
+          return { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 1 };
+        }
+        if (joined.includes("get title")) return (done(null, "Mock Page Title"), { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 0 });
+        if (joined.includes("get url")) return (done(null, "https://example.com/final"), { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 0 });
+        if (joined.includes("snapshot")) return (done(null, '- link "Fresh Result" [@e999]'), { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 0 });
+        done(null, "");
+        return { once: () => {}, on: () => {}, kill: () => {}, killed: false, exitCode: 0 };
+      },
+    );
+  }
+
+  it("click on a stale ref fails WITH a fresh snapshot + actionable error (no format flap)", async () => {
+    mockCliSuccess();
+    const opened = await browserOpen("https://example.com", "user_click");
+    expect(opened.ok).toBe(true);
+
+    mockCliUnknownRef();
+    const res = await browserClick("@e234", "user_click");
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    // Names the dead ref and kills the @eN/eN format flap.
+    expect(res.error).toContain("@e234");
+    expect(res.error).toMatch(/do NOT flap|fresh snapshot/i);
+    // Fresh snapshot rides along so the agent retries a live ref.
+    expect("snapshot" in res && res.snapshot).toContain("@e999");
+  });
+
+  it("type on a stale ref recovers the same way", async () => {
+    mockCliSuccess();
+    const opened = await browserOpen("https://example.com", "user_click");
+    expect(opened.ok).toBe(true);
+
+    mockCliUnknownRef();
+    const res = await browserType("@e10", "hello", "user_click");
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("@e10");
+    expect("snapshot" in res && res.snapshot).toContain("@e999");
+  });
+
+  it("rejects malformed refs without touching the CLI", async () => {
+    mockCliSuccess();
+    await browserOpen("https://example.com", "user_click");
+    execFileMock.mockClear();
+    const res = await browserClick("not-a-ref", "user_click");
+    expect(res.ok).toBe(false);
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 });

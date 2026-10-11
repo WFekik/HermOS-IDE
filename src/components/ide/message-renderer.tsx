@@ -727,15 +727,30 @@ export function isTreeLineContent(line: string): boolean {
   if (!trimmed) return false;
   // Match any Unicode tree branch characters (├, └, │, ┬)
   if (/[├└│┬]/.test(trimmed)) return true;
+  // Match ASCII/em-dash branch lines (|--, +--, \--, |—, +—, \—, |─, |–
+  // and + variants) without matching GFM table separators. Dash class:
+  // ─ (U+2500), — (U+2014), – (U+2013), hyphen. Models frequently emit
+  // pipe + em dash, which `--`-only patterns missed entirely
+  // (horizontal blob).
+  if (/^(?:[|\s]*)(?:\+|\||\\)(?:-{1,2}|─|—|–)[ \t]*[^|\s─—–-]/.test(trimmed)) return true;
   // Match ASCII / Markdown tree patterns: ├──, └──, +--, |--, \--, |   |--
-  if (/^[|\s│]*[├└+│\\][─\-]{1,2}/.test(trimmed)) return true;
+  if (/^[|\s│]*[├└+│\\][─—–\-]{1,2}/.test(trimmed)) return true;
   if (/\b(├──|└──)\b/.test(trimmed)) return true;
+  // Branch markers mid-line (a header + inline blob on ONE physical line,
+  // e.g. `walid/ |— public/ ... |— src/`): need 2+ so single mentions
+  // ("see |-- docs") stay prose, and each marker must be followed by real
+  // content so GFM table separators (`|---|---|`) never match.
+  const midLine = trimmed.match(/(?:^|[ \t(])(?:\+|\||\\|│)(?:-{1,2}|─|—|–)[ \t]+[^|\s]/g);
+  if (midLine && midLine.length >= 2) return true;
   return false;
 }
 
 /**
  * Split a single line that contains an entire tree structure (multiple
- * ├── / └── markers) into individual lines with reconstructed indentation.
+ * branch markers) into individual lines with reconstructed indentation.
+ *
+ * Handles both box-drawing branches (├── / └──) and dash branches
+ * (|--, +--, \--, |—, +—, \—):
  *
  * Example input:
  *   `hermos/ ├── apps/ │ ├── web-ide/ # desc ├── landing/ └── cli/`
@@ -752,23 +767,63 @@ export function isTreeLineContent(line: string): boolean {
 export function splitInlineTree(line: string): string[] {
   if (!line) return [line];
 
-  const branchPattern = /[├└]/g;
+  // A branch marker is ├ / └, or a pipe/plus/backslash/│ followed by one of
+  // the tree dashes (box ─, em —, en –, hyphen pair). Pure-ASCII/em-dash
+  // trees (e.g. `|— public/ ... |— src/`) carry zero ├└, so count both.
+  const branchPattern = /(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–))/g;
   const matches = line.match(branchPattern);
   if (!matches || matches.length < 2) return [line];
 
-  // Split at positions just before tree branch characters (├ or └),
-  // but also capture the leading │ indent characters that belong to each branch.
-  // Pattern: split before sequences like "├──", "└──", or "│   ├──", "│   └──"
-  const parts: string[] = [];
-  // Match: optional leading (│\s*)* then ├── or └──
-  const splitRegex = /(?=(?:[\s│|]*[├└]))/g;
-  const segments = line.split(splitRegex).filter(s => s.trim());
+  // Split just before each branch marker WITHOUT consuming it (lookahead
+  // only): the previous consuming split ate the `|` of `|—`, leaving
+  // marker-less `— ...` fragments. Then strip leading separator runs that
+  // precede a branch marker and drop lone-separator segments, so no stray
+  // "│"/"|" artifact lines remain. Glued │ continuations inside a
+  // segment (e.g. "├── src/ │   features.ts") are sub-split, and
+  // trailing separators are stripped.
+  const splitRegex =
+    /(?=(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–)))/g;
+  const segments = line
+    .split(splitRegex)
+    .map((s) => s.trim())
+    .map((s) => s.replace(/^[ \t│|]+(?=(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–)))/, ""))
+    .map((s) => s.trim())
+    .filter((s) => s !== "" && !/^[ \t│|]+$/.test(s));
 
   if (segments.length < 2) return [line];
 
+  // Strip trailing separator runs (` |`, ` │`, ...) repeatedly — nested
+  // separators (`|— todos/ | |`) need more than one pass — and drop
+  // segments that are separators only, so no lone "│"/"|" artifact lines
+  // ever reach the fence.
+  const cleanPart = (s: string): string | null => {
+    let t = s.trim();
+    let prev = "";
+    while (prev !== t) {
+      prev = t;
+      t = t.replace(/[ \t]+[│|][ \t]*$/, "");
+    }
+    t = t.trim();
+    if (!t || /^[ \t│|]+$/.test(t)) return null;
+    return t;
+  };
+
+  const parts: string[] = [];
   for (const seg of segments) {
-    parts.push(seg.trimEnd());
+    const tail = seg.replace(/^[├└]+/, "");
+    if (!/[├└]/.test(tail) && /[ \t]+[│|][ \t]+\S/.test(tail)) {
+      const subs = seg.split(/[ \t]+(?=[│|][ \t]+\S)/);
+      for (const sub of subs) {
+        const t = cleanPart(sub);
+        if (t) parts.push(t);
+      }
+    } else {
+      const t = cleanPart(seg);
+      if (t) parts.push(t);
+    }
   }
+
+  if (parts.length < 2) return [line];
 
   return parts;
 }
@@ -783,7 +838,17 @@ export function preprocessContent(content: string): string {
     content.includes("├──") ||
     content.includes("└──") ||
     content.includes("│") ||
-    /^[|\s│]*[├└+│\\][─\-]{1,2}/m.test(content);
+    content.includes("|--") ||
+    content.includes("+--") ||
+    content.includes("|-") ||
+    content.includes("+-") ||
+    content.includes("|—") ||
+    content.includes("+—") ||
+    content.includes("|─") ||
+    content.includes("+─") ||
+    content.includes("|–") ||
+    content.includes("+–") ||
+    /^[|\s│]*[├└+│|\\][─—–\-]{1,2}/m.test(content);
 
   if (!needsLinks && !needsTables && !needsTrees) {
     return content;

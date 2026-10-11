@@ -52,6 +52,15 @@ export function StatusBar() {
 
   const { theme, cycle } = useThemeToggle();
 
+  // Mounted gate (same as TopBar): the provider initializes from
+  // localStorage on first client render while SSR renders "system".
+  // Rendering stored-theme content unmounted would mismatch SSR HTML.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
   const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   // The active file tab (open file) from the store — mirrors the editor.
   const activeFile = useAppStore((s) => s.activeFileTab);
@@ -98,8 +107,14 @@ export function StatusBar() {
   const providerLabel = currentProvider?.name ?? selectedProvider;
   const modelLabel = selectedModel ? formatModelDisplayName(selectedModel, t) : "—";
 
-  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
-  const themeLabel = theme === "light" ? t("status_theme_light") : theme === "dark" ? t("status_theme_dark") : t("status_theme_system");
+  const ThemeIcon = !mounted ? Monitor : theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+  const themeLabel = !mounted
+    ? t("status_theme_system")
+    : theme === "light"
+      ? t("status_theme_light")
+      : theme === "dark"
+        ? t("status_theme_dark")
+        : t("status_theme_system");
 
   const fmtTokens = fmtTokensFn;
 

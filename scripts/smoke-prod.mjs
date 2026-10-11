@@ -9,7 +9,9 @@
 // Usage: node scripts/smoke-prod.mjs
 
 import { spawn } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, mkdtempSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,14 +71,28 @@ function randomPort() {
   return 3100 + Math.floor(Math.random() * 900);
 }
 
-function startServer(port) {
-  const child = spawn(process.execPath, ["server.js"], {
-    cwd: standaloneDir,
+// Mirrors the desktop launcher (src-tauri/src/lib.rs boot_backend_and_navigate):
+// absolute server.js path, CWD OUTSIDE the standalone tree (app-data temp
+// dir), and the same env contract. This is what makes smoke a valid proxy
+// for installed-boot regressions (CWD-dependent resolution, .env isolation,
+// DB provisioning against an isolated dir — never ~/.hermos).
+function makeIsolatedAppData() {
+  return mkdtempSync(join(tmpdir(), "hermos-smoke-"));
+}
+
+function startServer(port, appDataDir) {
+  const child = spawn(process.execPath, [join(standaloneDir, "server.js")], {
+    cwd: appDataDir,
     env: {
       ...process.env,
       HOSTNAME: "127.0.0.1",
       PORT: String(port),
       NODE_ENV: "production",
+      NEXT_TELEMETRY_DISABLED: "1",
+      HERMOS_DESKTOP: "true",
+      HERMOS_APP_DATA_DIR: appDataDir,
+      DATABASE_URL: `file:${join(appDataDir, "db", "hermos.db").replace(/\\/g, "/")}`,
+      ENCRYPTION_KEY: randomBytes(32).toString("hex"),
     },
     // stdio fully ignored: the child's output is not consumed, and leaving the
     // pipes open lets the parent hit a libuv assertion on teardown after
@@ -129,17 +145,21 @@ async function main() {
 
   // Retry loop: a freshly picked random port may already be bound by another
   // process; on health-startup failure kill the child and try one more port.
+  // One isolated app-data dir per RUN (shared across attempts — same as the
+  // desktop retry loop, which reuses app-data). DB provisioning and pidfile
+  // state therefore carry over between attempts, exactly like desktop.
   let child = null;
   let baseUrl = null;
   let health = null;
+  const appDataDir = makeIsolatedAppData();
   for (let attempt = 1; attempt <= START_ATTEMPTS && !health; attempt++) {
     if (child) await killChild(child);
     const port = randomPort();
     baseUrl = `http://127.0.0.1:${port}`;
     console.log(
-      `[smoke-prod] Starting standalone server on ${baseUrl} (attempt ${attempt}/${START_ATTEMPTS}, child pid will be managed below)`,
+      `[smoke-prod] Starting standalone server on ${baseUrl} (attempt ${attempt}/${START_ATTEMPTS}, cwd=${appDataDir}, child pid will be managed below)`,
     );
-    child = startServer(port);
+    child = startServer(port, appDataDir);
     const candidate = await waitForHealth(baseUrl);
     if (candidate.res && candidate.body) health = candidate;
   }
@@ -198,6 +218,18 @@ async function main() {
       "robots-200",
       robots.status === 200,
       `status ${robots.status}, ${robotsText.length} bytes`,
+    );
+
+    // Desktop-boot parity: the Tauri splash loads /splash.html from the
+    // bundle — the standalone copy must serve 200 as well (proves
+    // copyPublicIntoStandalone carried it and the CWD move didn't break
+    // static serving).
+    const splash = await fetchWithTimeout(`${baseUrl}/splash.html`, 10_000);
+    const splashText = await splash.text();
+    report(
+      "splash-200",
+      splash.status === 200 && splashText.includes("HermOS IDE"),
+      `status ${splash.status}, ${splashText.length} bytes`,
     );
   } catch (err) {
     report("unexpected-error", false, err.message);

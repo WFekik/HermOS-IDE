@@ -7,7 +7,7 @@ import { parseJson, apiError, unauthorized, ok, withErrorHandler } from "@/app/a
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
-import { PROVIDERS } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { parseModelsColumn } from "@/lib/provider-models";
 import type { ProviderId } from "@/lib/types";
 import {
@@ -122,7 +122,7 @@ async function performAiInlineEdit(
   }
 
   const providerId = row.provider as ProviderId;
-  const info = PROVIDERS[providerId];
+  const info = getProvider(providerId) ?? PROVIDERS[providerId];
   const baseUrl = row.baseUrl || info?.baseUrl || "";
   if (!baseUrl && providerId !== "anthropic") return null;
 

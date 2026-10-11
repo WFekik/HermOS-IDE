@@ -2869,7 +2869,7 @@ async function resolveByok(
   } catch {
     return null;
   }
-  const info = PROVIDERS[provider];
+  const info = getProvider(provider) ?? PROVIDERS[provider];
   const baseUrl = row.baseUrl || info?.baseUrl || "";
   return { apiKey, baseUrl };
 }
@@ -2926,7 +2926,7 @@ async function getModelContextWindow(
   provider: ProviderId,
   model: string,
 ): Promise<number | undefined> {
-  const staticWindow = PROVIDERS[provider]?.models.find((m) => m.id === model)?.contextWindow;
+  const staticWindow = (getProvider(provider) ?? PROVIDERS[provider])?.models.find((m) => m.id === model)?.contextWindow;
   if (typeof staticWindow === "number") return staticWindow;
 
   try {
@@ -3454,7 +3454,10 @@ async function summarizeTranscript(opts: {
       }
     } else {
       // OpenAI-compatible (free tier, OpenRouter, OpenAI, Groq, etc.)
-      const pkRow = !PROVIDERS[provider as keyof typeof PROVIDERS]?.requiresKey
+      // getProvider() synthesizes named customs (requiresKey: true) so
+      // compaction summarize works for saved custom endpoints too.
+      const providerInfo = getProvider(provider as ProviderId) ?? PROVIDERS[provider as keyof typeof PROVIDERS];
+      const pkRow = !providerInfo?.requiresKey
         ? null
         : await db.providerKey.findUnique({
             where: { userId_provider: { userId, provider: provider as any } },
@@ -3468,7 +3471,7 @@ async function summarizeTranscript(opts: {
           apiKey = null;
         }
       }
-      const baseUrl = pkRow?.baseUrl ?? PROVIDERS[provider as keyof typeof PROVIDERS]?.baseUrl ?? "";
+      const baseUrl = pkRow?.baseUrl ?? providerInfo?.baseUrl ?? "";
       if (apiKey !== null && baseUrl) {
         const reg = await peekModelInRegistry(model, provider, { core: true });
         const useResponses = isResponsesRequired(provider, baseUrl, model);
@@ -6682,7 +6685,7 @@ export async function testProvider(
     if (!apiKey) {
       return { ok: false, error: "No API key provided." };
     }
-    const info = PROVIDERS[provider];
+    const info = getProvider(provider) ?? PROVIDERS[provider];
     const baseUrl = (baseUrlOverride || info?.baseUrl || "").replace(/\/$/, "");
 
     if (provider === "anthropic") {

@@ -18,6 +18,9 @@ import {
   trackNewFile,
   trackNewDir,
   restoreCheckpointsSinceTimestamp,
+  restoreCheckpoint,
+  buildUndoPreview,
+  sha1Hex,
   getSafeRelativePath,
   deleteConversationCheckpoints,
   listCheckpoints,
@@ -121,6 +124,167 @@ describe("Multi-Turn Checkpoint & Undo System", () => {
 
     list = await listCheckpoints(userId, convId);
     expect(list.length).toBe(0);
+  });
+});
+
+describe("Undo truth propagation (no silent partial success)", () => {
+  let tmpDir: string;
+  const userId = "user-test-1";
+  const conversationId = "conv-truth-test";
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "hermos-cp-truth-"));
+  });
+
+  afterEach(async () => {
+    await deleteConversationCheckpoints(userId, conversationId).catch(() => {});
+    try {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("collects per-checkpoint failures, keeps failed checkpoints, reports ok:false", async () => {
+    const inside = path.join(tmpDir, "inside.txt");
+    const outside = path.join(tmpDir, "outer", "outside.txt");
+    await fs.mkdir(path.dirname(outside), { recursive: true });
+    await fs.writeFile(inside, "v1", "utf-8");
+    await fs.writeFile(outside, "v1", "utf-8");
+
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn");
+    await snapshotFile(userId, conversationId, cp.id, inside);
+    await snapshotFile(userId, conversationId, cp.id, outside);
+    await fs.writeFile(inside, "v2", "utf-8");
+    await fs.writeFile(outside, "v2", "utf-8");
+
+    // Contain restores to tmpDir itself: `outside` (in tmpDir/outer) still
+    // passes, so scope tighter — restore with a root that excludes BOTH by
+    // pointing at an empty dir: every target throws containment.
+    const fenced = await fs.mkdtemp(path.join(os.tmpdir(), "hermos-cp-fence-"));
+    try {
+      const result = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, {
+        workspaceRoot: fenced,
+      });
+      expect(result.attempted).toBe(1);
+      expect(result.ok).toBe(false);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].id).toBe(cp.id);
+      expect(result.restoredFiles).toEqual([]);
+      // Failed checkpoints are NOT purged — a later retry can still apply them.
+      const remaining = await listCheckpoints(userId, conversationId);
+      expect(remaining.some((c) => c.id === cp.id)).toBe(true);
+      // And nothing was written through the refused gate.
+      expect(await fs.readFile(inside, "utf-8")).toBe("v2");
+      expect(await fs.readFile(outside, "utf-8")).toBe("v2");
+    } finally {
+      await fs.rm(fenced, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("first snapshot wins under concurrent snapshotFile calls", async () => {
+    const file = path.join(tmpDir, "race.txt");
+    await fs.writeFile(file, "original", "utf-8");
+    const cp = await createCheckpoint(userId, conversationId, "turn");
+    await Promise.all([
+      snapshotFile(userId, conversationId, cp.id, file),
+      snapshotFile(userId, conversationId, cp.id, file),
+    ]);
+    await fs.writeFile(file, "edited", "utf-8");
+    // Second snapshot round must be a no-op (keeps the original).
+    await snapshotFile(userId, conversationId, cp.id, file);
+    const res = await restoreCheckpoint(userId, cp.id);
+    expect(res.ok).toBe(true);
+    expect(await fs.readFile(file, "utf-8")).toBe("original");
+  });
+
+  it("refuses restore targets outside the workspace root", async () => {
+    const file = path.join(tmpDir, "far.txt");
+    await fs.writeFile(file, "v1", "utf-8");
+    const cp = await createCheckpoint(userId, conversationId, "turn");
+    await snapshotFile(userId, conversationId, cp.id, file);
+    await fs.writeFile(file, "v2", "utf-8");
+    const otherRoot = await fs.mkdtemp(path.join(os.tmpdir(), "hermos-cp-other-"));
+    try {
+      await expect(
+        restoreCheckpoint(userId, cp.id, { workspaceRoot: otherRoot }),
+      ).rejects.toThrow(/outside the workspace/);
+      // File untouched by the refused restore.
+      expect(await fs.readFile(file, "utf-8")).toBe("v2");
+    } finally {
+      await fs.rm(otherRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("buildUndoPreview inverts +/- for display and echoes verifiable hashes", async () => {
+    const file = path.join(tmpDir, "plan.txt");
+    // Snapshot: lines a, b. Current: lines b, c.
+    await fs.writeFile(file, "a\nb\n", "utf-8");
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn");
+    await snapshotFile(userId, conversationId, cp.id, file);
+    await fs.writeFile(file, "b\nc\n", "utf-8");
+
+    const preview = await buildUndoPreview(userId, conversationId, t0, {
+      workspaceRoot: tmpDir,
+    });
+    expect(preview.attempted).toBe(1);
+    expect(preview.files).toHaveLength(1);
+    const entry = preview.files[0];
+    // Agent deleted "a" → undo restores it (+1 green); added "c" → removed (−1 red).
+    expect(entry.restored).toBe(1);
+    expect(entry.removed).toBe(1);
+    expect(entry.status).toBe("modified");
+    expect(entry.hash).toBe(sha1Hex("b\nc\n"));
+    expect(preview.expected).toEqual([{ path: file, hash: sha1Hex("b\nc\n") }]);
+  });
+
+  it("preview shows created-then-edited files as deleted (matches restore)", async () => {
+    // Create in turn 3, edit in turn 5, undo to turn 2: restore writes the
+    // turn-5 snapshot then deletes via turn-3 newFiles → final DELETED.
+    // The preview must show deletion, not a modified diff.
+    const file = path.join(tmpDir, "overlap.txt");
+    const t0 = Date.now();
+    const cp3 = await createCheckpoint(userId, conversationId, "turn3");
+    await fs.writeFile(file, "hello\n", "utf-8");
+    await trackNewFile(userId, conversationId, cp3.id, file);
+    await new Promise((r) => setTimeout(r, 20));
+    const cp5 = await createCheckpoint(userId, conversationId, "turn5");
+    await snapshotFile(userId, conversationId, cp5.id, file);
+    await fs.writeFile(file, "hello world\n", "utf-8");
+
+    const preview = await buildUndoPreview(userId, conversationId, t0, {
+      workspaceRoot: tmpDir,
+    });
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0]).toMatchObject({ status: "created", restored: 0 });
+    expect(preview.files[0].removed).toBeGreaterThan(0);
+
+    // And the actual restore really deletes it.
+    const res = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, {
+      workspaceRoot: tmpDir,
+    });
+    expect(res.ok).toBe(true);
+    expect(await fs.stat(file).catch(() => null)).toBeNull();
+  });
+
+  it("buildUndoPreview lists agent-created files as full removals", async () => {
+    const created = path.join(tmpDir, "newfile.txt");
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn");
+    await fs.writeFile(created, "one\ntwo\nthree\n", "utf-8");
+    await trackNewFile(userId, conversationId, cp.id, created);
+
+    const preview = await buildUndoPreview(userId, conversationId, t0, {
+      workspaceRoot: tmpDir,
+    });
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0]).toMatchObject({
+      restored: 0,
+      removed: 3,
+      status: "created",
+    });
   });
 });
 

@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { toast } from 'sonner';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
 import {
   checkForUpdates,
   recordPendingUpdate,
   readPendingUpdate,
   clearPendingUpdate,
   releaseTagUrl,
+  isFileLockError,
+  installWithRetries,
 } from './updater';
+
+vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
+vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 describe('updater', () => {
   beforeEach(() => {
@@ -94,6 +104,161 @@ describe('updater', () => {
       expect(readPendingUpdate()).toBeNull();
       localStorage.setItem('hermos:pending-update', 'not-json{{{');
       expect(readPendingUpdate()).toBeNull();
+    });
+  });
+
+  describe('isFileLockError', () => {
+    it.each([
+      ['cannot remove _up directory: file in use', true],
+      ['cannot remove _up_ staging dir', true],
+      // Bare "my_uploads" must NOT match the NSIS _up staging token.
+      ['failed to clean my_uploads cache', false],
+      ['EBUSY: resource busy or locked', true],
+      ['EPERM: operation not permitted', true],
+      ['The process cannot access the file because it is being used by another process', true],
+      ['Access is denied (os error 5)', true],
+      ['failed to remove directory: Access is denied', true],
+      ['Network offline', false],
+      ['signature verification failed', false],
+      // "blocked"/"clock"/"unlock" contain "lock" as a substring but are
+      // not file locks (leading \b fails: preceding char is a word char).
+      ['request blocked by policy', false],
+      ['wall clock skew detected', false],
+      ['please unlock the file', false],
+      // Real Windows lock phrasing — MUST retry (isolated from ebusy/eperm
+      // branches so the regex itself is exercised, not a sibling clause).
+      ['the file is locked', true],
+      ['installer locks file', true],
+      ['locking the directory failed', true],
+      // bare "remove" without "directory" must not match.
+      ['failed to remove temp file', false],
+    ])('classifies %q as lock=%s', (message, expected) => {
+      expect(isFileLockError(new Error(message))).toBe(expected);
+    });
+  });
+
+  describe('installWithRetries', () => {
+    it('succeeds first try without re-stopping', async () => {
+      const install = vi.fn().mockResolvedValue(undefined);
+      const stop = vi.fn().mockResolvedValue(undefined);
+      const attempts: number[] = [];
+      await installWithRetries(install, (n) => attempts.push(n), stop);
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(attempts).toEqual([1]);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it('retries lock errors with backoff then succeeds', async () => {
+      const install = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('EBUSY: _up file in use'))
+        .mockRejectedValueOnce(new Error('EPERM lock'))
+        .mockResolvedValue(undefined);
+      const stop = vi.fn().mockResolvedValue(undefined);
+      const attempts: number[] = [];
+      await installWithRetries(install, (n) => attempts.push(n), stop);
+      expect(install).toHaveBeenCalledTimes(3);
+      expect(attempts).toEqual([1, 2, 3]);
+      expect(stop).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws immediately on non-lock errors', async () => {
+      const install = vi.fn().mockRejectedValue(new Error('signature verification failed'));
+      const stop = vi.fn().mockResolvedValue(undefined);
+      await expect(
+        installWithRetries(install, () => {}, stop),
+      ).rejects.toThrow('signature verification failed');
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it('throws after exhausting attempts on persistent locks', async () => {
+      const install = vi.fn().mockRejectedValue(new Error('file is being used by another process'));
+      const stop = vi.fn().mockResolvedValue(undefined);
+      const attempts: number[] = [];
+      await expect(
+        installWithRetries(install, (n) => attempts.push(n), stop),
+      ).rejects.toThrow('being used');
+      expect(install).toHaveBeenCalledTimes(4);
+      expect(attempts).toEqual([1, 2, 3, 4]);
+      expect(stop).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('quiet titlebar-button mode (desktop)', () => {
+    const mockCheck = vi.mocked(check);
+    const mockRelaunch = vi.mocked(relaunch);
+    const mockInvoke = vi.mocked(invoke);
+
+    function makeUpdate(overrides: Record<string, unknown> = {}) {
+      return {
+        version: '9.9.9',
+        body: 'notes',
+        download: vi.fn(async (cb: (e: { event: string; data?: Record<string, number> }) => void) => {
+          cb({ event: 'Started', data: { contentLength: 1000 } });
+          cb({ event: 'Progress', data: { chunkLength: 1000 } });
+          cb({ event: 'Finished' });
+        }),
+        install: vi.fn(async () => {}),
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+      localStorage.clear();
+      mockRelaunch.mockResolvedValue(undefined as unknown as void);
+      mockInvoke.mockResolvedValue(true);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }),
+      );
+      vi.spyOn(toast, 'loading').mockImplementation(() => 'x' as unknown as string & { id: string });
+      vi.spyOn(toast, 'error').mockImplementation(() => 'x' as unknown as string & { id: string });
+      vi.spyOn(toast, 'dismiss').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+      localStorage.clear();
+      vi.unstubAllGlobals();
+    });
+
+    it('quiet success: callbacks fire, toasts suppressed, pending recorded', async () => {
+      mockCheck.mockResolvedValue(makeUpdate() as unknown as Awaited<ReturnType<typeof check>>);
+      const stages: string[] = [];
+      const progress: Array<[number, number]> = [];
+      const result = await checkForUpdates(true, {
+        quiet: true,
+        onProgress: (d, t) => progress.push([d, t]),
+        onStage: (s) => stages.push(s),
+      });
+      expect(result).toMatchObject({ status: 'downloaded', version: '9.9.9' });
+      expect(stages).toEqual(['downloading', 'installing']);
+      expect(progress).toEqual([[0, 1000], [1000, 1000]]);
+      expect(toast.loading).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).not.toHaveBeenCalled();
+      const pending = readPendingUpdate();
+      expect(pending).toMatchObject({ to: '9.9.9' });
+    });
+
+    it('quiet definitive failure: throws, no error toast, pending cleared', async () => {
+      mockCheck.mockResolvedValue(
+        makeUpdate({ install: vi.fn().mockRejectedValue(new Error('signature verification failed')) }) as unknown as Awaited<ReturnType<typeof check>>,
+      );
+      await expect(checkForUpdates(true, { quiet: true })).rejects.toThrow(
+        'signature verification failed',
+      );
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('non-quiet success still shows progress toasts (legacy path)', async () => {
+      mockCheck.mockResolvedValue(makeUpdate() as unknown as Awaited<ReturnType<typeof check>>);
+      const result = await checkForUpdates(true);
+      expect(result.status).toBe('downloaded');
+      expect(toast.loading).toHaveBeenCalled();
     });
   });
 });

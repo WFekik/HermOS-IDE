@@ -1021,10 +1021,10 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
             {args.find && (
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{t("find")}</span>
-                <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 bg-red-500/5 rounded px-2 py-1 max-h-24 overflow-y-auto">
+                <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 rounded px-2 py-1 max-h-24 overflow-y-auto">
                   {args.find.split("\n").map((line, i) => (
-                    <div key={i} className="text-red-700 dark:text-red-400 bg-red-500/10 px-1 font-mono">
-                      - {line}
+                    <div key={i} className="border-s-2 border-s-red-500/80 bg-red-500/15 ps-1 font-mono text-foreground/80">
+                      <span className="text-red-700 dark:text-red-400 select-none">- </span>{line}
                     </div>
                   ))}
                 </pre>
@@ -1032,13 +1032,13 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
             )}
             <div>
               <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{t("replace")}</span>
-              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 bg-emerald-500/5 rounded px-2 py-1 max-h-24 overflow-y-auto">
-                {replaceText.split("\n").map((line, i) => (
-                  <div key={i} className="text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-1 font-mono">
-                    + {line}
-                  </div>
-                ))}
-              </pre>
+                <pre className="font-mono text-[11px] whitespace-pre-wrap break-words mt-0.5 rounded px-2 py-1 max-h-24 overflow-y-auto">
+                  {replaceText.split("\n").map((line, i) => (
+                    <div key={i} className="border-s-2 border-s-emerald-500/80 bg-emerald-500/15 ps-1 font-mono text-foreground/80">
+                      <span className="text-emerald-700 dark:text-emerald-400 select-none">+ </span>{line}
+                    </div>
+                  ))}
+                </pre>
             </div>
           </div>
         </div>

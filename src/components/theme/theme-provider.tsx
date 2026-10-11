@@ -29,23 +29,42 @@ export function useTheme() {
   return useContext(ThemeContext);
 }
 
+function readStoredTheme(): ThemeMode {
+  if (typeof window === "undefined") return "system";
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  } catch {
+    // localStorage unavailable — keep the default
+  }
+  return "system";
+}
+
+function readSystemTheme(): "light" | "dark" {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeMode>("system");
-  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
+  // Lazy initializers read storage + media query during the FIRST render, so
+  // the first paint already carries the persisted/matched theme — matching
+  // the anti-FOUC inline script in layout.tsx. The old useState("system") +
+  // mount-effect-set caused a second render that briefly applied the WRONG
+  // mode's CSS variables for persisted-dark + custom-theme users.
+  const [theme, setThemeState] = useState<ThemeMode>(readStoredTheme);
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">(readSystemTheme);
 
   useEffect(() => {
-    let stored: ThemeMode = "system";
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw === "light" || raw === "dark" || raw === "system") stored = raw;
-    } catch {
-      // localStorage unavailable — keep the default
-    }
-    setThemeState(stored);
+    // Re-sync in case storage changed between first render and mount.
+    setThemeState(readStoredTheme());
+    setSystemTheme(readSystemTheme());
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const sync = () => setSystemTheme(mq.matches ? "dark" : "light");
-    sync();
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);

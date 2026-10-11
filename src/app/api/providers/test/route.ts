@@ -4,7 +4,7 @@ import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { testProvider } from "@/lib/ai/executor";
-import { PROVIDERS } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { parseJson, withErrorHandler, apiError, unauthorized, ok } from "@/app/api/_lib/helpers";
 import type { ProviderId } from "@/lib/types";
 
@@ -47,7 +47,7 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
     return ok({ ok: false, error: "Failed to decrypt API key. Please re-save your key." });
   }
 
-  const info = PROVIDERS[provider];
+  const info = getProvider(provider) ?? PROVIDERS[provider];
   const baseUrl = row.baseUrl || info?.baseUrl || "";
 
   // Pick the first enabled model from the saved key's model list for testing.

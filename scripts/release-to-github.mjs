@@ -41,6 +41,23 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.0" || tag === "1.1.0") {
+    return `### HermOS IDE ${tag} — Instant Startup, Reliable Undo & BYOK Providers
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### ⚡ What's New in ${tag}
+- **🚀 Instant Startup**: Window paints immediately with a splash while the backend boots in the background (cached port, no slow system sweeps, warmup after first paint).
+- **🔄 Update Reliability**: Fixed Windows \`_up\` folder-lock failures (sidecar runs outside the install dir, verified shutdown, retried installs) plus a persistent titlebar update button with progress — no more vanishing toasts.
+- **↩️ Undo You Can Trust**: Undo failures, duplicates and silent partial restores fixed (truth-propagating restore, per-conversation lock, transcript tombstones); new Confirm Undo dialog lists every file with inverted +/− stats and the server re-verifies before applying.
+- **🔌 Custom Providers (BYOK) End-to-End**: Add any OpenAI-compatible endpoint and it saves, lists models, and appears in the chat model picker; transient fetch failures can no longer wipe stored models.
+- **🎨 Theme & Diff Polish**: Jank-free live color/font dragging (rAF preview + debounced persist), pro editor-style diffs with syntax colors, vertical tree rendering for agent output.
+- **🌍 Fully Translated**: Every new string in all 9 languages (English, Spanish, French, German, Chinese, Japanese, Arabic RTL, Russian, Portuguese).
+- **✅ Verified End-to-End**: typecheck clean, eslint clean, full test suite green, cargo check clean, production build green (Azure test gate).
+
+#### 📦 Downloads & Verification
+All installer binaries and signatures are signed with the HermOS Tauri release key. Download the installer for your platform below.`;
+  }
   if (tag === "v1.0.9" || tag === "1.0.9") {
     return `### HermOS IDE ${tag} — Hardening, Performance Caps & Visual Polish
 

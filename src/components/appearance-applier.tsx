@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme } from "@/components/theme/theme-provider";
-import { applyThemeToDocument, clearCustomThemeVariables } from "@/lib/color-theme";
+import { applyThemeToDocument } from "@/lib/color-theme";
 import { isRtlLanguage } from "@/lib/i18n";
 
 export function AppearanceApplier() {
@@ -35,14 +35,14 @@ export function AppearanceApplier() {
     };
   }, [density, fontSize]);
 
-  // Apply color customization and CSS variables dynamically
+  // Apply color customization and CSS variables dynamically.
+  // No cleanup: applyThemeToDocument is idempotent (it overwrites or, for
+  // the default preset, removes overrides itself). A remove-all cleanup
+  // would force every commit through remove→re-add — two full style
+  // recalculations plus a flash of unstyled defaults per change.
   React.useEffect(() => {
     const activeConfig = resolvedTheme === "dark" ? darkThemeConfig : lightThemeConfig;
     applyThemeToDocument(resolvedTheme, activeConfig);
-
-    return () => {
-      clearCustomThemeVariables();
-    };
   }, [resolvedTheme, lightThemeConfig, darkThemeConfig]);
 
   return null;

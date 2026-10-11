@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAppStore } from "@/stores/app-store";
+import { useAppStore, isUndoneMessage } from "@/stores/app-store";
 import { apiStream, apiPost, ApiRequestError } from "@/lib/api-client";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n";
@@ -558,6 +558,11 @@ export function useChatStream(): UseChatStreamReturn {
       }
       case "subagent_report": {
         flushPending();
+        // Drop reports for undone messages: a report queued before an undo
+        // but delivered after would resurrect deleted content as a new bubble.
+        if (isUndoneMessage(convId, evt.messageId)) {
+          break;
+        }
         store.appendUserMessage(
           {
             id: evt.messageId,

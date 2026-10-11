@@ -49,7 +49,11 @@ vi.mock("@/lib/workspace", () => ({
 }));
 
 vi.mock("@/lib/checkpoints", () => ({
-  restoreCheckpointsSinceTimestamp: vi.fn().mockResolvedValue({ restoredFiles: ["src/app.tsx"] }),
+  restoreCheckpointsSinceTimestamp: vi.fn().mockResolvedValue({ ok: true, restoredFiles: ["src/app.tsx"], failed: [], attempted: 1 }),
+  buildUndoPreview: vi.fn().mockResolvedValue({ files: [], expected: [], attempted: 0, dirsRemoved: 0 }),
+  hashFileOnDisk: vi.fn().mockResolvedValue("abc123"),
+  tryAcquireUndoLock: vi.fn().mockReturnValue(true),
+  releaseUndoLock: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => {

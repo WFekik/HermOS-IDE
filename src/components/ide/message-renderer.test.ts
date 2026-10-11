@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { preprocessContent } from "@/components/ide/message-renderer";
+import { preprocessContent, isTreeLineContent, splitInlineTree } from "@/components/ide/message-renderer";
 import fc from "fast-check";
 
 // preprocessContent — tables, trees, and requirements rendering
@@ -756,6 +756,139 @@ src/
     expect(result).toContain("| x | 1 |");
     const treeBlocks = result.match(/```tree/g) || [];
     expect(treeBlocks.length).toBe(1);
+  });
+});
+
+describe("preprocessContent — inline tree blobs (horizontal → vertical)", () => {
+  it("splits an ASCII-pipe-joined single-line tree blob into vertical lines", () => {
+    const input = "hermos/ ├── apps/ | ├── web-ide/ | └── cli/";
+    const result = preprocessContent(input);
+    expect(result).toContain("```tree");
+    expect(result).toContain("hermos/");
+    expect(result).toContain("├── apps/");
+    expect(result).toContain("├── web-ide/");
+    expect(result).toContain("└── cli/");
+    // No lone separator artifact lines
+    const lines = result.split("\n").map((l) => l.trim());
+    expect(lines).not.toContain("|");
+    expect(lines).not.toContain("│");
+    // Vertical: tree block holds multiple lines
+    const block = result.slice(result.indexOf("```tree"), result.lastIndexOf("```") + 3);
+    expect(block.split("\n").length).toBeGreaterThan(3);
+  });
+
+  it("splits glued │ continuations like '├── src/ │   features.ts'", () => {
+    const parts = splitInlineTree("root ├── src/ │   features.ts ├── other.ts");
+    expect(parts.length).toBeGreaterThan(2);
+    expect(parts).toContain("├── src/");
+    expect(parts).toContain("│   features.ts");
+    expect(parts).toContain("├── other.ts");
+    expect(parts.map((p) => p.trim())).not.toContain("│");
+    expect(parts.map((p) => p.trim())).not.toContain("|");
+  });
+
+  it("strips trailing separators and consumes separator runs", () => {
+    const parts = splitInlineTree("hermos/ ├── apps/ │ ├── web-ide/ │ └── cli/ │ ");
+    for (const p of parts) {
+      expect(p.trim()).not.toMatch(/[ \t]+[│|][ \t]*$/);
+    }
+    expect(parts.map((p) => p.trim())).not.toContain("│");
+    expect(parts.map((p) => p.trim())).not.toContain("|");
+  });
+
+  it("detects ASCII branch lines as tree lines", () => {
+    expect(isTreeLineContent("|-- src")).toBe(true);
+    expect(isTreeLineContent("+-- docs")).toBe(true);
+    expect(isTreeLineContent("\\-- lib")).toBe(true);
+  });
+
+  it("detects em-dash branch lines (|—) as tree lines", () => {
+    expect(isTreeLineContent("|— public/ # Static assets")).toBe(true);
+    expect(isTreeLineContent("+— docs")).toBe(true);
+    expect(isTreeLineContent("\\— lib")).toBe(true);
+  });
+
+  it("splits a pipe+em-dash single-line tree blob into vertical lines", () => {
+    const input =
+      "walid/ |— public/ # Static assets (icons.svg) |— src/ | |— assets/ | |— todos/ | | |— todos.ts # Core | | |— index.ts |— package.json";
+    const result = preprocessContent(input);
+    expect(result).toContain("```tree");
+    expect(result).toContain("walid/");
+    expect(result).toContain("|— public/");
+    expect(result).toContain("|— src/");
+    expect(result).toContain("package.json");
+    // No lone separator artifact lines, no marker-less em-dash fragments
+    const lines = result.split("\n").map((l) => l.trim());
+    expect(lines).not.toContain("|");
+    expect(lines).not.toContain("│");
+    expect(lines).not.toContain("—");
+    expect(lines.every((l) => l !== "" || true)).toBe(true);
+    // Vertical: tree block holds multiple lines
+    const block = result.slice(result.indexOf("```tree"), result.lastIndexOf("```") + 3);
+    expect(block.split("\n").length).toBeGreaterThan(5);
+  });
+
+  it("leaves em-dash prose untouched (stays prose)", () => {
+    expect(isTreeLineContent("well done — fixed")).toBe(false);
+    const result = preprocessContent("well done — fixed");
+    expect(result).not.toContain("```tree");
+    expect(result).toContain("well done — fixed");
+  });
+
+  it("detects box-dash (|─) and en-dash (|–) branch lines", () => {
+    expect(isTreeLineContent("|─ public/")).toBe(true);
+    expect(isTreeLineContent("+─ docs")).toBe(true);
+    expect(isTreeLineContent("|– public/")).toBe(true);
+    expect(isTreeLineContent("+– docs")).toBe(true);
+  });
+
+  it("splits a pipe+box-dash single-line tree blob into vertical lines", () => {
+    const input =
+      "walid/ |─ public/ |─ src/ | |─ todos/ | | |─ index.ts |─ package.json";
+    const result = preprocessContent(input);
+    expect(result).toContain("```tree");
+    expect(result).toContain("walid/");
+    expect(result).toContain("|─ public/");
+    expect(result).toContain("|─ src/");
+    const lines = result.split("\n").map((l) => l.trim());
+    expect(lines).not.toContain("|");
+    expect(lines).not.toContain("│");
+    const block = result.slice(result.indexOf("```tree"), result.lastIndexOf("```") + 3);
+    expect(block.split("\n").length).toBeGreaterThan(5);
+  });
+
+  it("splits a pipe+en-dash single-line tree blob into vertical lines", () => {
+    const input = "root/ |– aaa/ |– bbb/ | |– ccc.txt |– ddd.txt";
+    const result = preprocessContent(input);
+    expect(result).toContain("```tree");
+    expect(result).toContain("|– aaa/");
+    const lines = result.split("\n").map((l) => l.trim());
+    expect(lines).not.toContain("|");
+  });
+
+  it("leaves prose 'a |-- b' untouched (stays prose)", () => {
+    expect(isTreeLineContent("a |-- b")).toBe(false);
+    const result = preprocessContent("a |-- b");
+    expect(result).not.toContain("```tree");
+    expect(result).toContain("a |-- b");
+  });
+
+  it("keeps '|---|---|' as a table, not a tree", () => {
+    expect(isTreeLineContent("|---|---|")).toBe(false);
+    const result = preprocessContent("| Name | Age |\n|---|---|\n| Alice | 30 |\n");
+    expect(result).not.toContain("```tree");
+    expect(result).toContain("---");
+  });
+
+  it("keeps '| -- | x |' as a table, not a tree", () => {
+    expect(isTreeLineContent("| -- | x |")).toBe(false);
+  });
+
+  it("leaves '-- hello' untouched", () => {
+    expect(isTreeLineContent("-- hello")).toBe(false);
+    const result = preprocessContent("-- hello");
+    expect(result).not.toContain("```tree");
+    expect(result).toContain("-- hello");
   });
 });
 

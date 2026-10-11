@@ -15,6 +15,12 @@
 //     cleanly, and surface a non-zero exit code if the child dies.
 //
 // Usage: node scripts/start-standalone.mjs [--port <port>]
+// NOTE: intentionally NOT identical to the desktop launcher
+// (src-tauri/src/lib.rs): this is the local-dev/prod preview launcher and
+// keeps cwd=standaloneDir with a relative "server.js". The desktop app runs
+// an absolute server.js path with CWD = app-data to avoid a Windows CWD
+// lock on the install dir during updates. scripts/smoke-prod.mjs mirrors
+// the desktop contract — change that one, not this one, for parity tests.
 
 import { spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";

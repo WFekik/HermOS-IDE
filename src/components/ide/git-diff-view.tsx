@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { DiffRow, type SharedDiffLine } from "@/components/ui/diff-row";
+import { langFromPath } from "@/components/workspace/types";
 import { useTranslation } from "@/hooks/use-translation";
 
 /* ------------------------------------------------------------------ *
@@ -116,6 +117,7 @@ export function GitDiffView({ diff, className }: GitDiffViewProps) {
 
 function FileDiff({ file, forceOpen }: { file: ParsedFile; forceOpen?: boolean }) {
   const lines = React.useMemo(() => parsePatchBody(file.body), [file.body]);
+  const language = React.useMemo(() => langFromPath(file.displayPath ?? ""), [file.displayPath]);
   const [open, setOpen] = React.useState(true);
 
   React.useEffect(() => {
@@ -178,7 +180,7 @@ function FileDiff({ file, forceOpen }: { file: ParsedFile; forceOpen?: boolean }
       <CollapsibleContent>
         <div className="font-mono text-[11px] leading-relaxed">
           {lines.map((line, i) => (
-            <DiffRow key={i} line={line} />
+            <DiffRow key={i} line={line} language={language} />
           ))}
         </div>
       </CollapsibleContent>

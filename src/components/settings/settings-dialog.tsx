@@ -33,6 +33,7 @@ import {
   DARK_PRESETS,
   isValidHex,
   normalizeHex,
+  previewThemeColors,
 } from "@/lib/color-theme";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,6 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -122,7 +122,7 @@ export function SettingsDialog({ open, onOpenChange, tab, onTabChange }: Setting
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTitle className="sr-only">{t("settings")}</DialogTitle>
-      <DialogContent className="sm:max-w-4xl h-[85vh] p-0 flex overflow-hidden" showCloseButton>
+      <DialogContent className="sm:max-w-4xl h-[85vh] p-0 flex overflow-hidden" showCloseButton closeLabel={t("close")}>
         <aside className="w-44 sm:w-52 border-e bg-muted/30 p-2 hidden sm:block shrink-0">
           <div className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             {t("settings")}
@@ -484,16 +484,22 @@ function ThemeSection({
 
       <div className="space-y-1.5 pt-1 border-t border-border/50">
         <ColorFieldRow
+          mode={mode}
+          colorKey="background"
           label={t("background")}
           value={config.background}
           onChange={(c) => handleColorChange("background", c)}
         />
         <ColorFieldRow
+          mode={mode}
+          colorKey="foreground"
           label={t("foreground")}
           value={config.foreground}
           onChange={(c) => handleColorChange("foreground", c)}
         />
         <ColorFieldRow
+          mode={mode}
+          colorKey="accent"
           label={t("accent")}
           value={config.accent}
           onChange={(c) => handleColorChange("accent", c)}
@@ -504,37 +510,145 @@ function ThemeSection({
 }
 
 function ColorFieldRow({
+  mode,
+  colorKey,
   label,
   value,
   onChange,
 }: {
+  mode: "light" | "dark";
+  colorKey: "background" | "foreground" | "accent";
   label: string;
   value: string;
   onChange: (val: string) => void;
 }) {
-  const { t, language } = useTranslation();
+  const { t } = useTranslation();
+  const { resolvedTheme } = useTheme();
   const [draft, setDraft] = React.useState(value);
   const colorInputRef = React.useRef<HTMLInputElement | null>(null);
+  // rAF + debounce refs: live drags must never hit the store per tick.
+  // (number, not ReturnType<typeof setTimeout>: these are window timers.)
+  const rafRef = React.useRef<number>(0);
+  const commitTimerRef = React.useRef<number | undefined>(undefined);
+  const latestRef = React.useRef(value);
+  // Last previewed-but-uncommitted value. Powers the unmount FLUSH (commit,
+  // don't discard) and the invalid-blur revert below.
+  const pendingRef = React.useRef<string | null>(null);
+  // Stable commit for unmount cleanup (avoids a stale onChange closure).
+  // Assigned in an effect: writing refs during render trips react-hooks/refs.
+  const onChangeRef = React.useRef(onChange);
+  React.useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+  // Live DOM previews only make sense for the ACTIVE mode. Previewing the
+  // inactive section's palette would flash the whole app to the wrong mode
+  // and get reverted by the applier on commit — the swatch + hex field
+  // still track locally, and the debounced commit lands normally.
+  const isActiveMode = mode === resolvedTheme;
 
   React.useEffect(() => {
     setDraft(value);
+    latestRef.current = value;
+    // An external change (e.g. preset pick) wins over any in-flight drag:
+    // drop the pending commit or it would overwrite the new value ~140ms
+    // later and resurrect the drag.
+    if (commitTimerRef.current !== undefined) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = undefined;
+    }
+    pendingRef.current = null;
+    window.cancelAnimationFrame(rafRef.current);
   }, [value]);
+
+  // Commit (don't discard) any pending drag value on unmount — dialog
+  // closed or tab switched mid-drag. zustand sets are safe post-unmount;
+  // the still-mounted applier applies the commit, healing the DOM.
+  React.useEffect(() => {
+    return () => {
+      window.cancelAnimationFrame(rafRef.current);
+      if (commitTimerRef.current !== undefined) {
+        window.clearTimeout(commitTimerRef.current);
+        commitTimerRef.current = undefined;
+      }
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending !== null && pending !== latestRef.current) {
+        try {
+          onChangeRef.current(pending);
+        } catch {
+          /* commit is best-effort on teardown */
+        }
+      }
+    };
+  }, []);
+
+  /** Repaint the DOM from the committed store truth (undoes a preview). */
+  const revertPreview = React.useCallback(() => {
+    pendingRef.current = null;
+    try {
+      const state = useAppStore.getState();
+      const active =
+        resolvedTheme === "dark" ? state.darkThemeConfig : state.lightThemeConfig;
+      previewThemeColors(resolvedTheme, active);
+    } catch {
+      /* revert is best-effort */
+    }
+  }, [resolvedTheme]);
+
+  /**
+   * Per-tick fast path for native-picker drags (60+/s): update the local
+   * draft + paint straight to the DOM on the next animation frame. The
+   * zustand set + localStorage persist + full-subscriber re-render + 27 CSS
+   * var writes happen ONCE, debounced, when the drag pauses — that storm is
+   * what made live switching hang.
+   */
+  const previewLive = React.useCallback(
+    (next: string) => {
+      pendingRef.current = next;
+      if (isActiveMode) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = window.requestAnimationFrame(() => {
+          try {
+            const state = useAppStore.getState();
+            const base = mode === "dark" ? state.darkThemeConfig : state.lightThemeConfig;
+            previewThemeColors(mode, { ...base, preset: "custom", [colorKey]: next });
+          } catch {
+            /* preview is best-effort; the debounced commit still applies */
+          }
+        });
+      }
+      if (commitTimerRef.current !== undefined) window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = window.setTimeout(() => {
+        commitTimerRef.current = undefined;
+        pendingRef.current = null;
+        // Skip no-op commits (drag ended where it started).
+        if (next !== latestRef.current) onChange(next);
+      }, 140);
+    },
+    [mode, colorKey, isActiveMode, onChange],
+  );
 
   const handleHexChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     setDraft(raw);
     if (isValidHex(raw)) {
-      onChange(normalizeHex(raw));
+      previewLive(normalizeHex(raw));
     }
   };
 
   const handleNativePicker = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.toUpperCase();
     setDraft(val);
-    onChange(val);
+    previewLive(val);
   };
 
-  const hexSafe = isValidHex(value) ? normalizeHex(value) : "#10B981";
+  // Swatch + native input track the LOCAL draft (not the debounced store
+  // value) so the picked color is visible mid-drag.
+  const hexSafe = isValidHex(draft)
+    ? normalizeHex(draft)
+    : isValidHex(value)
+      ? normalizeHex(value)
+      : "#10B981";
 
   return (
     <div className="flex items-center justify-between py-0.5">
@@ -561,9 +675,22 @@ function ColorFieldRow({
           value={draft}
           onChange={handleHexChange}
           onBlur={() => {
+            // Cancel any pending drag commit AND any queued preview frame —
+            // blur is authoritative, and a stale frame must not repaint a
+            // preview after the revert below.
+            if (commitTimerRef.current !== undefined) {
+              window.clearTimeout(commitTimerRef.current);
+              commitTimerRef.current = undefined;
+            }
+            window.cancelAnimationFrame(rafRef.current);
+            pendingRef.current = null;
             if (isValidHex(draft)) {
               onChange(normalizeHex(draft));
             } else {
+              // Invalid text: revert the DOM preview to the committed
+              // store truth (otherwise the previewed-but-never-committed
+              // color sticks with no heal path) and reset the field.
+              revertPreview();
               setDraft(value);
             }
           }}
@@ -637,19 +764,91 @@ function DensityRow({ density, setDensity }: { density: "comfortable" | "compact
 }
 
 function FontSizeSlider({ fontSize, setFontSize }: { fontSize: number; setFontSize: (s: number) => void }) {
-  const { t, language } = useTranslation();
+  const { t } = useTranslation();
+  // Same drag-storm avoidance as ColorFieldRow: slider ticks paint straight
+  // to the DOM (root font-size → instant preview, no re-render), while the
+  // store set + localStorage persist debounce behind the drag.
+  // (number, not ReturnType<typeof setTimeout>: this is a window timer.)
+  const commitTimerRef = React.useRef<number | undefined>(undefined);
+  const latestRef = React.useRef(fontSize);
+  const pendingRef = React.useRef<number | null>(null);
+  const setFontSizeRef = React.useRef(setFontSize);
+  React.useEffect(() => {
+    setFontSizeRef.current = setFontSize;
+  });
+  // Local thumb position: the store value lags behind the drag (debounced),
+  // so the slider must track locally or the thumb freezes mid-drag.
+  const [localSize, setLocalSize] = React.useState(fontSize);
+  React.useEffect(() => {
+    setLocalSize(fontSize);
+    latestRef.current = fontSize;
+    // Same external-wins rule as ColorFieldRow: drop in-flight drag state
+    // when the store value moves underneath us (e.g. reset from elsewhere).
+    if (commitTimerRef.current !== undefined) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = undefined;
+    }
+    pendingRef.current = null;
+  }, [fontSize]);
+  // Commit (don't discard) a pending drag value on unmount.
+  React.useEffect(() => {
+    return () => {
+      if (commitTimerRef.current !== undefined) {
+        window.clearTimeout(commitTimerRef.current);
+        commitTimerRef.current = undefined;
+      }
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending !== null && pending !== latestRef.current) {
+        try {
+          setFontSizeRef.current(pending);
+        } catch {
+          /* commit is best-effort on teardown */
+        }
+      }
+    };
+  }, []);
+  const handleSizeInput = React.useCallback(
+    (next: number) => {
+      setLocalSize(next);
+      pendingRef.current = next;
+      try {
+        document.documentElement.style.fontSize = `${next}px`;
+      } catch {
+        /* preview is best-effort */
+      }
+      if (commitTimerRef.current !== undefined) window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = window.setTimeout(() => {
+        commitTimerRef.current = undefined;
+        pendingRef.current = null;
+        if (next !== latestRef.current) setFontSize(next);
+      }, 140);
+    },
+    [setFontSize],
+  );
+  const handleResetSize = React.useCallback(() => {
+    // Clear any pending drag commit first, or it resurrects the drag value
+    // ~140ms later and undoes the reset.
+    if (commitTimerRef.current !== undefined) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = undefined;
+    }
+    pendingRef.current = null;
+    setLocalSize(DEFAULT_FONT_SIZE);
+    setFontSize(DEFAULT_FONT_SIZE);
+  }, [setFontSize]);
   return (
     <div className="mt-2 flex items-center gap-3">
       <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MIN}</span>
-      <Slider min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} step={1} value={[fontSize]} onValueChange={(v) => setFontSize(v[0] ?? DEFAULT_FONT_SIZE)} className="flex-1" />
+      <Slider min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} step={1} value={[localSize]} onValueChange={(v) => handleSizeInput(v[0] ?? DEFAULT_FONT_SIZE)} className="flex-1" />
       <span className="text-[11px] font-mono text-muted-foreground">{FONT_SIZE_MAX}</span>
-      <span className="text-xs font-mono w-8 text-end">{fontSize}px</span>
+      <span className="text-xs font-mono w-8 text-end">{localSize}px</span>
       {fontSize !== DEFAULT_FONT_SIZE && (
         <Button
           variant="ghost"
           size="icon"
           className="size-6 text-muted-foreground hover:text-foreground shrink-0"
-          onClick={() => setFontSize(DEFAULT_FONT_SIZE)}
+          onClick={handleResetSize}
           title={`${t("reset_to_default")} (${DEFAULT_FONT_SIZE}px)`}
         >
           <RotateCcw className="size-3" />
@@ -945,7 +1144,14 @@ function AboutTab() {
   } | null>(null);
 
   React.useEffect(() => {
-    fetch("/api/version")
+    // 6s timeout like the updater paths — a hung /api/version must not leave
+    // the About tab on fallback values forever.
+    fetch("/api/version", {
+      signal:
+        typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+          ? AbortSignal.timeout(6000)
+          : undefined,
+    })
       .then((r) => r.json())
       .then((data) => {
         if (data?.version) {
@@ -970,18 +1176,38 @@ function AboutTab() {
       if (res.status === "up-to-date") {
         toast.success(`${t("up_to_date")} (v${res.currentVersion}).`);
       } else if (res.status === "available") {
-        toast.info(t("update_available"), {
-          id: "app-update-available",
-          duration: 20000,
+        // Feed the persistent titlebar button (it stays until the user
+        // acts) AND keep a short manual-check toast, since this check was
+        // explicitly requested and the dialog may cover the titlebar.
+        try {
+          const { useUpdateStore } = await import("@/stores/update-store");
+          useUpdateStore.getState().markAvailable({
+            currentVersion: res.currentVersion,
+            latestVersion: res.latestVersion,
+            releaseName: res.releaseName,
+            releaseNotes: res.releaseNotes,
+            releaseUrl: res.releaseUrl,
+          });
+        } catch {
+          // Store chunk failed to load (rare) — the toast below still
+          // informs the user; the button just won't persist it.
+        }
+        toast.info(t("update_to_version", { version: res.latestVersion }), {
+          id: "app-update-available-manual",
+          duration: 10000,
           action: res.releaseUrl
             ? {
-                label: "View Release",
-                onClick: () => openExternalUrl(res.releaseUrl!),
+                label: t("update_view_release"),
+                onClick: () => {
+                  void openExternalUrl(res.releaseUrl!);
+                },
               }
             : {
-                label: "Update Now",
+                label: t("update_now"),
                 onClick: () => {
-                  checkForUpdates(true);
+                  // Desktop auto-install toasts internally and can throw;
+                  // never leave an unhandled rejection from a click handler.
+                  checkForUpdates(true).catch(() => {});
                 },
               },
         });

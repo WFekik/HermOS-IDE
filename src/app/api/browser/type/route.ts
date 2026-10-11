@@ -39,6 +39,10 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   }
 
   const r = await browserType(parsed.data.ref, parsed.data.text, user.id);
-  if (!r.ok) return ok({ ok: false, error: r.error });
+  if (!r.ok) {
+    return ok(
+      "snapshot" in r && r.snapshot ? { ok: false, error: r.error, snapshot: r.snapshot } : { ok: false, error: r.error },
+    );
+  }
   return ok({ ok: true, snapshot: r.snapshot });
 });

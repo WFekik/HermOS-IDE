@@ -96,7 +96,24 @@ import { ARTIFACTS_DIR, ensureHermosTempDir } from "@/lib/paths";
 import { checkUrlHost, getSsrfDispatcher } from "@/lib/ssrf";
 import { tryDecryptJson } from "@/lib/encryption";
 import { publishTodos } from "@/lib/todo-pubsub";
-import { snapshotFile, trackNewFile } from "@/lib/checkpoints";
+import { snapshotFile, trackNewFile, isUndoLocked } from "@/lib/checkpoints";
+
+/**
+ * Undo mutual exclusion for writers: when an undo holds the per-conversation
+ * lock (hash-verify → restore → transcript delete), any tool write landing
+ * inside that window would either clobber the restore or be clobbered by
+ * it — silently, in both directions. Fail the tool call fast instead so the
+ * agent retries after the undo completes.
+ */
+function undoLockError(ctx: Pick<ToolCtx, "conversationId" | "parentConversationId"> | undefined): {
+  ok: false;
+  result: { error: string };
+} | null {
+  if (ctx && isUndoLocked(convScope(ctx))) {
+    return { ok: false, result: { error: "Undo in progress for this conversation — retry the write in a moment." } };
+  }
+  return null;
+}
 import { truncateOutput, truncationUserDir, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from "@/lib/truncate";
 import {
   createPendingQuestion,
@@ -256,7 +273,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "browser_click",
     description:
-      "Click an element by its @eN ref. Returns the updated page snapshot.",
+      "Click an element by its @eN ref (use the ref exactly as listed, with the @). Returns the updated page snapshot. Refs expire when the page changes: on an unknown-ref error a fresh snapshot is returned — retry with a ref from THAT snapshot, never repeat the dead ref.",
     inputSchema: {
       type: "object",
       properties: { ref: { type: "string" } },
@@ -266,7 +283,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "browser_type",
     description:
-      "Type text into an input field by @eN ref (clears field first). Returns updated snapshot.",
+      "Type text into an input field by @eN ref (clears field first). Returns updated snapshot. Refs expire when the page changes: on an unknown-ref error a fresh snapshot is returned — retry with a ref from THAT snapshot.",
     inputSchema: {
       type: "object",
       properties: { ref: { type: "string" }, text: { type: "string" } },
@@ -2408,11 +2425,25 @@ async function runToolImpl(
           try {
             const existing = await readFileWs(ctx.userId, ws.name, target.rel, undefined, target.rootDir);
             oldContent = existing.content;
-          } catch {
-            // File does not exist (or unreadable) — treat as a new file.
-            created = true;
+          } catch (readErr) {
+            // Only ENOENT (truly absent) means "created". Any other read
+            // failure (EACCES, locks, transient I/O) must surface as an
+            // error — misclassifying an unreadable EXISTING file as created
+            // makes undo DELETE it instead of restoring it.
+            if ((readErr as NodeJS.ErrnoException)?.code === "ENOENT") {
+              created = true;
+            } else {
+              return {
+                ok: false,
+                result: {
+                  error: `Cannot read ${parsed.data.path} before overwrite: ${readErr instanceof Error ? readErr.message : String(readErr)}`,
+                },
+              };
+            }
           }
           if (!created && isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          const locked = undoLockError(ctx);
+          if (locked) return locked;
           const r = await writeFileWs(ctx.userId, ws.name, target.rel, parsed.data.content, target.rootDir);
           if (created && isWorkspaceTarget(target)) {
             const absCreated = path.resolve(target.rootDir, target.rel);
@@ -2521,6 +2552,8 @@ async function runToolImpl(
             };
           }
           if (isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          const lockedEdit = undoLockError(ctx);
+          if (lockedEdit) return lockedEdit;
           const r = await editFileWs(
             ctx.userId,
             ws.name,
@@ -2600,6 +2633,11 @@ async function runToolImpl(
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
         const ws = await getToolWs(ctx);
         const cmd = parsed.data.command;
+
+        // A shell command can write arbitrary files — refuse to start one
+        // while an undo holds the conversation lock (see undoLockError).
+        const lockedCmd = undoLockError(ctx);
+        if (lockedCmd) return lockedCmd;
 
         acknowledgeCompletedCommand(ctx.userId, ctx.conversationId);
 
@@ -2726,7 +2764,12 @@ async function runToolImpl(
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const r = await browserClick(parsed.data.ref, browserKey);
-        if (!r.ok) return { ok: false, result: { error: r.error } };
+        if (!r.ok) {
+          return {
+            ok: false,
+            result: "snapshot" in r && r.snapshot ? { error: r.error, snapshot: r.snapshot } : { error: r.error },
+          };
+        }
         return { ok: true, result: { snapshot: r.snapshot } };
       }
       case "browser_type": {
@@ -2734,7 +2777,12 @@ async function runToolImpl(
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const r = await browserType(parsed.data.ref, parsed.data.text, browserKey);
-        if (!r.ok) return { ok: false, result: { error: r.error } };
+        if (!r.ok) {
+          return {
+            ok: false,
+            result: "snapshot" in r && r.snapshot ? { error: r.error, snapshot: r.snapshot } : { error: r.error },
+          };
+        }
         return { ok: true, result: { snapshot: r.snapshot } };
       }
       case "browser_screenshot": {
@@ -3373,6 +3421,8 @@ async function runToolImpl(
         if (twGuard) return twGuard;
         try {
           if (isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          const lockedMulti = undoLockError(ctx);
+          if (lockedMulti) return lockedMulti;
           const r = await multiEditWs(ctx.userId, ws.name, target.rel, parsed.data.edits, target.rootDir);
           // Unified diff generation matching edit_file output format.
           const cappedOld = capContent(r.oldContent);

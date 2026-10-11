@@ -1,5 +1,4 @@
 import { ChildProcess, execFile } from "child_process";
-import { promisify } from "util";
 import { existsSync } from "fs";
 import { mkdir, readFile, unlink, readdir, stat } from "fs/promises";
 import path from "path";
@@ -112,7 +111,10 @@ export const browserSupervisor = new BrowserProcessSupervisor();
 export function findAgentBrowserCli(): string {
   const candidates: string[] = [];
 
-  // 1. cwd-anchored (dev: repo root; standalone: server.js cwd)
+  // 1. cwd-anchored (DEV ONLY: repo root). In desktop production the launcher
+  // runs server.js with CWD = app-data (to avoid a CWD lock on the install
+  // dir during updates), so these legs never hit there — strategies 2/3 are
+  // the live production paths.
   candidates.push(
     path.resolve(process.cwd(), "node_modules", "agent-browser", "bin", "agent-browser.js"),
     path.resolve(process.cwd(), ".next-build", "standalone", "node_modules", "agent-browser", "bin", "agent-browser.js"),
@@ -679,13 +681,47 @@ export async function browserSnapshot(
   return { ok: true, snapshot: r.stdout };
 }
 
+/** True when the CLI reports a ref that no longer exists in the session. */
+function isUnknownRefError(msg: string): boolean {
+  return /unknown ref/i.test(msg ?? "");
+}
+
+/**
+ * Best-effort fresh snapshot after a stale-ref failure, so the caller
+ * (agent or UI) can retry against current refs instead of blindly
+ * repeating a dead one. Never throws — returns undefined on failure.
+ */
+async function freshSnapshotAfterStaleRef(key: string): Promise<string | undefined> {
+  try {
+    const snap = await snapshotCompact(key);
+    if (snap.ok) {
+      await syncSessionState(key).catch(() => null);
+      return snap.stdout;
+    }
+  } catch {
+    /* best-effort only */
+  }
+  return undefined;
+}
+
+/** Actionable unknown-ref error: names the dead ref, kills the @-vs-bare
+ * format flap (both denote the same element), and points at fresh refs. */
+function unknownRefError(ref: string): string {
+  return (
+    `Unknown ref ${ref} — it is not in the current page snapshot ` +
+    `(the page changed since that ref was issued). ` +
+    `@eN and eN denote the same element — do NOT flap formats. ` +
+    `Pick a ref from the fresh snapshot below and retry.`
+  );
+}
+
 /** Validate and click an element by ref (e.g. `@e3`). */
 export async function browserClick(
   ref: string,
   sessionKey = "default",
 ): Promise<
   | { ok: true; snapshot: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; snapshot?: string }
 > {
   const key = getCleanSessionKey(sessionKey);
   pruneStaleSessions();
@@ -696,7 +732,16 @@ export async function browserClick(
   touchSession(key);
   const cleanRef = ref.replace(/^@/, "");
   const r = await runCli(["click", cleanRef], key);
-  if (!r.ok) return err(r.error || `Failed to click ${ref}.`);
+  if (!r.ok) {
+    // Stale ref (page navigated since the snapshot): hand back a FRESH
+    // snapshot with the failure so the agent retries a live ref instead of
+    // looping on the dead one or flapping @eN/eN formats.
+    if (isUnknownRefError(r.error || "")) {
+      const snapshot = await freshSnapshotAfterStaleRef(key);
+      return { ok: false, error: unknownRefError(ref), ...(snapshot ? { snapshot } : {}) };
+    }
+    return err(r.error || `Failed to click ${ref}.`);
+  }
   // Wait for any post-click navigation/render.
   await runCli(["wait", "--load", "domcontentloaded"], key);
   const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);
@@ -713,7 +758,7 @@ export async function browserType(
   sessionKey = "default",
 ): Promise<
   | { ok: true; snapshot: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; snapshot?: string }
 > {
   const key = getCleanSessionKey(sessionKey);
   if (typeof ref !== "string" || !REF_RE.test(ref)) {
@@ -726,7 +771,14 @@ export async function browserType(
   touchSession(key);
   const cleanRef = ref.replace(/^@/, "");
   const r = await runCli(["fill", cleanRef, text], key);
-  if (!r.ok) return err(r.error || `Failed to fill ${ref}.`);
+  if (!r.ok) {
+    // Same stale-ref recovery as click: fresh snapshot + actionable error.
+    if (isUnknownRefError(r.error || "")) {
+      const snapshot = await freshSnapshotAfterStaleRef(key);
+      return { ok: false, error: unknownRefError(ref), ...(snapshot ? { snapshot } : {}) };
+    }
+    return err(r.error || `Failed to fill ${ref}.`);
+  }
   // Typing can submit forms / trigger SPA navigation — sync url/trust/seq
   // like the other mutating actions.
   const [snap] = await Promise.all([snapshotCompact(key), syncSessionState(key)]);

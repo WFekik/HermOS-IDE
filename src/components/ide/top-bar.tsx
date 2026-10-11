@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HermOSLogo } from "@/components/brand/hermos-logo";
 import { ChatExportButton } from "@/components/ide/chat-export-button";
+import { UpdateButton } from "@/components/ide/update-button";
 import { WindowControls } from "@/components/ide/window-controls";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useThemeToggle } from "@/hooks/use-theme-toggle";
@@ -79,6 +80,18 @@ export function TopBar({
   const { theme, cycle } = useThemeToggle();
   const { t } = useTranslation();
 
+  // Mounted gate: the theme provider initializes from localStorage on the
+  // first client render while SSR always renders "system". Rendering the
+  // theme icon/label from the unmounted value would mismatch SSR HTML
+  // (React hydration error). Render the neutral fallback until mounted —
+  // classes/variables are already correct pre-paint via the anti-FOUC
+  // script, so nothing visually changes, only the icon/label swap in.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
   // Poll git status when the active workspace is a git repo. Refetch
   // on workspace change + every 30s (light). Cleared when the
   // workspace switches so the indicator never shows a stale branch.
@@ -92,8 +105,14 @@ export function TopBar({
     return () => window.clearInterval(id);
   }, [activeWorkspace?.id, refreshGitStatus]);
 
-  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
-  const themeLabel = theme === "light" ? t("theme_light") : theme === "dark" ? t("theme_dark") : t("theme_system");
+  const ThemeIcon = !mounted ? Monitor : theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+  const themeLabel = !mounted
+    ? t("theme_system")
+    : theme === "light"
+      ? t("theme_light")
+      : theme === "dark"
+        ? t("theme_dark")
+        : t("theme_system");
 
   const initials = (currentUser?.name || currentUser?.email || "U")
     .split(/[ @]/)
@@ -332,6 +351,14 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent>{rightCollapsed ? t("show_right_panel") : t("hide_right_panel")}</TooltipContent>
         </Tooltip>
+      </div>
+
+      {/* Persistent update button — sits with the window controls like a
+          browser download button. Never auto-dismisses; the user chooses
+          whether and when to download. macOS renders it at the right edge
+          (traffic lights live on the left via Overlay). */}
+      <div className="shrink-0 ms-0.5 flex items-center">
+        <UpdateButton />
       </div>
 
       {/* Native window controls — desktop only (non-macOS); macOS uses native traffic lights via Overlay */}

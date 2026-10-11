@@ -96,6 +96,39 @@ function loadSecuritySettings(): SecuritySettings {
 /** Client-side placeholder id prefix for conversations that are not yet persisted. */
 export const PENDING_CONVERSATION_PREFIX = "pending-";
 
+/* ---------------------------------------------------------------------------
+ * Undo tombstones
+ *
+ * Stale in-flight fetches (refreshMessages started before an undo finished,
+ * late subagent_report events) can resurrect just-deleted messages: the
+ * server rows they carry still contain the undone ids, and the merge logic
+ * re-appends them. Tombstones remember undone ids per conversation for a
+ * short window so every ingestion path can drop them deterministically.
+ * ------------------------------------------------------------------------- */
+
+const UNDO_TOMBSTONE_TTL_MS = 120_000;
+const undoTombstones = new Map<string, { ids: Set<string>; at: number }>();
+
+/** Record message ids removed by an undo so late arrivals can't resurrect them. */
+export function addUndoTombstones(conversationId: string, ids: string[]): void {
+  if (!conversationId || ids.length === 0) return;
+  const prev = undoTombstones.get(conversationId);
+  const merged = new Set(prev?.ids ?? []);
+  for (const id of ids) merged.add(id);
+  undoTombstones.set(conversationId, { ids: merged, at: Date.now() });
+}
+
+/** True when a message id was removed by a recent undo in this conversation. */
+export function isUndoneMessage(conversationId: string, id: string): boolean {
+  const entry = undoTombstones.get(conversationId);
+  if (!entry) return false;
+  if (Date.now() - entry.at > UNDO_TOMBSTONE_TTL_MS) {
+    undoTombstones.delete(conversationId);
+    return false;
+  }
+  return entry.ids.has(id);
+}
+
 /** Draft storage key used while no conversation is active at all (fresh boot). */
 const FRESH_DRAFT_KEY = "__fresh__";
 
@@ -1200,20 +1233,36 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingConversations: loadPendingConversations(),
       composerDrafts: loadComposerDrafts(),
     });
-    // Fire all refreshes in parallel for snappy startup.
+    // Critical path first: the shell needs conversations + providers to paint.
+    // Everything else defers to idle so a cold SQLite DB (WAL setup +
+    // first-boot migrate) isn't hit with a 10-way query stampede before
+    // first paint.
     await Promise.all([
       get().refreshProviders(),
-      get().refreshProviderKeys(),
       get().refreshConversations(),
-      get().refreshMcpServers(),
-      get().refreshPlugins(),
-      get().refreshSkills(),
-      get().refreshPresets(),
-      // Best-effort workspace and git status refresh
-      get().refreshWorkspaces(),
-      get().refreshGitStatus(),
-      get().refreshSecuritySettings(),
     ]);
+    const deferred = () => {
+      void get().refreshProviderKeys().catch(() => {});
+      void get().refreshMcpServers().catch(() => {});
+      void get().refreshPlugins().catch(() => {});
+      void get().refreshSkills().catch(() => {});
+      void get().refreshPresets().catch(() => {});
+      void get().refreshWorkspaces().catch(() => {});
+      void get().refreshGitStatus().catch(() => {});
+      void get().refreshSecuritySettings().catch(() => {});
+    };
+    if (
+      typeof window !== "undefined" &&
+      typeof (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback === "function"
+    ) {
+      // Idle timeout so a saturated main thread can't starve the deferred
+      // batch forever (same pattern as providers.tsx).
+      window.requestIdleCallback(deferred, { timeout: 5000 });
+    } else if (typeof window !== "undefined") {
+      window.setTimeout(deferred, 0);
+    } else {
+      deferred();
+    }
 
     // Cross-tab synchronization listener
     const ch = getTabSyncChannel();
@@ -1221,31 +1270,37 @@ export const useAppStore = create<AppState>((set, get) => ({
       ch.onmessage = (event) => {
         const type = event.data?.type;
         if (type === "refresh_conversations") {
-          get().refreshConversations();
+          void get().refreshConversations().catch(() => {});
           // Another tab may have materialized a pending conversation — reload
           // ours so this tab doesn't re-create the same chat on send.
           set({ pendingConversations: loadPendingConversations() });
         }
-        if (type === "refresh_plugins") get().refreshPlugins();
-        if (type === "refresh_workspaces") get().refreshWorkspaces();
+        if (type === "refresh_plugins") void get().refreshPlugins().catch(() => {});
+        if (type === "refresh_workspaces") void get().refreshWorkspaces().catch(() => {});
       };
     }
-    // Desktop: fetch active workspace root via Tauri
+    // Desktop: fetch active workspace root via Tauri.
+    // NOTE: workspaces load in the deferred batch above, so on a cold boot
+    // activeWorkspace may still be null here and this is a no-op — the
+    // workspaces refresh carries the server-side rootDir instead. This only
+    // patches the warm-boot case where the store already has an active id.
     if (isTauri()) {
       const activeWs = get().activeWorkspace;
       if (activeWs?.id) {
-        getWorkspaceRoot(activeWs.id).then((rootDir) => {
-          if (rootDir) {
-            set((s) => ({
-              workspaces: s.workspaces.map((w) =>
-                w.id === activeWs.id ? { ...w, rootDir } : w
-              ),
-              activeWorkspace: s.activeWorkspace?.id === activeWs.id
-                ? { ...s.activeWorkspace!, rootDir }
-                : s.activeWorkspace,
-            }));
-          }
-        });
+        getWorkspaceRoot(activeWs.id)
+          .then((rootDir) => {
+            if (rootDir) {
+              set((s) => ({
+                workspaces: s.workspaces.map((w) =>
+                  w.id === activeWs.id ? { ...w, rootDir } : w
+                ),
+                activeWorkspace: s.activeWorkspace?.id === activeWs.id
+                  ? { ...s.activeWorkspace!, rootDir }
+                  : s.activeWorkspace,
+              }));
+            }
+          })
+          .catch(() => {});
       }
     }
   },
@@ -1658,8 +1713,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else if (!isRunning && curStreamingState?.isStreaming && !curStreamingState?.streamingMessageId) {
         get().setStreaming(false, conversationId);
       }
+      // Drop tombstoned ids: a fetch started before an undo finished still
+      // carries the just-deleted rows — without this they resurrect as
+      // duplicates the moment the stale response resolves.
       const list = (data?.conversation?.messages ?? []).filter(
-        (m) => m.role !== "tool",
+        (m) => m.role !== "tool" && !isUndoneMessage(conversationId, m.id),
       );
       // Restore assistant live tool calls from persisted data
       const withToolCalls = list.map((m) => {
@@ -1791,9 +1849,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             merged.push(m);
           }
         }
-        // Preserve local-only messages not yet persisted
+        // Preserve local-only messages not yet persisted — except tombstoned
+        // ones (undone locally; re-appending them duplicates the transcript).
         for (const local of existing) {
-          if (!seen.has(local.id) && !matchedLocalIds.has(local.id)) {
+          if (
+            !seen.has(local.id) &&
+            !matchedLocalIds.has(local.id) &&
+            !isUndoneMessage(conversationId, local.id)
+          ) {
             merged.push(local);
           }
         }
@@ -3891,15 +3954,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeMessageAndAfter: (messageId) => {
+    // Tombstone first (outside set): any stale fetch resolving around this
+    // truncation must drop these ids instead of resurrecting them.
+    const convId = get().activeConversationId ?? "";
+    const current =
+      get().messagesByConversation[convId] ??
+      (convId === get().activeConversationId ? get().messages : []);
+    const idx = current.findIndex((m) => m.id === messageId);
+    if (idx !== -1) {
+      addUndoTombstones(
+        convId,
+        current.slice(idx).map((m) => m.id),
+      );
+    }
     set((s) => {
-      const idx = s.messages.findIndex((m) => m.id === messageId);
-      if (idx === -1) return s;
-      const truncated = s.messages.slice(0, idx);
-      const convId = s.activeConversationId ?? "";
+      const i = s.messages.findIndex((m) => m.id === messageId);
+      if (i === -1) return s;
+      const truncated = s.messages.slice(0, i);
+      const cid = s.activeConversationId ?? "";
       return {
         messages: truncated,
-        messagesByConversation: convId
-          ? { ...s.messagesByConversation, [convId]: truncated }
+        messagesByConversation: cid
+          ? { ...s.messagesByConversation, [cid]: truncated }
           : s.messagesByConversation,
       };
     });

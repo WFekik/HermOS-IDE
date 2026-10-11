@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
-import { PROVIDERS } from "@/lib/ai/providers";
-import { parseModelsColumn, mergeReasoningCapability, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
+import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId } from "@/lib/types";
@@ -80,7 +80,9 @@ export async function refreshProviderModels(
   userId: string,
   provider: ProviderId,
 ): Promise<ProviderModelConfig[] | null> {
-  const info = PROVIDERS[provider];
+  // getProvider() synthesizes named custom providers (`custom:<name>`);
+  // the static dict alone would drop every saved custom endpoint here.
+  const info = getProvider(provider) ?? PROVIDERS[provider];
   if (!info) return null;
 
   const row = await db.providerKey.findUnique({
@@ -132,6 +134,13 @@ export async function refreshProviderModels(
     const deduped = [...new Set(ids)];
 
     const existing = parseModelsColumn(row.models);
+    // Same never-wipe rule as the models API route: an empty listing means
+    // "endpoint silent", not "user has no models". Persisting [] would
+    // destroy hand-curated config on every transient empty response —
+    // return the stored config untouched instead.
+    if (!shouldPersistFetchedModels(deduped.length, existing.length)) {
+      return existing;
+    }
     const existingById = new Map(existing.map((m) => [m.id, m]));
 
     const merged: ProviderModelConfig[] = await Promise.all(

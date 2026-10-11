@@ -252,4 +252,146 @@ describe("i18n system", () => {
       }
     });
   });
+
+  describe("update_* keys (persistent titlebar update button)", () => {
+    const UPDATE_KEYS = [
+      "update_didnt_apply",
+      "update_didnt_apply_desc",
+      "update_download_complete",
+      "update_download_failed",
+      "update_download_failed_desc",
+      "update_downloading",
+      "update_downloading_progress",
+      "update_install_failed",
+      "update_install_failed_desc",
+      "update_install_manually",
+      "update_installing",
+      "update_not_now",
+      "update_now",
+      "update_ready_restart",
+      "update_ready_restart_desc",
+      "update_restart_now",
+      "update_retry_update",
+      "update_retry_wait",
+      "update_to_version",
+      "update_view_release",
+    ];
+    const PARAMS: Record<string, Record<string, string | number>> = {
+      update_didnt_apply: { version: "1.2.3" },
+      update_downloading: { version: "1.2.3" },
+      update_downloading_progress: { version: "1.2.3", percent: 42, downloaded: "4.2", total: "10.0" },
+      update_retry_wait: { attempt: 2, max: 4 },
+      update_to_version: { version: "1.2.3" },
+    };
+
+    it("exists in all 9 locales", () => {
+      for (const code of expectedLanguages) {
+        const dict = getDictionary(code);
+        for (const k of UPDATE_KEYS) {
+          expect(dict[k], `${k} missing in ${code}`).toBeTruthy();
+        }
+      }
+    });
+
+    it("substitutes every placeholder in all 9 locales (no {...} leaks)", () => {
+      for (const code of expectedLanguages) {
+        for (const k of UPDATE_KEYS) {
+          const rendered = t(k, code, PARAMS[k] ?? {});
+          expect(rendered, `${k} leaves placeholders in ${code}: ${rendered}`).not.toMatch(/[{}]/);
+          expect(rendered.length).toBeGreaterThan(0);
+        }
+      }
+    });
+  });
+
+  describe("undo confirm keys (Confirm Undo dialog + flow)", () => {
+    const UNDO_KEYS = [
+      "confirm_undo",
+      "confirm_undo_desc",
+      "revert_file_changes",
+      "undo_already_undone",
+      "undo_files_changed",
+      "undo_files_skipped",
+      "undo_folders_removed",
+      "undo_in_progress_retry",
+      "undo_no_file_changes",
+      "undo_preview_failed",
+    ];
+    const PARAMS: Record<string, Record<string, string | number>> = {
+      undo_folders_removed: { count: 2 },
+    };
+
+    it("exists in all 9 locales", () => {
+      for (const code of expectedLanguages) {
+        const dict = getDictionary(code);
+        for (const k of UNDO_KEYS) {
+          expect(dict[k], `${k} missing in ${code}`).toBeTruthy();
+        }
+      }
+    });
+
+    it("substitutes every placeholder in all 9 locales (no {...} leaks)", () => {
+      for (const code of expectedLanguages) {
+        for (const k of UNDO_KEYS) {
+          const rendered = t(k, code, PARAMS[k] ?? {});
+          expect(rendered, `${k} leaves placeholders in ${code}: ${rendered}`).not.toMatch(/[{}]/);
+          expect(rendered.length).toBeGreaterThan(0);
+        }
+      }
+    });
+  });
+
+  describe("provider BYOK keys (custom provider add/save/test)", () => {
+    const PROVIDER_KEYS = [
+      "base_url_required",
+      "custom_provider_added",
+      "custom_provider_failed",
+      "custom_provider_key_hint",
+      "custom_provider_name_hint",
+      "custom_provider_url_hint",
+      "enter_api_key",
+      "model_config_save_failed",
+      "models_fetch_failed",
+      "models_kept_stale",
+      "provider_key_remove_failed",
+      "provider_key_removed",
+      "provider_key_save_failed",
+      "provider_key_saved",
+      "provider_name_required",
+      "provider_reachable",
+      "provider_test_failed",
+      "provider_test_failed_short",
+      "provider_test_ok",
+      "puter_help_go",
+      "puter_help_then",
+      "unknown_error",
+    ];
+    const PARAMS: Record<string, Record<string, string | number>> = {
+      custom_provider_added: { name: "Ollama" },
+      provider_key_removed: { name: "Ollama" },
+      provider_key_saved: { name: "Ollama" },
+      provider_reachable: { name: "Ollama", latency: 123 },
+      provider_test_failed: { error: "boom" },
+      provider_test_ok: { latency: 123 },
+    };
+
+    it("exists in all 9 locales", () => {
+      for (const code of expectedLanguages) {
+        const dict = getDictionary(code);
+        for (const k of PROVIDER_KEYS) {
+          expect(dict[k], `${k} missing in ${code}`).toBeTruthy();
+        }
+      }
+    });
+
+    it("substitutes every placeholder in all 9 locales (no {...} leaks)", () => {
+      for (const code of expectedLanguages) {
+        for (const k of PROVIDER_KEYS) {
+          const rendered = t(k, code, PARAMS[k] ?? {});
+          expect(rendered, `${k} leaves placeholders in ${code}: ${rendered}`).not.toMatch(/[{}]/);
+          expect(rendered.length).toBeGreaterThan(0);
+        }
+      }
+    });
+  });
 });

@@ -148,10 +148,15 @@ function portableStandaloneConfig() {
     if (!existsSync(target)) continue;
     let text = readFileSync(target, "utf8");
     const before = text;
+    // Scoped to known tracing keys only. (A bare `"root":` pattern would
+    // rewrite unrelated keys elsewhere in server.js.)
+    // NOTE: "." here resolves against the Node CWD at runtime. The desktop
+    // launcher runs server.js with CWD = app-data (absolute server.js path;
+    // assets resolve relative to server.js itself), so this keeps the bundle
+    // from loading the build machine's .env via absolute tracing roots.
     text = text
       .replace(/"outputFileTracingRoot"\s*:\s*"[^"]*"/g, '"outputFileTracingRoot":"."')
       .replace(/"repoRoot"\s*:\s*"[^"]*"/g, '"repoRoot":"."')
-      .replace(/"root"\s*:\s*"[^"]*"/g, '"root":"."')
       .replace(/"appDir"\s*:\s*"[^"]*"/g, '"appDir":"."');
     if (text !== before) {
       writeFileSync(target, text);
@@ -246,6 +251,7 @@ function bundlePrismaClientIntoStandalone() {
     "chunks",
   );
   const aliasRegex = /"@prisma\/client-[0-9a-f]{16}"/;
+  let aliased = false;
   if (!existsSync(chunksDir)) {
     console.warn("[nextjs-build] chunks dir missing — skipping prisma alias");
   } else {
@@ -267,8 +273,14 @@ function bundlePrismaClientIntoStandalone() {
           }),
         );
         console.log(`[nextjs-build] aliased ${aliasName} -> @prisma/client`);
+        aliased = true;
         break;
       }
+    }
+    if (!aliased) {
+      // A Turbopack hash-format change would silently reintroduce the baked-
+      // __dirname dotenv leak this alias exists to kill — fail loudly instead.
+      console.warn("[nextjs-build] WARNING: no @prisma/client-<hash> alias found in server chunks — runtime may resolve the build-machine Prisma copy");
     }
   }
   console.log(
@@ -317,6 +329,46 @@ function bundleAgentBrowserIntoStandalone() {
   );
 }
 
+// [fix: prune server sourcemaps from the installer bundle]
+// Client maps are already suppressed (productionBrowserSourceMaps defaults
+// to false); this removes leftover SERVER *.map files from the standalone
+// tree so the installer is smaller and faster to extract. Failures are
+// logged, never fatal.
+function pruneMapsAndSymbols() {
+  const standaloneDir = fileURLToPath(
+    new URL("../.next-build/standalone", import.meta.url),
+  );
+  let removed = 0;
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(`[nextjs-build] prune: cannot read ${dir}: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+      } else if (e.isFile() && e.name.endsWith(".map")) {
+        try {
+          rmSync(p, { force: true });
+          removed++;
+        } catch (err) {
+          console.warn(`[nextjs-build] prune: cannot remove ${p}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      // NOTE: symlinked *.map files (isSymbolicLink, not isFile) are
+      // deliberately skipped — none are emitted by the build.
+    }
+  };
+  if (existsSync(standaloneDir)) walk(standaloneDir);
+  if (removed > 0) {
+    console.log(`[nextjs-build] pruned ${removed} sourcemap file(s) from standalone`);
+  }
+}
+
 if (result.error || result.status !== 0) {
   console.error(
     "[nextjs-build] Next build failed with exit code:",
@@ -341,6 +393,8 @@ try {
   copyPublicIntoStandalone();
   // [fix: copy client static assets into standalone]
   copyStaticIntoStandalone();
+  // [fix: prune sourcemaps — cold-boot latency + Defender scan surface]
+  pruneMapsAndSymbols();
 } catch (e) {
   console.error("[nextjs-build] post-build step failed:", e instanceof Error ? e.message : e);
   process.exit(1);

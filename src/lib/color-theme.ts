@@ -212,8 +212,20 @@ export function getContrastForeground(hex: string): string {
 
 /**
  * Derives comprehensive UI palette from base background, foreground, and accent.
+ * Memoized on the exact inputs (1-entry cache covers preset switches and the
+ * applier's repeat derivations; see deriveSurfaceColorsCached).
  */
 export function deriveSurfaceColors(
+  isDark: boolean,
+  bg: string,
+  fg: string,
+  accent: string,
+) {
+  return deriveSurfaceColorsCached(isDark, bg, fg, accent);
+}
+
+/** Uncached implementation — use deriveSurfaceColors() unless benchmarking. */
+function deriveSurfaceColorsRaw(
   isDark: boolean,
   bg: string,
   fg: string,
@@ -372,33 +384,79 @@ export function applyThemeToDocument(
     config.accent,
   );
 
-  root.style.setProperty("--background", palette.background);
-  root.style.setProperty("--foreground", palette.foreground);
-  root.style.setProperty("--card", palette.card);
-  root.style.setProperty("--card-foreground", palette.cardForeground);
-  root.style.setProperty("--popover", palette.popover);
-  root.style.setProperty("--popover-foreground", palette.popoverForeground);
-  root.style.setProperty("--sidebar", palette.sidebar);
-  root.style.setProperty("--sidebar-foreground", palette.sidebarForeground);
-  root.style.setProperty("--sidebar-border", palette.sidebarBorder);
-  root.style.setProperty("--sidebar-ring", palette.sidebarRing);
-  root.style.setProperty("--sidebar-accent", palette.sidebarAccent);
-  root.style.setProperty("--sidebar-accent-foreground", palette.sidebarAccentForeground);
-  root.style.setProperty("--sidebar-primary", palette.sidebarPrimary);
-  root.style.setProperty("--sidebar-primary-foreground", palette.sidebarPrimaryForeground);
-  root.style.setProperty("--muted", palette.muted);
-  root.style.setProperty("--muted-foreground", palette.mutedForeground);
-  root.style.setProperty("--border", palette.border);
-  root.style.setProperty("--input", palette.input);
-  root.style.setProperty("--ring", palette.ring);
-  root.style.setProperty("--brand", palette.brand);
-  root.style.setProperty("--brand-foreground", palette.brandForeground);
-  root.style.setProperty("--primary", palette.primary);
-  root.style.setProperty("--primary-foreground", palette.primaryForeground);
-  root.style.setProperty("--secondary", palette.secondary);
-  root.style.setProperty("--secondary-foreground", palette.secondaryForeground);
-  root.style.setProperty("--accent", palette.accent);
-  root.style.setProperty("--accent-foreground", palette.accentForeground);
+  // Batch all writes and skip unchanged values: setting an identical value
+  // still costs the CSSOM round-trip, and during live color drags this runs
+  // per animation frame. Read-then-write on the same element in one task is
+  // recalc-safe (no forced synchronous layout for custom properties).
+  const entries = [
+    ["--background", palette.background],
+    ["--foreground", palette.foreground],
+    ["--card", palette.card],
+    ["--card-foreground", palette.cardForeground],
+    ["--popover", palette.popover],
+    ["--popover-foreground", palette.popoverForeground],
+    ["--sidebar", palette.sidebar],
+    ["--sidebar-foreground", palette.sidebarForeground],
+    ["--sidebar-border", palette.sidebarBorder],
+    ["--sidebar-ring", palette.sidebarRing],
+    ["--sidebar-accent", palette.sidebarAccent],
+    ["--sidebar-accent-foreground", palette.sidebarAccentForeground],
+    ["--sidebar-primary", palette.sidebarPrimary],
+    ["--sidebar-primary-foreground", palette.sidebarPrimaryForeground],
+    ["--muted", palette.muted],
+    ["--muted-foreground", palette.mutedForeground],
+    ["--border", palette.border],
+    ["--input", palette.input],
+    ["--ring", palette.ring],
+    ["--brand", palette.brand],
+    ["--brand-foreground", palette.brandForeground],
+    ["--primary", palette.primary],
+    ["--primary-foreground", palette.primaryForeground],
+    ["--secondary", palette.secondary],
+    ["--secondary-foreground", palette.secondaryForeground],
+    ["--accent", palette.accent],
+    ["--accent-foreground", palette.accentForeground],
+  ] as const;
+  for (const [key, value] of entries) {
+    if (root.style.getPropertyValue(key) !== value) {
+      root.style.setProperty(key, value);
+    }
+  }
+}
+
+// Last-derived palette cache: preset/mode switches and the applier effect
+// re-derive the same inputs repeatedly (e.g. every unrelated store commit
+// that recreates the config object). A 1-entry memo covers the hot path;
+// repeated identical drag ticks hit it too.
+let deriveCacheKey = "";
+let deriveCacheValue: ReturnType<typeof deriveSurfaceColorsRaw> | null = null;
+
+function deriveSurfaceColorsCached(
+  isDark: boolean,
+  bg: string,
+  fg: string,
+  accent: string,
+) {
+  const key = `${isDark ? 1 : 0}|${bg}|${fg}|${accent}`;
+  if (deriveCacheValue && deriveCacheKey === key) return deriveCacheValue;
+  deriveCacheKey = key;
+  deriveCacheValue = deriveSurfaceColorsRaw(isDark, bg, fg, accent);
+  return deriveCacheValue;
+}
+
+/**
+ * Instant, store-free live preview for color drags. Writes the merged config
+ * straight to the DOM (rAF-throttled by the caller) WITHOUT a zustand set,
+ * localStorage write, or React re-render — the debounced store commit that
+ * follows re-applies identical values (idempotent via skip-unchanged) and
+ * persists. This is what makes native-picker drags feel real-time instead
+ * of hanging on 60 store-sets/sec.
+ */
+export function previewThemeColors(
+  resolvedTheme: "light" | "dark",
+  config: ThemeColorConfig,
+) {
+  applyThemeToDocument(resolvedTheme, config);
 }
 
 /** Clear all custom variable overrides on documentElement */

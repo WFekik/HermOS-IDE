@@ -80,7 +80,9 @@ export async function isDatabaseProvisioned(
 /** Resolve the prisma CLI script path, or null when it is not bundled. */
 export function resolvePrismaCli(): string | null {
   const candidates: string[] = [];
-  // cwd-anchored (dev: repo root; standalone: server.js cwd)
+  // cwd-anchored (DEV ONLY: repo root). Desktop production runs with
+  // CWD = app-data, so these legs never hit there — the __dirname walk
+  // below is the live production path.
   candidates.push(
     path.join(process.cwd(), "node_modules", "prisma", "build", "index.js"),
     path.join(process.cwd(), "node_modules", ".bin", "prisma"),
@@ -88,6 +90,17 @@ export function resolvePrismaCli(): string | null {
   // Standalone layout: bundled server chunks live under
   // .next-build/standalone/.next-build/server/chunks — walk up to the
   // standalone root (which contains node_modules/prisma if bundled).
+  // Guard: __dirname is undefined in ESM/virtual builds (same as browser.ts).
+  if (typeof __dirname === "undefined") {
+    for (const c of candidates) {
+      try {
+        if (fs.existsSync(c)) return c;
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
   let dir = __dirname;
   for (let i = 0; i < 8; i++) {
     candidates.push(
@@ -109,7 +122,19 @@ export function resolvePrismaCli(): string | null {
 
 /** Resolve the prisma/migrations directory from cwd or the module location. */
 export function resolveMigrationsDir(): string | null {
+  // NOTE: the cwd leg is dev-only; desktop production runs with CWD =
+  // app-data. The __dirname walk is the live production path.
   const candidates: string[] = [path.join(process.cwd(), "prisma", "migrations")];
+  if (typeof __dirname === "undefined") {
+    for (const c of candidates) {
+      try {
+        if (fs.existsSync(/* turbopackIgnore: true */ c)) return c;
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
   let dir = __dirname;
   for (let i = 0; i < 8; i++) {
     candidates.push(path.join(dir, "prisma", "migrations"));

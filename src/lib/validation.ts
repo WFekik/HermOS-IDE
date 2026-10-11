@@ -21,8 +21,22 @@ const AGENT_MODES = ["agent", "chat", "architect"] as const;
 const MCP_TRANSPORTS = ["stdio", "sse", "streamable-http"] as const;
 const SHELLS = ["bash", "pwsh", "cmd", "zsh"] as const;
 
+/**
+ * Named custom providers use the `custom:<display name>` form everywhere in
+ * the frontend (providers tab, model picker, conversation records) and in
+ * getProvider() (`src/lib/ai/providers.ts`). The suffix allows letters,
+ * numbers, spaces and `_. -` — but never a second colon (display code splits
+ * on the first `:` for the label). The legacy `custom-<slug>` dash form is
+ * still accepted for rows written by older builds.
+ */
+export const CUSTOM_PROVIDER_ID_RE = /^custom:[A-Za-z0-9 _.\-]{1,64}$/;
+const LEGACY_CUSTOM_PROVIDER_ID_RE = /^custom-[a-z0-9-]{1,32}$/;
+
 export const providerIdSchema = z.string().trim().min(1).max(100).refine(
-  (val) => (PROVIDER_IDS as readonly string[]).includes(val) || /^custom-[a-z0-9-]{1,32}$/.test(val),
+  (val) =>
+    (PROVIDER_IDS as readonly string[]).includes(val) ||
+    CUSTOM_PROVIDER_ID_RE.test(val) ||
+    LEGACY_CUSTOM_PROVIDER_ID_RE.test(val),
   { message: "Invalid provider ID" }
 );
 export const agentModeSchema = z.enum(AGENT_MODES);

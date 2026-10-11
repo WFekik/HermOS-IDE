@@ -30,6 +30,58 @@ import { ProviderLogo } from "@/components/brand/provider-logo";
  * in its own module so the dialog can code-split it behind a Suspense
  * skeleton (see SettingsDialog in settings-dialog.tsx).
  */
+/**
+ * Fetch a provider's live model list (`GET {baseUrl}/models` via
+ * POST /api/providers/models) and persist it onto the key row, then refresh
+ * the store so the chat model picker shows the models immediately. Shared by
+ * the per-card save flow and the add-custom flow — a saved provider with no
+ * models is invisible-but-unusable in the picker.
+ * Returns the number of models stored (0 when the endpoint returned none).
+ */
+async function fetchAndPersistModels(
+  providerId: ProviderId,
+  providerName: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): Promise<number> {
+  const loadId = toast.loading(t("auto_fetching_models", { provider: providerName }));
+  try {
+    const { apiPost, apiPatch } = await import("@/lib/api-client");
+    const res = await apiPost<{
+      models?: Array<{ id: string; name?: string }>;
+      keptStale?: boolean;
+    }>("/api/providers/models", { provider: providerId });
+    if (res?.keptStale) {
+      // Endpoint silent: server kept the stored config (did NOT wipe it).
+      // Just sync the store so the picker reflects known data; never PATCH
+      // the echoed list back (that would reset enabled/thinking overrides).
+      toast.dismiss(loadId);
+      await useAppStore.getState().refreshProviderKeys();
+      await useAppStore.getState().refreshProviders();
+      return res.models?.length ?? 0;
+    }
+    if (res && res.models && res.models.length > 0) {
+      const modelsToSave = res.models.map((m) => ({
+        id: m.id,
+        enabled: true,
+        thinkingLevel: "default",
+      }));
+      await apiPatch(`/api/providers/keys/${encodeURIComponent(providerId)}`, {
+        models: modelsToSave,
+      });
+      await useAppStore.getState().refreshProviderKeys();
+      await useAppStore.getState().refreshProviders();
+      toast.success(t("models_loaded_count", { count: res.models.length }), { id: loadId });
+      return res.models.length;
+    }
+    toast.dismiss(loadId);
+    return 0;
+  } catch (err) {
+    console.error("Failed to auto-fetch models:", err);
+    toast.dismiss(loadId);
+    return 0;
+  }
+}
+
 export function ProvidersTab() {
   const { t } = useTranslation();
   const providers = useAppStore((s) => s.providers);
@@ -68,15 +120,17 @@ export function ProvidersTab() {
   }, [providers, providerKeys]);
 
   const handleAddCustom = async () => {
-    const cleanName = customName.trim();
+    // Collapse whitespace runs: the id is `custom:<name>` and display code
+    // splits on ":" — inner multi-spaces would look broken in the picker.
+    const cleanName = customName.trim().replace(/\s+/g, " ");
     const cleanUrl = customUrl.trim();
     const cleanKey = customKey.trim() || "sk-custom-key";
     if (!cleanName) {
-      toast.error("Enter a provider name");
+      toast.error(t("provider_name_required"));
       return;
     }
     if (!cleanUrl) {
-      toast.error("Enter a base URL");
+      toast.error(t("base_url_required"));
       return;
     }
 
@@ -88,15 +142,20 @@ export function ProvidersTab() {
         apiKey: cleanKey,
         baseUrl: cleanUrl,
       });
-      toast.success(`Custom provider '${cleanName}' added`);
+      toast.success(t("custom_provider_added", { name: cleanName }));
       setCustomName("");
       setCustomUrl("");
       setCustomKey("");
       setAddCustomOpen(false);
       await useAppStore.getState().refreshProviderKeys();
       await useAppStore.getState().refreshProviders();
+      // A custom endpoint with no models can't be picked in the chat
+      // panel — pull its OpenAI-compatible model list now (same as the
+      // per-card save flow). Failure keeps the provider; models can be
+      // added manually in its card.
+      await fetchAndPersistModels(providerId, cleanName, t);
     } catch (e: any) {
-      toast.error(e?.message || "Failed to add custom provider");
+      toast.error(e?.message || t("custom_provider_failed"));
     } finally {
       setAdding(false);
     }
@@ -142,7 +201,9 @@ export function ProvidersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+      {/* pe-10: clears room for the floating dialog X (absolute top-4
+          end-4) so the action button never slides underneath it. */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pe-10">
         <div>
           <h3 className="text-base font-semibold">{t("providers_byok")}</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -210,7 +271,7 @@ export function ProvidersTab() {
             <div className="grid gap-1">
               <Label className="text-xs">{t("provider_name")}</Label>
               <Input
-                placeholder="e.g. Ollama Local, vLLM Prod, LM Studio"
+                placeholder={t("custom_provider_name_hint")}
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
                 className="h-8 text-xs"
@@ -219,7 +280,7 @@ export function ProvidersTab() {
             <div className="grid gap-1">
               <Label className="text-xs">{t("base_url")}</Label>
               <Input
-                placeholder="https://api.example.com/v1 or http://localhost:11434/v1"
+                placeholder={t("custom_provider_url_hint")}
                 value={customUrl}
                 onChange={(e) => setCustomUrl(e.target.value)}
                 className="h-8 text-xs font-mono"
@@ -228,10 +289,10 @@ export function ProvidersTab() {
           </div>
           <div className="grid gap-1">
             <Label className="text-xs">{t("api_key_optional")}</Label>
-            <Input
-              type="password"
-              placeholder="sk-..."
-              value={customKey}
+              <Input
+                type="password"
+                placeholder={t("custom_provider_key_hint")}
+                value={customKey}
               onChange={(e) => setCustomKey(e.target.value)}
               className="h-8 text-xs font-mono"
             />
@@ -283,7 +344,7 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
 
   const saveKey = async () => {
     if (!apiKey.trim()) {
-      toast.error("Enter an API key");
+      toast.error(t("enter_api_key"));
       return;
     }
     setSaving(true);
@@ -294,37 +355,13 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
         baseUrl: baseUrl.trim() || undefined,
       };
       await save(req);
-      toast.success(`${provider.name} key saved`);
+      toast.success(t("provider_key_saved", { name: provider.name }));
       setApiKey("");
 
       // Automatically fetch models from the provider and save them so they are synced
-      const loadId = toast.loading(`Auto-fetching models for ${provider.name}...`);
-      try {
-        const { apiPost, apiPatch } = await import("@/lib/api-client");
-        const res = await apiPost<{ models?: Array<{ id: string; name?: string }> }>("/api/providers/models", { provider: provider.id });
-        if (res && res.models && res.models.length > 0) {
-          const modelsToSave = res.models.map((m) => ({
-            id: m.id,
-            enabled: true,
-            thinkingLevel: "default",
-          }));
-          await apiPatch(`/api/providers/keys/${encodeURIComponent(provider.id)}`, {
-            models: modelsToSave,
-          });
-          // Refresh provider keys in the store so the dropdown selector is immediately updated
-          await useAppStore.getState().refreshProviderKeys();
-          // Refresh the full provider catalog so the context window indicator picks up stored models
-          await useAppStore.getState().refreshProviders();
-          toast.success(`Loaded ${res.models.length} models for ${provider.name}`, { id: loadId });
-        } else {
-          toast.dismiss(loadId);
-        }
-      } catch (err) {
-        console.error("Failed to auto-fetch models:", err);
-        toast.dismiss(loadId);
-      }
+      await fetchAndPersistModels(provider.id, provider.name, t);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save key");
+      toast.error(e instanceof Error ? e.message : t("provider_key_save_failed"));
     } finally {
       setSaving(false);
     }
@@ -337,9 +374,9 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
       const r = await test(provider.id);
       setTestResult(r);
       if (r.ok) {
-        toast.success(`${provider.name} reachable · ${r.latencyMs ?? "?"}ms`);
+        toast.success(t("provider_reachable", { name: provider.name, latency: r.latencyMs ?? "?" }));
       } else {
-        toast.error(`Test failed: ${r.error ?? "unknown error"}`);
+        toast.error(t("provider_test_failed", { error: r.error ?? t("unknown_error") }));
       }
     } finally {
       setTesting(false);
@@ -400,25 +437,46 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
                 {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 {t("test_connection")}
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs hover:text-destructive" onClick={async () => { await remove(provider.id); toast.success(t("puter_disconnected")); }}>
-                <Trash2 className="size-3.5" />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs hover:text-destructive"
+                disabled={removing}
+                onClick={async () => {
+                  if (removing) return;
+                  setRemoving(true);
+                  try {
+                    await remove(provider.id);
+                    toast.success(t("puter_disconnected"));
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : t("provider_key_remove_failed"));
+                  } finally {
+                    setRemoving(false);
+                  }
+                }}
+              >
+                {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                 {t("remove_key")}
               </Button>
               {testResult && (
                 <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
                   {testResult.ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
-                  {testResult.ok ? `OK · ${testResult.latencyMs}ms` : "failed"}
+                  {testResult.ok
+                    ? t("provider_test_ok", { latency: testResult.latencyMs ?? "?" })
+                    : t("provider_test_failed_short")}
                 </span>
               )}
             </div>
           ) : (
             <div className="grid gap-2">
               <p className="text-[11px] text-muted-foreground">
-                Go to{" "}
+                {/* Site labels (Account / Create token) intentionally stay in
+                    English — they mirror puter.com's own UI labels. */}
+                {t("puter_help_go")}{" "}
                 <a href="https://puter.com/dashboard#account" target="_blank" rel="noreferrer" className="text-brand hover:underline">
                   puter.com/dashboard
                 </a>{" "}
-                → <strong>Account</strong> → <strong>Create token</strong>, then paste it below.
+                {t("puter_help_then")}
               </p>
               <div className="flex gap-1.5">
                 <Input
@@ -490,18 +548,18 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
                 variant="ghost"
                 className="h-7 text-xs hover:text-destructive"
                 disabled={removing}
-                onClick={async () => {
-                  if (removing) return;
-                  setRemoving(true);
-                  try {
-                    await remove(provider.id);
-                    toast.success(`${provider.name} key removed`);
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Failed to remove key");
-                  } finally {
-                    setRemoving(false);
-                  }
-                }}
+                  onClick={async () => {
+                    if (removing) return;
+                    setRemoving(true);
+                    try {
+                      await remove(provider.id);
+                      toast.success(t("provider_key_removed", { name: provider.name }));
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : t("provider_key_remove_failed"));
+                    } finally {
+                      setRemoving(false);
+                    }
+                  }}
               >
                 {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                 {t("remove_key")}
@@ -510,7 +568,9 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
             {testResult && (
               <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
                 {testResult.ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
-                {testResult.ok ? `OK · ${testResult.latencyMs}ms` : "failed"}
+                {testResult.ok
+                  ? t("provider_test_ok", { latency: testResult.latencyMs ?? "?" })
+                  : t("provider_test_failed_short")}
               </span>
             )}
           </div>

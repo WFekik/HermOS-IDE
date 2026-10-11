@@ -94,6 +94,8 @@ interface ModelsResponse {
   models?: RemoteModel[];
   ok?: false;
   error?: string;
+  /** Server kept the stored config because the live fetch came back empty. */
+  keptStale?: boolean;
 }
 
 /* --------------------------- Normalization ---------------------------- */
@@ -304,7 +306,11 @@ export function ProviderModels({
       }
       const fetched = data.models ?? [];
       setFetchError(null);
-      if (fetched.length === 0) {
+      if (data.keptStale) {
+        // Endpoint silent — server preserved the stored config instead of
+        // wiping it. Say so honestly rather than claiming fresh models.
+        toast.info(t("models_kept_stale"));
+      } else if (fetched.length === 0) {
         toast.info(t("no_remote_models"));
       } else {
         toast.success(t("models_loaded_count", { count: fetched.length }));
@@ -342,7 +348,7 @@ export function ProviderModels({
     },
     onError: (e) => {
       const msg =
-        e instanceof ApiRequestError ? e.message : "Failed to fetch models";
+        e instanceof ApiRequestError ? e.message : t("models_fetch_failed");
       setFetchError(msg);
       toast.error(msg);
     },
@@ -360,7 +366,7 @@ export function ProviderModels({
       toast.error(
         e instanceof ApiRequestError
           ? e.message
-          : "Failed to save model configuration",
+          : t("model_config_save_failed"),
       );
     },
   });

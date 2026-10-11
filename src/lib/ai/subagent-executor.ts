@@ -303,9 +303,9 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
       for (let attempts = 0; ; attempts++) {
         try {
           let maxTokens: number | undefined;
-          let subagentContextWindow: number | undefined = PROVIDERS[session.provider as ProviderId]?.models.find(
-            (m) => m.id === byok.model,
-          )?.contextWindow;
+          let subagentContextWindow: number | undefined = (
+            getProvider(session.provider as ProviderId) ?? PROVIDERS[session.provider as ProviderId]
+          )?.models.find((m) => m.id === byok.model)?.contextWindow;
           try {
             const row = await db.providerKey.findUnique({
               where: { userId_provider: { userId: session.userId, provider: session.provider as ProviderId } },
@@ -898,7 +898,7 @@ async function resolveProvider(
     });
     if (row?.isActive) {
       const apiKey = decrypt(row.encryptedKey);
-      const info = PROVIDERS[provider as ProviderId];
+      const info = getProvider(provider as ProviderId) ?? PROVIDERS[provider as ProviderId];
       const baseUrl = row.baseUrl || info?.baseUrl || "";
       const userModels: Array<{ id: string }> = (() => {
         try {

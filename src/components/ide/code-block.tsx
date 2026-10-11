@@ -100,7 +100,7 @@ export const CodeBlock = React.memo(function CodeBlock({
     return displayedValue.replace(/\n+$/, "").split("\n").length;
   }, [displayedValue]);
 
-  const isTree = lang === "tree" || (lang === "text" && /[├└│─┬]/.test(value));
+  const isTree = lang === "tree" || /[├└│─┬]/.test(value);
   const showLineNumbers = !isTree && lineCount >= 3;
 
   const copy = async () => {

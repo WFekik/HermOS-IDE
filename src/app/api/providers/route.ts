@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { requireUser } from "@/lib/session";
-import { listProviders, PROVIDERS } from "@/lib/ai/providers";
+import { listProviders } from "@/lib/ai/providers";
 import { db } from "@/lib/db";
 import { withErrorHandler, ok } from "@/app/api/_lib/helpers";
 import { parseModelsColumn, mergeReasoningCapability } from "@/lib/provider-models";
+import { customProvidersFromKeys } from "@/lib/custom-providers";
 import { peekModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId, ModelInfo } from "@/lib/types";
 
@@ -15,8 +16,17 @@ export const GET = withErrorHandler(async () => {
     where: { userId: user.id, isActive: true },
   });
   const keyMap = new Map(keys.map((k) => [k.provider as ProviderId, k]));
+  // Named custom providers (`custom:<name>`) live only as key rows — the
+  // static catalog has just the bare `custom` template. Append synthesized
+  // entries so every consumer of this list (chat model picker, agent tab)
+  // sees saved custom providers, not only the settings tab (which merges
+  // keys locally as a fallback).
+  const catalog = [
+    ...listProviders(),
+    ...customProvidersFromKeys(keys, new Set(listProviders().map((p) => p.id))),
+  ];
   const providers = await Promise.all(
-    listProviders().map(async (p) => {
+    catalog.map(async (p) => {
       const keyRow = keyMap.get(p.id);
       // Merge stored model configs (fetched via POST /api/providers/models)
       // into the provider's static model list so contextWindow etc. are
@@ -87,8 +97,6 @@ export const GET = withErrorHandler(async () => {
       };
     }),
   );
-  // Suppress unused PROVIDERS warning — it's intentionally re-exported below
-  void PROVIDERS;
   const res = ok({ providers });
   res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return res;

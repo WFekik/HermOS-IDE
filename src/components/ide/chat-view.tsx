@@ -10,7 +10,9 @@ import { EmptyState } from "@/components/ide/empty-state";
 import { ProviderLogo } from "@/components/brand/provider-logo";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useChatStream } from "@/hooks/use-chat-stream";
-import { apiPost, apiDelete } from "@/lib/api-client";
+import { apiPost, apiDelete, ApiRequestError } from "@/lib/api-client";
+import { ConfirmUndoDialog, type UndoConfirmState } from "@/components/ide/confirm-undo-dialog";
+import type { UndoPreview } from "@/lib/undo-plan";
 import { toast } from "sonner";
 import { useTranslation } from "@/hooks/use-translation";
 import type { AttachmentDTO, AgentMode, ProviderId } from "@/lib/types";
@@ -720,21 +722,15 @@ function UserMessageRow({ message }: { message: UIMessage }) {
     }
   };
 
-  const undo = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isStreaming || busy) return;
-    setBusy(true);
-    try {
-      const cid = activeConversationId;
-      let restoredCount = 0;
-      if (cid) {
-        const res = await apiDelete<{ ok: boolean; restoredFiles?: string[] }>(
-          `/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(message.id)}`
-        );
-        if (res && Array.isArray(res.restoredFiles)) {
-          restoredCount = res.restoredFiles.length;
-        }
-      }
+  // Ref-based guard: `busy` state only flips after re-render, so two rapid
+  // clicks would both pass and fire two DELETEs — the loser 404s ("Undo
+  // failed") or double-applies. The ref flips synchronously.
+  const undoBusyRef = React.useRef(false);
+  const [confirmState, setConfirmState] = React.useState<UndoConfirmState | null>(null);
+  const [confirming, setConfirming] = React.useState(false);
+
+  const finishUndoUi = React.useCallback(
+    (restoredCount: number) => {
       setPreTurnCheckpoint(null);
       closeAllFileTabs();
       removeMessageAndAfter(message.id);
@@ -744,9 +740,134 @@ function UserMessageRow({ message }: { message: UIMessage }) {
       } else {
         toast.success(t("message_undone"));
       }
+    },
+    [message.id, message.content, setPreTurnCheckpoint, closeAllFileTabs, removeMessageAndAfter, setComposerDraft, t],
+  );
+
+  const runUndoDelete = React.useCallback(
+    async (
+      cid: string,
+      body: { expected?: { path: string; hash: string | null }[]; revertFiles: boolean },
+    ): Promise<{ ok: boolean; restoredFiles?: string[]; failed?: { id: string; error: string }[] } | null> => {
+      try {
+        return await apiDelete<{ ok: boolean; restoredFiles?: string[]; failed?: { id: string; error: string }[] }>(
+          `/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(message.id)}`,
+          { body, timeoutMs: 5 * 60_000 },
+        );
+      } catch (e) {
+        if (e instanceof ApiRequestError && e.status === 404) {
+          // Already undone (double-click loser, stale row): not an error —
+          // sync the transcript to the server truth instead of toasting failure.
+          try {
+            await useAppStore.getState().refreshMessages(cid);
+          } catch {
+            /* refresh is best-effort */
+          }
+          toast.info(t("undo_already_undone"));
+          return null;
+        }
+        throw e;
+      }
+    },
+    [message.id, t],
+  );
+
+  const undo = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isStreaming || busy || undoBusyRef.current) return;
+    undoBusyRef.current = true;
+    setBusy(true);
+    try {
+      const cid = activeConversationId;
+      if (!cid) return;
+      // Step 1: server-computed revert plan (no changes). The dialog always
+      // opens — even empty — so undo never fires silently.
+      let preview: UndoPreview;
+      try {
+        const res = await apiPost<{ ok: boolean; preview: UndoPreview }>(
+          `/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(message.id)}`,
+          {},
+          { timeoutMs: 60_000 },
+        );
+        preview = res.preview;
+      } catch {
+        toast.error(t("undo_preview_failed"));
+        return;
+      }
+      // The Confirm dialog ALWAYS appears — even with zero file changes
+      // (it then shows the transcript-only note). Undo never fires silently.
+      setConfirmState({ messageId: message.id, preview: preview ?? { files: [], expected: [], attempted: 0, dirsRemoved: 0 } });
     } catch {
       toast.error(t("undo_failed"));
     } finally {
+      undoBusyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const confirmUndo = async (revertFiles: boolean) => {
+    const cid = activeConversationId;
+    const plan = confirmState?.preview;
+    if (!cid || !plan) return;
+    setConfirming(true);
+    try {
+      const res = await runUndoDelete(cid, { expected: plan.expected, revertFiles });
+      if (!res) {
+        // 404 path already handled (info toast + refresh) inside runUndoDelete.
+        setConfirmState(null);
+        return;
+      }
+      setConfirmState(null);
+      finishUndoUi(res.restoredFiles?.length ?? 0);
+      if ((res as { filesSkipped?: boolean }).filesSkipped) {
+        // Containment had no workspace root: transcript trimmed, files
+        // deliberately left alone — say so loudly, not as success.
+        toast.warning(t("undo_files_skipped"));
+      }
+      // Refresh server truth behind the optimistic truncation (heals any
+      // in-flight divergence without resurrecting tombstoned rows).
+      try {
+        await useAppStore.getState().refreshMessages(cid);
+      } catch {
+        /* best-effort */
+      }
+    } catch (e) {
+      if (e instanceof ApiRequestError && e.status === 429) {
+        // Another undo holds the per-conversation lock (dual-modal confirm
+        // race). Dialog stays open — retry after the first one releases it.
+        toast.info(t("undo_in_progress_retry"));
+        return;
+      }
+      if (e instanceof ApiRequestError && e.status === 409) {
+        // Files moved under us since the preview: show the FRESH server
+        // plan (in details) instead of applying a stale one.
+        const details = e.details as { preview?: UndoPreview } | undefined;
+        if (details?.preview) {
+          setConfirmState({ messageId: message.id, preview: details.preview, refreshed: true });
+          toast.warning(t("undo_files_changed"));
+        } else {
+          setConfirmState(null);
+          toast.error(t("undo_failed"));
+        }
+        return;
+      }
+      if (e instanceof ApiRequestError && e.status === 500) {
+        // Partial/failed restore: transcript KEPT server-side by design —
+        // surface the failure loudly, refresh, do NOT truncate locally.
+        const details = e.details as { failed?: { id: string; error: string }[] } | undefined;
+        const first = details?.failed?.[0]?.error;
+        toast.error(first ? `${t("undo_failed")}: ${first}` : t("undo_failed"));
+        try {
+          await useAppStore.getState().refreshMessages(cid);
+        } catch {
+          /* best-effort */
+        }
+        return;
+      }
+      toast.error(t("undo_failed"));
+    } finally {
+      setConfirming(false);
+      undoBusyRef.current = false;
       setBusy(false);
     }
   };
@@ -795,6 +916,18 @@ function UserMessageRow({ message }: { message: UIMessage }) {
           </Button>
         </div>
       )}
+      <ConfirmUndoDialog
+        state={confirmState}
+        confirming={confirming}
+        onCancel={() => {
+          if (!confirming) {
+            setConfirmState(null);
+            undoBusyRef.current = false;
+            setBusy(false);
+          }
+        }}
+        onConfirm={(revertFiles) => void confirmUndo(revertFiles)}
+      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { PROVIDERS } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import type { ProviderId } from "@/lib/types";
 import {
   THINKING_LEVELS,
@@ -72,6 +72,16 @@ export function parseModelsColumn(raw: string | null | undefined): ProviderModel
   }
 }
 
+/**
+ * Persist decision for a models fetch: only overwrite the stored config when
+ * the fetch actually listed something, or when there is nothing stored to
+ * lose. An empty fetch means "endpoint silent/absent" — persisting it would
+ * wipe hand-curated entries on every transient failure (401/429/5xx).
+ */
+export function shouldPersistFetchedModels(fetchedCount: number, storedCount: number): boolean {
+  return fetchedCount > 0 || storedCount === 0;
+}
+
 /** Resolves model billing rate (USD per 1M tokens) from runtime model config or provider catalog. */
 export function getModelRate(
   provider: string,
@@ -80,7 +90,8 @@ export function getModelRate(
 ): ModelRate | null {
   const runtime = runtimeModels?.find((m) => m.id === model);
   if (runtime?.pricing) return runtime.pricing;
-  const providerPricing = PROVIDERS[provider as ProviderId]?.pricing;
+  const providerPricing =
+    (getProvider(provider as ProviderId) ?? PROVIDERS[provider as ProviderId])?.pricing;
   if (providerPricing) return providerPricing;
   return null;
 }

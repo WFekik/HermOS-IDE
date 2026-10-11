@@ -88,21 +88,47 @@ async function githubAssetUrl(platform: string): Promise<string | null> {
  *      the bundled package.json for nightly bundles)
  * Returns the matched file name or null.
  */
-function findLocalInstaller(platform: string): { fileName: string; contentType: string } | null {
+/**
+ * Candidate installer dirs, CWD-independent: the desktop launcher runs with
+ * CWD = app-data, so a bare `process.cwd()` lookup can never hit. Try the
+ * standalone tree via __dirname walk first (live in production), then the
+ * legacy cwd path (dev), then give up → GitHub redirect.
+ */
+function installerDirs(): string[] {
+  const dirs: string[] = [];
+  if (typeof __dirname !== "undefined") {
+    let dir = __dirname;
+    for (let i = 0; i < 8; i++) {
+      dirs.push(path.join(dir, "public", "installers"));
+      const parent = path.dirname(dir);
+      if (!parent || parent === dir) break;
+      dir = parent;
+    }
+  }
+  dirs.push(path.join(process.cwd(), "public", "installers"));
+  return dirs;
+}
+
+function findLocalInstaller(platform: string): { fileName: string; contentType: string; dir: string } | null {
   const exts = PLATFORM_EXTS[platform];
   if (!exts) return null;
-  const dir = path.join(process.cwd(), "public", "installers");
   let entries: string[] = [];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return null; // directory absent — no local installers
+  let hitDir: string | null = null;
+  for (const dir of installerDirs()) {
+    try {
+      entries = readdirSync(dir);
+      hitDir = dir;
+      break;
+    } catch {
+      /* try next candidate dir */
+    }
   }
+  if (!hitDir) return null; // directory absent — no local installers
   const byExt = (ext: string): string[] =>
     entries.filter((e) => e.toLowerCase().endsWith(ext.toLowerCase()));
   for (const ext of exts) {
     const setup = byExt(ext).find((e) => e.toLowerCase() === `hermos-ide-setup${ext.toLowerCase()}`);
-    if (setup) return { fileName: setup, contentType: contentTypeFor(setup) };
+    if (setup) return { fileName: setup, contentType: contentTypeFor(setup), dir: hitDir };
   }
   // Tauri v2 names bundles after productName: "HermOS IDE_1.0.0_x64_en-US.msi"
   // (spaces preserved). Match both canonical and lowercase forms.
@@ -113,14 +139,14 @@ function findLocalInstaller(platform: string): { fileName: string; contentType: 
       const lower = e.toLowerCase();
       return prefixes.some((p) => lower.startsWith(p));
     });
-    if (exact) return { fileName: exact, contentType: contentTypeFor(exact) };
+    if (exact) return { fileName: exact, contentType: contentTypeFor(exact), dir: hitDir };
   }
   for (const ext of exts) {
     const any = byExt(ext).find((e) => {
       const lower = e.toLowerCase();
       return lower.startsWith("hermos-ide_") || lower.startsWith("hermos ide_");
     });
-    if (any) return { fileName: any, contentType: contentTypeFor(any) };
+    if (any) return { fileName: any, contentType: contentTypeFor(any), dir: hitDir };
   }
   return null;
 }
@@ -147,7 +173,7 @@ export async function GET(
   // Check if the file is pre-bundled locally inside public/installers/
   const local = findLocalInstaller(platform);
   if (local) {
-    const localFilePath = path.join(process.cwd(), "public", "installers", local.fileName);
+    const localFilePath = path.join(local.dir, local.fileName);
     if (existsSync(localFilePath)) {
       try {
         const stat = statSync(localFilePath);

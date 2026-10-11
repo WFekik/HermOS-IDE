@@ -8,12 +8,12 @@ import {
   apiError,
   audit,
 } from "@/app/api/_lib/helpers";
-import { encrypt, decrypt } from "@/lib/encryption";
-import { PROVIDERS } from "@/lib/ai/providers";
+import { decrypt } from "@/lib/encryption";
+import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { providerIdSchema, thinkingLevelSchema } from "@/lib/validation";
-import { parseModelsColumn, mergeReasoningCapability, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
+import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
 import { extractCapabilities, extractPricing, extractReasoningCapabilities } from "@/lib/provider-fetch";
 import { normalizeThinkingLevel } from "@/lib/reasoning";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
@@ -135,7 +135,14 @@ async function fetchProviderModels(
           headers: { Accept: "application/json" },
           signal: controller.signal,
         });
-        if (!resp.ok) return { ok: true, models: [] };
+        // 404 = no listing endpoint: truthfully empty. Any other non-OK
+        // (401/429/5xx) is transient — report failure so the caller never
+        // persists [] over the user's stored (possibly hand-curated) config.
+        if (!resp.ok) {
+          return resp.status === 404
+            ? { ok: true, models: [] }
+            : { ok: false, error: `Provider returned HTTP ${resp.status}.` };
+        }
         const json = (await resp.json()) as { models?: Array<any> };
         const rawList = json.models ?? [];
         const models: FetchedModel[] = rawList
@@ -173,7 +180,9 @@ async function fetchProviderModels(
           signal: controller.signal,
         });
         if (!resp.ok) {
-          return { ok: true, models: [] };
+          return resp.status === 404
+            ? { ok: true, models: [] }
+            : { ok: false, error: `Provider returned HTTP ${resp.status}.` };
         }
         const json = (await resp.json()) as { data?: Array<any> };
         const rawList = json.data || [];
@@ -212,8 +221,11 @@ async function fetchProviderModels(
         signal: controller.signal,
       });
       if (!resp.ok) {
-        // If the provider doesn't implement /models (e.g. 404), return empty list cleanly
-        return { ok: true, models: [] };
+        // 404 = the endpoint genuinely has no /models listing: empty is
+        // truthful. Any other non-OK is transient — fail instead of
+        // returning [] that the caller would persist over stored config.
+        if (resp.status === 404) return { ok: true, models: [] };
+        return { ok: false, error: `Provider returned HTTP ${resp.status}.` };
       }
       const json = (await resp.json()) as {
         data?: Array<any>;
@@ -279,7 +291,10 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   }
   const provider = parsed.data.provider as ProviderId;
 
-  const info = PROVIDERS[provider];
+  // getProvider() synthesizes named custom providers (`custom:<name>`);
+  // the static dict only holds the bare `custom` template, so a direct
+  // lookup would wrongly reject every saved custom endpoint here.
+  const info = getProvider(provider) ?? PROVIDERS[provider];
   if (!info) return ok({ ok: false, error: "Unknown provider." });
 
   const row = await db.providerKey.findUnique({
@@ -304,9 +319,27 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     return ok({ ok: false, error: result.error });
   }
 
+  const existing = parseModelsColumn(row.models);
+  // Never persist an empty fetch over a non-empty stored config: an empty
+  // list means "endpoint silent/absent", not "user has no models" — wiping
+  // here destroys hand-curated entries on every transient failure. Report
+  // the stored list back instead so the UI keeps working off known data.
+  if (!shouldPersistFetchedModels(result.models.length, existing.length)) {
+    await audit(
+      user.id,
+      "provider_models_fetch",
+      `provider=${provider} count=0 kept-stale=${existing.length}`,
+      getClientIp(req),
+    );
+    return ok({
+      ok: true,
+      models: existing.map((m) => ({ id: m.id, name: m.id })),
+      keptStale: true,
+    });
+  }
+
   // Persist the freshly-fetched id list to the models column (preserving any
   // per-model enabled/thinkingLevel overrides the user previously set).
-  const existing = parseModelsColumn(row.models);
   const existingById = new Map(existing.map((m) => [m.id, m]));
   const merged: ProviderModelConfig[] = await Promise.all(
     result.models.map(async (m) => {

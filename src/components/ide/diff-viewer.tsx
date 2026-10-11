@@ -6,6 +6,7 @@ import { Check, Copy, FilePen, FileCheck2, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DiffRow, type SharedDiffLine } from "@/components/ui/diff-row";
+import { langFromPath } from "@/components/workspace/types";
 import { useTranslation } from "@/hooks/use-translation";
 
 interface DiffViewerProps {
@@ -62,6 +63,9 @@ export function DiffViewer({
     // Collapsed: show only hunks containing changes, with 1 line of context.
     return collapseToChanged(allLines, 1);
   }, [allLines, expanded]);
+
+  // Prism language for per-row syntax colors (falls back to plain text).
+  const language = React.useMemo(() => langFromPath(path ?? ""), [path]);
 
   const additions = allLines.filter((l) => l.type === "add").length;
   const deletions = allLines.filter((l) => l.type === "del").length;
@@ -145,7 +149,7 @@ export function DiffViewer({
             >
               <div className="font-mono text-[11px] leading-relaxed">
                 {lines.map((line, i) => (
-                  <DiffRow key={i} line={line} />
+                  <DiffRow key={i} line={line} language={language} />
                 ))}
               </div>
             </motion.div>
