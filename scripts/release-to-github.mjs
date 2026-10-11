@@ -48,7 +48,7 @@ function getReleaseBody(tag) {
 
 #### ⚡ What's New in ${tag}
 - **🚀 Instant Startup**: Window paints immediately with a splash while the backend boots in the background (cached port, no slow system sweeps, warmup after first paint).
-- **🛠️ Cold-Boot Fix**: Stripped Windows verbatim (`\\?\`) prefixes from the spawned server path (Node's loader fatals on them), excluded CI droppings from the bundle, and the launcher now logs the exact bundle path on failure.
+- **🛠️ Cold-Boot Fix**: Stripped Windows verbatim-path prefixes from the spawned server path (Node's loader fatals on them), excluded CI droppings from the bundle, and the launcher now logs the exact bundle path on failure.
 - **🔄 Update Reliability**: Fixed Windows \`_up\` folder-lock failures (sidecar runs outside the install dir, verified shutdown, retried installs) plus a persistent titlebar update button with progress — no more vanishing toasts.
 - **↩️ Undo You Can Trust**: Undo failures, duplicates and silent partial restores fixed (truth-propagating restore, per-conversation lock, transcript tombstones); new Confirm Undo dialog lists every file with inverted +/− stats and the server re-verifies before applying.
 - **🔌 Custom Providers (BYOK) End-to-End**: Add any OpenAI-compatible endpoint and it saves, lists models, and appears in the chat model picker; transient fetch failures can no longer wipe stored models.
