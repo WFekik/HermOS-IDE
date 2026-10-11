@@ -59,6 +59,9 @@ const nextConfig: NextConfig = {
       "prisma/**",
       "*.log",
       ".env*",
+      // CI droppings at the repo root (e.g. rustup-init.exe) must never be
+      // traced into the installer bundle.
+      "rustup-init.exe",
       "eslint.config.mjs",
       "tailwind.config.ts",
       "postcss.config.mjs",

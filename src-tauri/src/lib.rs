@@ -594,6 +594,38 @@ fn server_reachable_with_token(addr: &str, expected_token: &str) -> bool {
 
 struct NodeProcess(Mutex<Option<Child>>);
 
+/// Strip the Windows verbatim prefix (`\\?\`, incl. `\\?\UNC\` → `\\`)
+/// from a path before handing it to a CHILD process as an argument.
+///
+/// Why: `resource_dir()`, `current_exe()` etc. return verbatim-prefixed
+/// paths on Windows, and `Path::join/exists` handle them fine — but Node's
+/// CJS loader does NOT: given `\\?\C:\...\server.js` as its entry script,
+/// `_findPath`/`toRealPath` mangles it down to drive-relative `C:` and dies
+/// with `EISDIR: illegal operation on a directory, lstat 'C:'` on every
+/// boot attempt (black "backend failed to start" dialog). The ceased 1.0.9
+/// code never hit this because it passed relative `"server.js"` with
+/// `current_dir(server_dir)`, so Node never parsed a verbatim path.
+/// `CreateProcess` itself accepts verbatim paths, so only values the child
+/// must PARSE (script args, not exe/CWD) strictly need this.
+#[cfg(target_os = "windows")]
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+  const VERBATIM: &str = r"\\?\";
+  const UNC: &str = r"\\?\UNC\";
+  let s = p.to_string_lossy();
+  if let Some(rest) = s.strip_prefix(UNC) {
+    return PathBuf::from(format!(r"\\{rest}"));
+  }
+  if let Some(rest) = s.strip_prefix(VERBATIM) {
+    return PathBuf::from(rest.to_string());
+  }
+  p.to_path_buf()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+  p.to_path_buf()
+}
+
 /// Background boot: spawn the Node sidecar, wait for /api/health with the
 /// instance token, then navigate the splash window to the real app.
 ///
@@ -655,12 +687,15 @@ fn boot_backend_and_navigate(app_handle: tauri::AppHandle) {
   });
 
   let server_path = match server_js {
-    Some(p) if p.exists() => p,
+    Some(p) if p.exists() => strip_verbatim_prefix(&p),
     _ => fail_startup(
       &app_handle,
       "Server bundle (server.js) not found in resource directory. Installation may be corrupted.",
     ),
   };
+  // Always log the resolved bundle: when boot fails, this line (not the
+  // Node log alone) tells us WHICH server.js was spawned.
+  log::info!("Server bundle at {:?}", server_path);
 
   let bundled_node = find_bundled_node(&app_handle);
 
@@ -1023,4 +1058,35 @@ pub fn run() {
       _ => {}
     }
   });
+}
+
+#[cfg(test)]
+mod startup_path_tests {
+  use super::*;
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn verbatim_prefix_is_stripped_for_child_args() {
+    let base = std::env::temp_dir().join("hermos").join("app dir").join("server.js");
+    let verbatim = PathBuf::from(format!(r"\\?\{}", base.display()));
+    // Verbatim prefix stripped; remainder (incl. spaces) byte-identical.
+    assert_eq!(strip_verbatim_prefix(&verbatim), base);
+    // UNC form folds to a plain UNC path.
+    let unc_base = PathBuf::from(r"\\host\share\app dir\server.js");
+    let unc_verbatim = PathBuf::from(r"\\?\UNC\host\share\app dir\server.js");
+    assert_eq!(strip_verbatim_prefix(&unc_verbatim), unc_base);
+    // Plain paths pass through untouched (including spaces).
+    assert_eq!(strip_verbatim_prefix(&base), base);
+    // No verbatim remnant may survive into a spawned Node arg.
+    assert!(!strip_verbatim_prefix(&verbatim).to_string_lossy().starts_with(r"\\?\"));
+  }
+
+  #[test]
+  #[cfg(not(target_os = "windows"))]
+  fn verbatim_strip_is_identity_off_windows() {
+    assert_eq!(
+      strip_verbatim_prefix(Path::new("/opt/hermos/server.js")),
+      PathBuf::from("/opt/hermos/server.js")
+    );
+  }
 }
