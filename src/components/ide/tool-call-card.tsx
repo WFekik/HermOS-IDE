@@ -23,7 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
-import { cn, parsePartialJson } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { FILE_OP_TOOLS, computeDiffStats, fileTypeIconMeta, formatBytes } from "@/lib/tool-ui-shared";
 import { DiffViewer } from "@/components/ide/diff-viewer";
 import { CodeBlock } from "@/components/ide/code-block";
@@ -1846,14 +1846,10 @@ function formatResult(r: unknown): string {
   }
 }
 
-export function safeParse(raw: string): Record<string, unknown> | undefined {
-  if (!raw) return undefined;
-  try {
-    return parsePartialJson(raw);
-  } catch {
-    return undefined;
-  }
-}
+import { safeParsePartial } from "@/lib/safe-json";
+
+/** Backward-compat alias (tests import { safeParse } from here). */
+export const safeParse = safeParsePartial;
 
 /** Safely read a string field from unknown LLM JSON without `as any`. */
 export function strField(obj: unknown, ...keys: string[]): string | undefined {

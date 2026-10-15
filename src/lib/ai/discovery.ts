@@ -17,11 +17,22 @@ export async function buildDiscoveryBlock(userId: string): Promise<string> {
       for (const server of mcpServers) {
         if (!server.tools) continue;
         try {
-          const tools = JSON.parse(server.tools as string);
-          if (Array.isArray(tools) && tools.length > 0) {
+          if (typeof server.tools !== "string") continue;
+          const parsed: unknown = JSON.parse(server.tools);
+          const tools = Array.isArray(parsed)
+            ? parsed.filter(
+                (t): t is { name: string; description?: string } =>
+                  t !== null &&
+                  typeof t === "object" &&
+                  typeof (t as { name?: unknown }).name === "string",
+              )
+            : [];
+          if (tools.length > 0) {
             parts.push(`### MCP Server: "${server.name}"`);
             for (const t of tools) {
-              parts.push(`- \`${t.name}\`: ${t.description || '(no description)'}`);
+              const safeName = String(t.name).replace(/[`]/g, "");
+              const safeDesc = typeof t.description === "string" ? String(t.description).replace(/[`]/g, "") : "(no description)";
+              parts.push(`- \`${safeName}\`: ${safeDesc}`);
             }
             parts.push(""); // spacing
           }
@@ -64,13 +75,26 @@ export async function buildDiscoveryBlock(userId: string): Promise<string> {
             continue;
           }
           try {
-            const manifest = JSON.parse(p.manifest as string);
-            const tools = manifest?.tools;
+            if (typeof p.manifest !== "string") continue;
+            const parsedManifest: unknown = JSON.parse(p.manifest);
+            const manifestTools =
+              parsedManifest !== null &&
+              typeof parsedManifest === "object" &&
+              Array.isArray((parsedManifest as { tools?: unknown }).tools)
+                ? ((parsedManifest as { tools: unknown[] }).tools.filter(
+                    (t): t is { name: string; description?: string } =>
+                      t !== null &&
+                      typeof t === "object" &&
+                      typeof (t as { name?: unknown }).name === "string",
+                  ))
+                : [];
             parts.push(`### Plugin/Skill: "${p.name}" (${p.type})\nDescription: ${p.description || ''}`);
-            if (Array.isArray(tools) && tools.length > 0) {
+            if (manifestTools.length > 0) {
               parts.push("Exposed Tools:");
-              for (const t of tools) {
-                parts.push(`- \`${t.name}\`: ${t.description || '(no description)'}`);
+              for (const t of manifestTools) {
+                const safeName = String(t.name).replace(/[`]/g, "");
+                const safeDesc = typeof t.description === "string" ? String(t.description).replace(/[`]/g, "") : "(no description)";
+                parts.push(`- \`${safeName}\`: ${safeDesc}`);
               }
             }
             parts.push(""); // spacing

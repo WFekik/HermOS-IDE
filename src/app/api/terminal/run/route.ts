@@ -43,8 +43,14 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   // userAllowedOutsideWorkspace). Outside-workspace execution is an
   // agent-only path gated by command.outside_workspace + explicit user Allow
   // in executor.ts; the interactive terminal never sets that flag.
+  // The validated `shell` selector is forwarded (honored best-effort in
+  // runCommandWs; falls back to OS default when unavailable).
+  // req.signal aborts when the client disconnects (Stop button aborts the
+  // fetch) — forwarded so the server child is killed instead of leaking.
   const exec = await runCommandWs(user.id, ws.name, parsed.data.command, {
     rootDir: ws.rootDir,
+    shell: parsed.data.shell,
+    signal: req.signal,
   });
   const result: TerminalResponse = {
     ok: exec.ok,

@@ -14,6 +14,7 @@ import {
   ListTree,
   GitBranch,
   Sparkles,
+  TriangleAlert,
   ChevronDown,
   ChevronUp,
   Loader2,
@@ -76,6 +77,10 @@ const GitPanel = dynamic(
   () => import("@/components/panels/git-panel").then((m) => ({ default: m.GitPanel })),
   { ssr: false, loading: () => <PanelSkeleton /> },
 );
+const ProblemsPanel = dynamic(
+  () => import("@/components/panels/problems-panel").then((m) => ({ default: m.ProblemsPanel })),
+  { ssr: false, loading: () => <PanelSkeleton /> },
+);
 
 /**
  * Single source of truth for the right-panel tabs. IdeShell derives the
@@ -94,6 +99,7 @@ export const RIGHT_PANEL_TABS: { value: RightPanelTab; label: string; icon: Reac
   { value: "office", label: "Office", icon: FileText },
   { value: "subagents", label: "Subagents", icon: Bot },
   { value: "git", label: "Git", icon: GitBranch },
+  { value: "problems", label: "Problems", icon: TriangleAlert },
 ];
 
 export function RightPanel() {
@@ -113,6 +119,32 @@ export function RightPanel() {
     }
   }, [tab]);
 
+  // Mouse-wheel horizontal scroll for the tab strip: overflow-x-auto never
+  // consumes vertical wheel deltas, so without this the wheel does nothing
+  // over the tabs. Native listener (not React onWheel) so preventDefault
+  // works — React attaches wheel listeners as passive. Tauri targets are
+  // Chromium/WebKit, where RTL scrollLeft runs 0 → negative, which the sign
+  // flip below relies on.
+  React.useEffect(() => {
+    const el = tabListRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const max = el.scrollWidth - el.clientWidth;
+      if (max <= 1) return;
+      const isRTL = getComputedStyle(el).direction === "rtl";
+      const delta = (isRTL ? -e.deltaY : e.deltaY);
+      // Normalized position + edge release: at an edge, let the event
+      // propagate so outer scroll areas still receive it.
+      const pos = isRTL ? -el.scrollLeft : el.scrollLeft;
+      if ((delta > 0 && pos >= max - 1) || (delta < 0 && pos <= 1)) return;
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const activeTabLabel = t(tab);
 
   return (
@@ -123,7 +155,7 @@ export function RightPanel() {
             <>
               <div
                 ref={tabListRef}
-                className="flex-1 min-w-0 overflow-x-auto overflow-y-hidden flex items-center py-0.5 scroll-smooth"
+                className="flex-1 min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain flex items-center py-0.5 scroll-smooth"
                 style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
               >
                 <TabsList className="h-8 inline-flex flex-row items-center gap-0.5 whitespace-nowrap bg-transparent p-0 w-max shrink-0">
@@ -219,6 +251,11 @@ export function RightPanel() {
           <TabsContent value="git" className="mt-0 h-full data-[state=inactive]:hidden">
             <ErrorBoundary fallbackTitle="git_panel_error">
               <GitPanel />
+            </ErrorBoundary>
+          </TabsContent>
+          <TabsContent value="problems" className="mt-0 h-full data-[state=inactive]:hidden">
+            <ErrorBoundary fallbackTitle="problems_panel_error">
+              <ProblemsPanel />
             </ErrorBoundary>
           </TabsContent>
         </div>

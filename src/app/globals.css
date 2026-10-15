@@ -308,3 +308,61 @@
  * runtime dir awareness, not class swaps. Overlay *content* uses logical
  * properties throughout, so text and controls still mirror correctly.
  */
+
+/* Motion safety — decorative motion off under reduced-motion, but status
+ * spinners (Loader2 animate-spin: tool runs, retries, sync states) keep
+ * spinning. A frozen spinner reads as "stuck", which misleads more than the
+ * rotation harms — and every spinner already ships with adjacent text
+ * state, so nothing conveys meaning by motion alone. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-spin,
+  .animate-spin::before,
+  .animate-spin::after {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* While dragging a panel divider: iframes (browser preview, artifact pages)
+ * must not swallow the pointer mid-drag, text selection pauses, and the
+ * cursor stays a resize arrow. Backdrop blur and transitions are also parked
+ * for the duration — repainting blurred/transitional surfaces every frame is
+ * what makes the drag feel laggy. Toggled via data-resizing on the panel group. */
+[data-resizing="true"] iframe {
+  pointer-events: none !important;
+}
+[data-resizing="true"] {
+  user-select: none;
+  cursor: ew-resize;
+}
+[data-resizing="true"] .backdrop-blur,
+[data-resizing="true"] .backdrop-blur-sm,
+[data-resizing="true"] .backdrop-blur-md {
+  backdrop-filter: none !important;
+}
+[data-resizing="true"] *,
+[data-resizing="true"] *::before,
+[data-resizing="true"] *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+/*
+ * Rendering containment for long flat lists (terminal output). Offscreen
+ * rows skip layout/paint entirely, which keeps both scrolling and panel
+ * resizing fluid when output grows into the hundreds of lines. The auto
+ * keyword reuses the last rendered size so scrollbars don't jump.
+ */
+.terminal-lines > div {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 20px;
+}

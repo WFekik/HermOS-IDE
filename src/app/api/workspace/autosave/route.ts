@@ -14,6 +14,8 @@ import { z } from "zod";
 import {
   withErrorHandler,
   parseJson, apiError, unauthorized, ok } from "@/app/api/_lib/helpers";
+import { byteCappedContent, noNulBytes } from "@/lib/validation";
+import { MAX_FILE_BYTES } from "@/lib/workspace";
 
 /**
  * POST /api/workspace/autosave  body { path, content }
@@ -44,8 +46,11 @@ import {
 export const dynamic = "force-dynamic";
 
 const autosaveSchema = z.object({
-  path: z.string().trim().min(1).max(300),
-  content: z.string().max(1_000_000),
+  path: z.string().trim().min(1).max(300).refine(noNulBytes, { message: "Invalid path." }),
+  content: byteCappedContent(MAX_FILE_BYTES),
+}).refine((d) => noNulBytes(d.content), {
+  message: "Content cannot contain NUL bytes",
+  path: ["content"],
 });
 
 export const POST = withErrorHandler(async (req: NextRequest) => {
@@ -85,10 +90,16 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     return ok({ ok: true, path: r.path, bytes: r.bytes });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "autosave failed";
-    // writeFileWs throws "Invalid path." for traversal attempts and
-    // "Content too large (>1MB)." for oversize payloads — both are 400s.
-    if (msg === "Invalid path.") return apiError(msg, 400);
-    if (msg.startsWith("Content too large")) return apiError(msg, 400);
+    // writeFileWs throws "Invalid path." for traversal attempts,
+    // "Content too large..." for oversize payloads, and "Refusing to save..."
+    // for binary placeholders — all client errors (400), matching PUT /file.
+    if (
+      msg === "Invalid path." ||
+      msg.startsWith("Content too large") ||
+      msg.startsWith("Refusing to save")
+    ) {
+      return apiError(msg, 400);
+    }
     return apiError(msg, 500);
   }
 });

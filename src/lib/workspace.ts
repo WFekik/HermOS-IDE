@@ -485,7 +485,7 @@ export async function resolveWorkspace(
     });
     if (ws) {
       rootDirCache.set(`${userId}:${ws.name}`, ws.rootDir);
-      return { id: ws.id, name: ws.name, rootDir: ws.rootDir, isActive: true };
+      return { id: ws.id, name: ws.name, rootDir: ws.rootDir, isActive: ws.isActive };
     }
   }
   return getActiveWorkspace(userId);
@@ -494,10 +494,55 @@ export async function resolveWorkspace(
 export async function ensureDefaultWorkspace(
   userId: string,
 ): Promise<WorkspaceInfo> {
-  // Persistent fallback workspace under WORKSPACES_ROOT (NOT a temp dir) so
-  // the default workspace's files survive restarts.
-  const rootDir = path.join(WORKSPACES_ROOT, safeUserId(userId));
+  // Default workspace lives in its OWN subdirectory so it can never overlap
+  // sibling workspaces (`<root>/<user>/default` vs `<root>/<user>/<name>`).
+  // Previously the default root was the user dir itself, which allowed
+  // `DELETE ?path=<siblingName>` from default to recursively delete a sibling.
+  const userDir = path.join(WORKSPACES_ROOT, safeUserId(userId));
+  const rootDir = path.join(userDir, "default");
   await ensureDir(rootDir);
+  // One-time migration from the legacy layout where default root === user dir:
+  // move loose files (not sibling workspace dirs) into the new default dir.
+  // Best-effort, never throws — worst case the old files stay where they are.
+  // Outcome is logged so a half-migrated split (e.g. cross-device rename
+  // failures) is visible instead of silent.
+  try {
+    const existing = await db.workspace.findFirst({
+      where: { userId, name: "default" },
+    });
+    if (existing && path.resolve(existing.rootDir) === path.resolve(userDir)) {
+      // Case-insensitive set: on Windows the FS is case-insensitive, so an
+      // on-disk casing that merely differs from the DB row is still the
+      // same directory and must be skipped, never migrated.
+      const siblingNames = new Set(
+        (await db.workspace.findMany({ where: { userId }, select: { name: true } })).map((r) => r.name.toLowerCase()),
+      );
+      const entries = await fs.readdir(userDir, { withFileTypes: true }).catch(() => []);
+      let moved = 0;
+      let skipped = 0;
+      for (const entry of entries) {
+        const entryName: string = entry.name;
+        if (entryName === "default") continue;
+        if (siblingNames.has(entryName.toLowerCase())) continue;
+        const src = path.join(userDir, entryName);
+        const dst = path.join(rootDir, entryName);
+        if (existsSync(dst)) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          await fs.rename(src, dst);
+          moved += 1;
+        } catch {
+          skipped += 1;
+          /* leave in place on cross-device or permission errors */
+        }
+      }
+      console.info(`[workspace] default-workspace migration for user ${userId}: moved=${moved} skipped=${skipped}`);
+    }
+  } catch (e) {
+    console.warn(`[workspace] default-workspace migration check failed: ${e instanceof Error ? e.message : e}`);
+  }
   const ws = await db.workspace.upsert({
     where: { userId_name: { userId, name: "default" } },
     update: { isActive: true, rootDir },
@@ -519,7 +564,7 @@ export async function ensureDefaultWorkspace(
 export async function listWorkspaces(userId: string): Promise<WorkspaceInfo[]> {
   const rows = await db.workspace.findMany({
     where: { userId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { updatedAt: "desc" },
   });
   return rows.map((r) => ({
     id: r.id,
@@ -559,7 +604,9 @@ export async function listUserWorkspaces(
 ): Promise<WorkspaceListItem[]> {
   const rows = await db.workspace.findMany({
     where: { userId },
-    orderBy: { createdAt: "desc" },
+    // Most-recently-touched first, matching listWorkspaces and the
+    // switcher's newest-first contract.
+    orderBy: { updatedAt: "desc" },
   });
   return rows.map(toWorkspaceListItem);
 }
@@ -766,7 +813,7 @@ export async function readFileWs(
   rel: string,
   maxBytes = 10_000_000,
   rootDir?: string,
-): Promise<{ path: string; content: string; size: number }> {
+): Promise<{ path: string; content: string; size: number; isBinary?: boolean }> {
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
   const stat = await fs.stat(/* turbopackIgnore: true */ abs).catch(() => null);
@@ -783,10 +830,11 @@ export async function readFileWs(
       path: rel,
       content: `(binary file: ${stat.size} bytes — cannot be displayed as text)`,
       size: stat.size,
+      isBinary: true,
     };
   }
   const content = buf.toString("utf8");
-  return { path: rel, content, size: stat.size };
+  return { path: rel, content, size: stat.size, isBinary: false };
 }
 
 /**
@@ -1033,6 +1081,9 @@ async function atomicWriteFile(abs: string, content: string): Promise<void> {
   }
 }
 
+/** Single source of truth for file write size. Zod schemas + autosave must stay in sync. */
+export const MAX_FILE_BYTES = 1_000_000;
+
 export async function writeFileWs(
   userId: string,
   wsName: string,
@@ -1042,10 +1093,17 @@ export async function writeFileWs(
 ): Promise<{ path: string; bytes: number }> {
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
-  
+  // Defense-in-depth: never persist the binary placeholder text over a real
+  // binary. Matches the full placeholder format (not just the prefix) so a
+  // legitimate text file starting with those words still saves.
+  if (/^\(binary file: \d+ bytes — cannot be displayed as text\)$/.test(content)) {
+    throw new Error("Refusing to save binary placeholder.");
+  }
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > MAX_FILE_BYTES) throw new Error("Content too large.");
   await ensureDir(path.dirname(abs));
   await atomicWriteFile(abs, content);
-  return { path: rel, bytes: Buffer.byteLength(content, "utf8") };
+  return { path: rel, bytes };
 }
 
 /**
@@ -1237,6 +1295,43 @@ export async function deletePathWs(
   if (!abs) throw new Error("Invalid path.");
   const base = rootDir ?? path.join(userRoot(userId), wsName);
   if (abs === base) throw new Error("Cannot delete workspace root.");
+  // Cross-workspace delete guard: when operating inside the default workspace,
+  // a first segment matching a sibling workspace name must never resolve to
+  // a sibling workspace directory. `safePath` already scopes to `base`, but
+  // this is defense-in-depth against stale rootDir caches pointing at the
+  // legacy `<user>/` layout (where default root WAS the user dir).
+  // Fail-closed: if the sibling lookup itself errors, refuse the delete
+  // (retryable toast) rather than risk removing the wrong directory.
+  if (wsName === "default") {
+    // Normalize first ("a/../b" targets b, not a) so dotted paths can't
+    // false-positive against a sibling name. Escape attempts ("../x")
+    // never match a workspace name and are rejected downstream by safePath.
+    const normalized = path.posix.normalize(rel.replace(/\\/g, "/").replace(/^\/+/, ""));
+    const firstSeg = normalized.split("/")[0] ?? "";
+    if (firstSeg) {
+      let siblings: Array<{ name: string }>;
+      try {
+        siblings = await db.workspace.findMany({ where: { userId }, select: { name: true } });
+      } catch {
+        throw new Error("Cannot verify workspace boundary — refusing delete. Retry in a moment.");
+      }
+      // In the current layout the default root is `<user>/default`, so a
+      // child literally named like the current workspace (any casing) is an
+      // ordinary folder — exclude it from the sibling comparison. In the
+      // legacy layout (root === user dir) every name comparison applies.
+      const baseIsIsolatedDefault =
+        path.basename(path.resolve(base)).toLowerCase() === "default";
+      const lower = firstSeg.toLowerCase();
+      const hit = siblings.some((s) => {
+        if (s.name.toLowerCase() !== lower) return false;
+        if (baseIsIsolatedDefault && s.name.toLowerCase() === wsName.toLowerCase()) return false;
+        return true;
+      });
+      if (hit) {
+        throw new Error("Refusing to delete a sibling workspace directory. Delete the workspace itself instead.");
+      }
+    }
+  }
   const existed = await fs.stat(/* turbopackIgnore: true */ abs).then(() => true).catch(() => false);
   if (!existed) {
     return { path: rel, existed: false, deleted: false };
@@ -1263,10 +1358,37 @@ export async function renamePathWs(
   from: string,
   to: string,
   rootDir?: string,
+  opts?: { overwrite?: boolean },
 ): Promise<{ from: string; to: string }> {
   const fromAbs = safePath(userId, wsName, from, rootDir);
   const toAbs = safePath(userId, wsName, to, rootDir);
   if (!fromAbs || !toAbs) throw new Error("Invalid path.");
+  if (fromAbs === toAbs) throw new Error("Source and destination are the same path.");
+  // "Move into itself" only applies to directories — and isSubpathOrEqual is
+  // case-insensitive on win32, so a file case-only rename (foo.txt → Foo.txt)
+  // must not be misclassified. Stat the source first.
+  const fromStat = await fs.stat(/* turbopackIgnore: true */ fromAbs).catch(() => null);
+  if (!fromStat) throw new Error("Source not found.");
+  if (fromStat.isDirectory() && isSubpathOrEqual(toAbs, fromAbs)) {
+    // On win32 the containment check is case-insensitive, so exclude a
+    // pure case-only rename (foo → Foo) — same directory, not "into itself".
+    const sameDir =
+      process.platform === "win32"
+        ? fromAbs.toLowerCase() === toAbs.toLowerCase()
+        : fromAbs === toAbs;
+    if (!sameDir) throw new Error("Cannot move a directory into itself.");
+  }
+  if (!opts?.overwrite && existsSync(/* turbopackIgnore: true */ toAbs)) {
+    // Same-file case-only rename on win32 (foo.txt → Foo.txt) resolves to
+    // the existing file by design — not an overwrite, single attempt.
+    const sameFile =
+      process.platform === "win32"
+        ? fromAbs.toLowerCase() === toAbs.toLowerCase()
+        : fromAbs === toAbs;
+    if (!sameFile) {
+      throw new Error("Destination already exists. Pass overwrite to replace it.");
+    }
+  }
   await ensureDir(path.dirname(toAbs));
   await fs.rename(fromAbs, toAbs);
   return { from, to };
@@ -2347,6 +2469,8 @@ export async function runCommandWs(
     onProgress?: (chunk: string) => void;
     rootDir?: string;
     userAllowedOutsideWorkspace?: boolean;
+    /** Requested shell (bash|pwsh|cmd|zsh). Honored on a best-effort basis; falls back to OS default. */
+    shell?: string;
   },
 ): Promise<ExecResult> {
   const initialCwd = opts?.rootDir ?? (await resolveRootDir(userId, wsName));
@@ -2535,18 +2659,51 @@ export async function runCommandWs(
     let child: ReturnType<typeof spawn>;
     let timedOut = false;
     try {
-      child = isWin
-        ? spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psWrappedCommand(command)], {
+      const requestedShell = (opts?.shell ?? "").toLowerCase();
+      if (isWin) {
+        if (requestedShell === "cmd") {
+          child = spawn("cmd.exe", ["/d", "/s", "/c", command], {
             cwd,
             env,
-            windowsHide: true,
-          })
-        : spawn(command, [], {
-            cwd,
-            env,
-            shell: "/bin/sh",
             windowsHide: true,
           });
+        } else {
+          // NOTE: on Windows every non-cmd request (bash/zsh/pwsh included)
+          // runs via powershell.exe (Windows PowerShell 5.1), which may not
+          // be installed where PowerShell 7 (pwsh) is expected and differs
+          // in edge-case syntax. The requested shell is recorded in the
+          // audit log; POSIX honors pwsh/bash/zsh individually. Upgrading
+          // this branch to prefer pwsh.exe when present is a follow-up
+          // (needs an availability probe + fallback path).
+          child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psWrappedCommand(command)], {
+            cwd,
+            env,
+            windowsHide: true,
+          });
+        }
+      } else if (requestedShell === "pwsh") {
+        child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-Command", command], {
+          cwd,
+          env,
+          windowsHide: true,
+        });
+      } else {
+        // POSIX: honor bash/zsh when explicitly requested, else OS default /bin/sh.
+        // Falls back to /bin/sh if the requested shell binary is missing (spawn
+        // error is caught below and reported as exit 127).
+        const posixShell =
+          requestedShell === "zsh" && existsSync("/bin/zsh")
+            ? "/bin/zsh"
+            : requestedShell === "bash" && existsSync("/bin/bash")
+              ? "/bin/bash"
+              : "/bin/sh";
+        child = spawn(command, [], {
+          cwd,
+          env,
+          shell: posixShell,
+          windowsHide: true,
+        });
+      }
     } catch (e) {
       if (opts?.signal && cleanupAbort) opts.signal.removeEventListener("abort", cleanupAbort);
       resolve({
@@ -2686,8 +2843,6 @@ const BINARY_EXTS = new Set([
   "node", "wasm", "pyc", "pyo",
   "lockb",
 ]);
-
-const MAX_FILE_BYTES = 1_000_000; // 1 MB
 
 function fileExtension(name: string): string {
   const dot = name.lastIndexOf(".");

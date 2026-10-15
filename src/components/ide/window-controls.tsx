@@ -87,12 +87,17 @@ export function WindowControls() {
   };
 
   return (
-    <div className="flex items-center shrink-0">
+    <div
+      className="flex items-center shrink-0"
+      data-tauri-drag-region="false"
+      style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+    >
       <button
         type="button"
         onClick={handleMinimize}
         aria-label="Minimize"
-        className="inline-flex size-8 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        data-tauri-drag-region="false"
+        className="inline-flex size-8 min-w-11 min-h-11 items-center justify-center px-3 py-3 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Minus className="size-3.5" strokeWidth={1.6} />
       </button>
@@ -100,7 +105,8 @@ export function WindowControls() {
         type="button"
         onClick={handleMaximize}
         aria-label={isMaximized ? "Restore" : "Maximize"}
-        className="inline-flex size-8 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        data-tauri-drag-region="false"
+        className="inline-flex size-8 min-w-11 min-h-11 items-center justify-center px-3 py-3 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {isMaximized ? <RestoreIcon className="size-3" /> : <Square className="size-3" strokeWidth={1.6} />}
       </button>
@@ -108,7 +114,8 @@ export function WindowControls() {
         type="button"
         onClick={handleClose}
         aria-label="Close"
-        className="inline-flex size-8 items-center justify-center text-muted-foreground hover:bg-red-600 hover:text-white transition-colors"
+        data-tauri-drag-region="false"
+        className="inline-flex size-8 min-w-11 min-h-11 items-center justify-center px-3 py-3 text-muted-foreground hover:bg-red-600 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <X className="size-3.5" strokeWidth={1.6} />
       </button>

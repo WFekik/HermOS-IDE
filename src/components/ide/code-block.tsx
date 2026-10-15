@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { SyntaxHighlighter, oneDark, oneLight, normalizePrismLanguage } from "@/lib/prism";
 import { useTheme } from "@/components/theme/theme-provider";
 import {
   Check,
@@ -16,6 +15,7 @@ import {
   Palette,
   Database,
   FolderTree,
+  WrapText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { langIconKind, type LangIconKind } from "@/lib/tool-ui-shared";
@@ -113,6 +113,10 @@ export const CodeBlock = React.memo(function CodeBlock({
     }
   };
 
+  // Wrap toggle — wide code (Go/Rust) scans better without forced wrapping.
+  // Defaults to wrapped for prose-friendly code, unwrapped for tree output.
+  const [wrap, setWrap] = React.useState(() => !((language || "text").toLowerCase() === "tree"));
+
   const hiddenLines = lineCount - COLLAPSED_PREVIEW_LINES;
 
   return (
@@ -130,7 +134,7 @@ export const CodeBlock = React.memo(function CodeBlock({
           </span>
           {lineCount > 0 && (
             <>
-              <span className="text-muted-foreground/40 text-[11px]" aria-hidden>
+              <span className="text-muted-foreground/75 text-[11px]" aria-hidden>
                 ·
               </span>
               <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
@@ -141,32 +145,54 @@ export const CodeBlock = React.memo(function CodeBlock({
             </>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-[11px] gap-1.5"
-          onClick={copy}
-          aria-label={copied ? t("copied") : t("copy_code")}
-        >
-          {copied ? (
-            <>
-              <Check className="size-3 text-brand" aria-hidden /> {t("copied")}
-            </>
-          ) : (
-            <>
-              <Copy className="size-3" aria-hidden /> {t("copy")}
-            </>
+        <div className="flex items-center gap-1">
+          {!isTree && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px] gap-1.5"
+              onClick={() => setWrap((w) => !w)}
+              aria-pressed={wrap}
+              aria-label={t("toggle_wrap")}
+              title={wrap ? t("wrap_on") : t("wrap_off")}
+            >
+              <WrapText className={cn("size-3", !wrap && "opacity-40")} aria-hidden />
+              <span className="hidden sm:inline">{t("wrap")}</span>
+            </Button>
           )}
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px] gap-1.5"
+            onClick={copy}
+            aria-label={copied ? t("copied") : t("copy_code")}
+          >
+            {copied ? (
+              <>
+                <Check className="size-3 text-brand" aria-hidden /> {t("copied")}
+              </>
+            ) : (
+              <>
+                <Copy className="size-3" aria-hidden /> {t("copy")}
+              </>
+            )}
+          </Button>
+        </div>
       </div>
       <div className="relative overflow-x-auto text-[13px] leading-relaxed">
         {streaming ? (
-          <pre className="px-4 py-3.5 font-mono text-[13px] leading-[1.55] whitespace-pre-wrap break-words text-foreground/90">
+          <pre
+            className={
+              wrap
+                ? "px-4 py-3.5 font-mono text-[13px] leading-[1.55] whitespace-pre-wrap break-words text-foreground/90"
+                : "px-4 py-3.5 font-mono text-[13px] leading-[1.55] whitespace-pre text-foreground/90"
+            }
+          >
             {displayedValue}
           </pre>
         ) : (
           <SyntaxHighlighter
-            language={isTree ? "text" : lang}
+            language={normalizePrismLanguage(isTree ? "text" : lang)}
             style={isDark ? oneDark : oneLight}
             customStyle={{
               margin: 0,
@@ -174,16 +200,16 @@ export const CodeBlock = React.memo(function CodeBlock({
               background: "transparent",
               fontSize: "13px",
               lineHeight: "1.55",
-              whiteSpace: isTree ? "pre" : undefined,
+              whiteSpace: isTree || !wrap ? "pre" : undefined,
             }}
             codeTagProps={{
               style: {
                 fontFamily:
                   "var(--font-mono)",
-                whiteSpace: isTree ? "pre" : undefined,
+                whiteSpace: isTree || !wrap ? "pre" : undefined,
               },
             }}
-            wrapLongLines={!isTree}
+            wrapLongLines={wrap && !isTree}
             showLineNumbers={showLineNumbers}
             lineNumberStyle={{
               minWidth: "2.25rem",

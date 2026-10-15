@@ -387,7 +387,7 @@ export function OfficePanel() {
       }
     } catch {
       if (seq !== selectSeqRef.current) return;
-      toast.error("Failed to load document manifest.");
+      toast.error(t("office_manifest_failed"));
     }
   };
 
@@ -429,16 +429,17 @@ export function OfficePanel() {
     (prompt: string) => {
       setComposerDraft(prompt);
       requestAnimationFrame(() => {
+        // Localized labels can't be queried reliably — resolve by stable
+        // id / data attribute first, then any composer textarea.
         const ta = (document.getElementById("hermos-chat-composer") ||
           document.querySelector('textarea[data-composer="true"]') ||
-          document.querySelector('textarea[aria-label="Message input"]') ||
           document.querySelector("textarea")) as HTMLTextAreaElement | null;
         if (ta) {
           ta.focus();
           ta.setSelectionRange(prompt.length, prompt.length);
         }
       });
-      toast.success("Prompt loaded into composer! Press Enter to send.");
+      toast.success(t("office_prompt_loaded"));
     },
     [setComposerDraft]
   );
@@ -456,7 +457,7 @@ export function OfficePanel() {
     const dup: PptSlide = {
       ...target,
       id: `slide-${Date.now().toString(36)}`,
-      title: `${target.title} (Copy)`,
+      title: `${target.title} (${t("copy")})`,
     };
     const next = [...activeOfficeDoc.slides];
     next.splice(idx + 1, 0, dup);
@@ -471,7 +472,7 @@ export function OfficePanel() {
   // Delete slide
   const handleDeleteSlide = (idx: number) => {
     if (!activeOfficeDoc || !activeOfficeDoc.slides || activeOfficeDoc.slides.length <= 1) {
-      toast.error("Presentation must contain at least 1 slide.");
+      toast.error(t("office_min_slides"));
       return;
     }
     const next = activeOfficeDoc.slides.filter((_, i) => i !== idx);
@@ -508,7 +509,7 @@ export function OfficePanel() {
             HermOS Office Studio
           </h2>
           <p className="text-xs text-muted-foreground leading-relaxed mb-6">
-            Your AI agent creates company-grade presentations, Word specifications, and PDF reports
+            Your AI agent creates professional presentations, Word specifications, and PDF reports
             slide-by-slide with executive layouts, live theme switchers, and real-time visual inspection.
           </p>
 
@@ -1608,7 +1609,7 @@ export function OfficePanel() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                          Metric / KPI Cards ({resolvedCards.length})
+                          {t("office_metric_cards", { count: resolvedCards.length })}
                         </Label>
                         <Button
                           size="sm"
@@ -1616,16 +1617,16 @@ export function OfficePanel() {
                           className="h-6 text-[11px] px-2.5"
                           onClick={() => {
                             if (resolvedCards.length >= 4) {
-                              toast.error("Maximum 4 cards per slide for executive clarity.");
+                              toast.error(t("office_max_cards"));
                               return;
                             }
                             const next = [
                               ...resolvedCards,
                               {
-                                title: "New Metric",
+                                title: t("office_new_metric"),
                                 value: "100%",
-                                badge: "TARGET",
-                                description: "Performance indicator details",
+                                badge: t("office_target_badge"),
+                                description: t("office_metric_desc"),
                               },
                             ];
                             updateActiveOfficeSlide(currentSlideIndex, { cards: next });

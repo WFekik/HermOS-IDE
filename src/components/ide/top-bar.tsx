@@ -36,6 +36,7 @@ import { useThemeToggle } from "@/hooks/use-theme-toggle";
 import { useTranslation } from "@/hooks/use-translation";
 import { isTauri } from "@/lib/tauri";
 import { isMacPlatform } from "@/lib/platform";
+import { displayConversationTitle } from "@/lib/conversation-title";
 
 interface TopBarProps {
   onToggleSidebar: () => void;
@@ -246,16 +247,16 @@ export function TopBar({
                 size="sm"
                 className="h-6 gap-1.5 px-2 text-xs border-brand/40 bg-brand/5 hover:bg-brand/10 text-brand animate-pulse"
                 onClick={() => void selectConversation(bgRunningId)}
-                aria-label={`${t("go_to_session")}: ${bgRunningSession?.title || t("conversation")}`}
+                aria-label={`${t("go_to_session")}: ${bgRunningSession?.title ? displayConversationTitle(bgRunningSession.title, t) : t("conversation")}`}
               >
                 <Bot className="size-3 shrink-0" />
                 <span className="max-w-[120px] truncate font-medium">
-                  {bgRunningSession?.title || t("conversation")}
+                  {bgRunningSession?.title ? displayConversationTitle(bgRunningSession.title, t) : t("conversation")}
                 </span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {t("agent_running_in_session", { title: bgRunningSession?.title || t("conversation") })} · {t("go_to_session")}
+              {t("agent_running_in_session", { title: bgRunningSession?.title ? displayConversationTitle(bgRunningSession.title, t) : t("conversation") })} · {t("go_to_session")}
             </TooltipContent>
           </Tooltip>
         )}

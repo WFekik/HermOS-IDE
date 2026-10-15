@@ -5,8 +5,6 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
-  QueryClient,
-  QueryClientProvider,
 } from "@tanstack/react-query";
 import {
   Folder,
@@ -85,30 +83,11 @@ import { useTranslation } from "@/hooks/use-translation";
 
 // WorkspacePanel — exported entry point.
 //
-// Wraps the inner panel in a local React Query provider because the global
-// app providers do not include one (the orchestrator wires the panel as a
-// standalone tab in the right rail). A single QueryClient is created per
-// mounted panel instance.
+// Uses the global QueryClient from <Providers> so cache persists across tab
+// switches instead of refetching the entire tree on every mount.
 
 export function WorkspacePanel() {
-  const [queryClient] = React.useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchOnWindowFocus: false,
-            retry: 1,
-            staleTime: 15_000,
-          },
-        },
-      }),
-  );
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      <WorkspacePanelInner />
-    </QueryClientProvider>
-  );
+  return <WorkspacePanelInner />;
 }
 
 function WorkspacePanelInner() {
@@ -274,9 +253,11 @@ function WorkspacePanelInner() {
   // find-in-files overlay. Opening a file adds it to the tab bar and
   // focuses it. When the split editor is open AND the right side is
   // active, route the file to the right side instead of the left.
+  // Honors optional line/column (search → navigate contract) by forwarding
+  // to the editor's `hermos:scroll-to-line` listener after the tab mounts.
   React.useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ path: string; side?: "left" | "right" }>).detail;
+      const detail = (e as CustomEvent<{ path: string; side?: "left" | "right"; line?: number; column?: number }>).detail;
       if (!detail?.path) return;
       const s = useAppStore.getState();
       if (
@@ -286,6 +267,15 @@ function WorkspacePanelInner() {
         s.setSplitEditorFile(detail.path);
       } else {
         openFileTab(detail.path);
+      }
+      if (typeof detail.line === "number" && Number.isFinite(detail.line) && detail.line >= 1) {
+        const line = Math.floor(detail.line);
+        // Let the tab mount + content load before scrolling.
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("hermos:scroll-to-line", { detail: { line } }),
+          );
+        }, 350);
       }
     };
     window.addEventListener("hermos:open-file", handler as EventListener);
@@ -413,8 +403,16 @@ function WorkspacePanelInner() {
     mutationFn: (path: string) => deleteFile(path),
     onSuccess: (_data, path) => {
       toast.success(t("deleted"));
-      if (useAppStore.getState().openFiles.includes(path)) {
-        closeFileTab(path);
+      // Close the deleted tab AND any open files beneath a deleted dir
+      // (including the right split pane) — otherwise the next save would
+      // silently recreate deleted content.
+      const state = useAppStore.getState();
+      const prefix = `${path}/`;
+      for (const open of [...state.openFiles]) {
+        if (open === path || open.startsWith(prefix)) closeFileTab(open);
+      }
+      if (state.splitEditorFile === path || state.splitEditorFile?.startsWith(prefix)) {
+        state.setSplitEditorFile(null);
       }
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.tree });
     },
@@ -424,8 +422,8 @@ function WorkspacePanelInner() {
   });
 
   const renameMut = useMutation({
-    mutationFn: ({ from, to }: { from: string; to: string }) =>
-      renamePath(from, to),
+    mutationFn: ({ from, to, overwrite }: { from: string; to: string; overwrite?: boolean }) =>
+      renamePath(from, to, { overwrite }),
     onSuccess: (_data, vars) => {
       toast.success(t("renamed"));
       // If the renamed file was open as a tab, swap the path in the tab
@@ -442,8 +440,21 @@ function WorkspacePanelInner() {
         queryKey: workspaceKeys.file(vars.from),
       });
     },
-    onError: (e) => {
-      toast.error(e instanceof Error ? e.message : t("rename_failed"));
+    onError: (e, vars) => {
+      const msg = e instanceof Error ? e.message : t("rename_failed");
+      if (/already exists/i.test(msg)) {
+        // Discoverable overwrite: the backend refuses by default, so offer
+        // Replace explicitly instead of failing silently.
+        toast.error(msg, {
+          action: {
+            label: t("replace"),
+            onClick: () => renameMut.mutate({ from: vars.from, to: vars.to, overwrite: true }),
+          },
+          duration: 8000,
+        });
+        return;
+      }
+      toast.error(msg);
     },
   });
 
@@ -790,12 +801,13 @@ function FileEditorContainer({
 
   const handleExternalChange = React.useCallback(() => {
     if (path) {
-      void queryClient.invalidateQueries({ queryKey: workspaceKeys.file(path) });
-      void queryClient.invalidateQueries({
-        queryKey: workspaceKeys.fileRange(path, range?.start ?? 1, range?.end ?? 0),
-      });
+      // Invalidate the exact active query key (default `file(path)` or the
+      // active `fileRange(path, start, end)`). Previously this built a bogus
+      // `fileRange(path, 1, 0)` key when no range was active, so stale default
+      // reads survived external changes.
+      void queryClient.invalidateQueries({ queryKey });
     }
-  }, [path, queryClient, range?.start, range?.end]);
+  }, [path, queryClient, queryKey]);
 
   return (
     <FileEditor
@@ -1115,13 +1127,44 @@ function FileTabBar({
   splitEditorActive: "left" | "right";
 }) {
   const { t } = useTranslation();
+  const dirtyFileTabs = useAppStore((s) => s.dirtyFileTabs);
+  const isDirty = React.useCallback((p: string) => dirtyFileTabs.includes(p), [dirtyFileTabs]);
+
+  const requestClose = React.useCallback(
+    (p: string) => {
+      if (isDirty(p)) {
+        // Dirty guard: don't silently drop edits. The tab stays open; the
+        // user discards explicitly via the toast action (or saves in-editor).
+        toast.warning(t("unsaved_changes"), {
+          description: p,
+          action: {
+            label: t("discard_changes"),
+            onClick: () => onClose(p),
+          },
+          duration: 8000,
+        });
+        return;
+      }
+      onClose(p);
+    },
+    [isDirty, onClose, t],
+  );
+
+  const focusTab = React.useCallback(
+    (idx: number) => {
+      const next = openFiles[idx];
+      if (next) onSelect(next);
+    },
+    [openFiles, onSelect],
+  );
+
   return (
     <div
       className="flex h-9 shrink-0 items-stretch border-b bg-muted/20 overflow-x-auto hermos-tabs-scroll"
       role="tablist"
       aria-label={t("open_files")}
     >
-      {openFiles.map((p) => {
+      {openFiles.map((p, idx) => {
         const isActive = p === activeFileTab;
         // In split mode, both the active (left) file and the right-side
         // file are "shown" simultaneously — both tabs get the active look.
@@ -1135,6 +1178,7 @@ function FileTabBar({
           ((splitEditorActive === "left" && isLeft) ||
             (splitEditorActive === "right" && isRight));
         const name = baseName(p);
+        const dirty = isDirty(p);
         return (
           <div
             key={p}
@@ -1142,13 +1186,33 @@ function FileTabBar({
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
             onClick={() => onSelect(p)}
+            onMouseDown={(e) => {
+              // Middle-click closes the tab (all browsers fire mousedown for
+              // the wheel button; click does not). Guard dirty the same way.
+              if (e.button === 1) {
+                e.preventDefault();
+                requestClose(p);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 onSelect(p);
+              } else if (e.key === "ArrowRight") {
+                e.preventDefault();
+                focusTab((idx + 1) % openFiles.length);
+              } else if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                focusTab((idx - 1 + openFiles.length) % openFiles.length);
+              } else if (e.key === "Home") {
+                e.preventDefault();
+                focusTab(0);
+              } else if (e.key === "End") {
+                e.preventDefault();
+                focusTab(openFiles.length - 1);
               }
             }}
-            title={p}
+            title={dirty ? t("unsaved_changes_title", { path: p }) : p}
             className={cnTab(isActive || isRight, isFocused)}
           >
             {splitEditorOpen && (isLeft || isRight) && (
@@ -1166,11 +1230,18 @@ function FileTabBar({
               </Badge>
             )}
             <span className="truncate font-mono text-xs">{name}</span>
+            {dirty && (
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-amber-500"
+                aria-label={t("unsaved_changes")}
+                title={t("unsaved_changes")}
+              />
+            )}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onClose(p);
+                requestClose(p);
               }}
               className="ms-1 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground"
               aria-label={t("close_file_name", { name })}

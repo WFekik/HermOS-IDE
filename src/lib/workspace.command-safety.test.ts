@@ -916,13 +916,14 @@ describe("persistent default workspaces (WORKSPACES_ROOT, not os.tmpdir)", () =>
     expect(existsSync(info.rootDir)).toBe(true);
   });
 
-  it("ensureDefaultWorkspace uses WORKSPACES_ROOT/userId and mkdirs it", async () => {
+  it("ensureDefaultWorkspace uses WORKSPACES_ROOT/userId/default and mkdirs it", async () => {
     appData = path.join(os.tmpdir(), "hermos-default-ws-" + rand());
     cleanup.push(appData);
     vi.stubEnv("HERMOS_APP_DATA_DIR", appData);
     const ws = await freshWorkspace();
     const info = await ws.ensureDefaultWorkspace("u1");
-    expect(info.rootDir).toBe(path.join(ws.WORKSPACES_ROOT, "u1"));
+    // Isolated subdirectory so default can never overlap sibling workspaces.
+    expect(info.rootDir).toBe(path.join(ws.WORKSPACES_ROOT, "u1", "default"));
     expect(existsSync(info.rootDir)).toBe(true);
   });
 

@@ -123,10 +123,74 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
   );
   const resolveQuestionPrompt = useAppStore((s) => s.resolveQuestionPrompt);
 
-  // composerDraft in the store is the single source of truth — suggestion cards
-  // and skill pickers write to it directly, and the textarea is bound to it.
-  const text = useAppStore((s) => s.composerDraft);
-  const setText = useAppStore((s) => s.setComposerDraft);
+  // Draft buffering: keystrokes stay local (no zustand set per keystroke),
+  // store remains the source of truth for external writers (suggestion cards,
+  // skill pickers) and for persistence across unmounts. Sync is debounced
+  // 300ms + immediate on blur/send/unmount. `textRef` always holds the latest
+  // local value so timers/cleanups never read stale closures and updaters
+  // stay pure (StrictMode-safe: no side effects inside setState updaters).
+  const storeText = useAppStore((s) => s.composerDraft);
+  const setStoreText = useAppStore((s) => s.setComposerDraft);
+  const [text, setTextState] = React.useState(storeText);
+  const textRef = React.useRef(storeText);
+  const lastSyncedRef = React.useRef(storeText);
+  const syncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushDraftSync = React.useCallback(
+    (value: string) => {
+      if (lastSyncedRef.current === value) return;
+      lastSyncedRef.current = value;
+      setStoreText(value);
+    },
+    [setStoreText],
+  );
+
+  const scheduleSync = React.useCallback(() => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = null;
+      flushDraftSync(textRef.current);
+    }, 300);
+  }, [flushDraftSync]);
+
+  const setText = React.useCallback(
+    (value: string | ((prev: string) => string)) => {
+      const next = typeof value === "function" ? (value as (p: string) => string)(textRef.current) : value;
+      textRef.current = next;
+      setTextState(next);
+      scheduleSync();
+    },
+    [scheduleSync],
+  );
+
+  // External draft change (suggestion click, skill picker, conversation switch):
+  // adopt it locally unless it echoes our own pending sync.
+  React.useEffect(() => {
+    if (storeText !== lastSyncedRef.current) {
+      lastSyncedRef.current = storeText;
+      textRef.current = storeText;
+      setTextState(storeText);
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+    }
+  }, [storeText]);
+
+  // Flush on unmount so drafts survive navigation (reads textRef — no setState-in-cleanup).
+  React.useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      if (lastSyncedRef.current !== textRef.current) {
+        const cur = textRef.current;
+        lastSyncedRef.current = cur;
+        queueMicrotask(() => setStoreText(cur));
+      }
+    };
+  }, [setStoreText]);
   const { stream, stop } = useChatStream();
   const { t } = useTranslation();
   // Only subscribe to the message list while editing an existing message —
@@ -352,7 +416,14 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
     } else {
       onSend(value, allIds.length > 0 ? allIds : undefined, allAttachmentMetas.length > 0 ? allAttachmentMetas : undefined);
     }
-    setText("");
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    lastSyncedRef.current = "";
+    textRef.current = "";
+    setTextState("");
+    setStoreText("");
     for (const a of attachments) {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
     }
@@ -364,7 +435,14 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
 
   const cancelEdit = () => {
     setEditingMessageId(null);
-    setText("");
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    lastSyncedRef.current = "";
+    textRef.current = "";
+    setTextState("");
+    setStoreText("");
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = "auto";
     });
@@ -698,7 +776,15 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKeyDown}
                 onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
+                onBlur={() => {
+                  setIsFocused(false);
+                  // Persist draft immediately so switching files/tabs never loses it.
+                  if (syncTimerRef.current) {
+                    clearTimeout(syncTimerRef.current);
+                    syncTimerRef.current = null;
+                  }
+                  flushDraftSync(textRef.current);
+                }}
                 onPaste={handlePaste}
                 placeholder={isEditMode ? `${t("editing_message")}…` : t("type_message")}
                 className="min-h-[40px] border-0 bg-transparent shadow-none resize-none focus-visible:ring-0 px-2.5 pt-1.5 pb-0 text-sm leading-relaxed placeholder:text-muted-foreground/50"

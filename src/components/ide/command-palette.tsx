@@ -48,6 +48,7 @@ import { formatDistanceToNow } from "date-fns";
 import { apiGet, ApiRequestError } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { displayConversationTitle } from "@/lib/conversation-title";
 import { fileNameIconKind, type FileNameIconKind } from "@/lib/tool-ui-shared";
 import type { ConversationDTO } from "@/lib/types";
 
@@ -350,6 +351,11 @@ export function CommandPalette() {
             <ConversationsGroup close={close} />
             <FilesGroup close={close} />
           </CommandList>
+          <div className="flex items-center gap-3 border-t bg-muted/30 px-3 py-1.5 text-[10px] text-muted-foreground">
+            <span><kbd className="rounded border bg-background px-1 font-mono">↑↓</kbd> {t("cp_hint_navigate")}</span>
+            <span><kbd className="rounded border bg-background px-1 font-mono">↵</kbd> {t("cp_hint_open")}</span>
+            <span><kbd className="rounded border bg-background px-1 font-mono">esc</kbd> {t("cp_hint_close")}</span>
+          </div>
         </Command>
       </DialogContent>
     </Dialog>
@@ -788,7 +794,7 @@ function ConversationsGroup({ close }: { close: () => void }) {
           >
             <MessageSquare className="size-4" />
             <span className="truncate">
-              <HighlightedText text={c.title} query={search.trim()} />
+              <HighlightedText text={displayConversationTitle(c.title, t)} query={search.trim()} />
             </span>
             <CommandShortcut>
               {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
@@ -888,13 +894,25 @@ function FilesGroup({ close }: { close: () => void }) {
         isRecent: true,
       };
     }
-    // Filter by filename OR path. The cmdk filter already does fuzzy
-    // matching on the item's `value` (which includes both the path and
-    // the filename), so typing "src/ma" matches `src/math.ts` and
-    // "math" matches both `src/math.ts` and `lib/math.ts`. We cap to
-    // a generous candidate pool for render perf and let cmdk rank them;
-    // the rendered list is sliced to MAX_FILES below.
-    return { items: files.slice(0, 60), isRecent: false };
+    // Filter by filename OR path across the FULL list (no pre-slice — a
+    // pre-slice would silently drop files in large repos). Ranked by bucket:
+    // filename-prefix first, then filename-substring, then path-substring.
+    // Single O(n) pass, no sort: each bucket keeps at most MAX_FILES so the
+    // work per keystroke stays bounded while rank priority holds across the
+    // whole tree. The cmdk filter re-ranks the rendered candidates on `value`.
+    const qLower = q.toLowerCase();
+    const buckets: Array<FlatFile[]> = [[], [], []];
+    for (const f of files) {
+      const name = f.path.split("/").pop()?.toLowerCase() ?? "";
+      if (name.startsWith(qLower)) {
+        if (buckets[0].length < MAX_FILES) buckets[0].push(f);
+      } else if (name.includes(qLower)) {
+        if (buckets[1].length < MAX_FILES) buckets[1].push(f);
+      } else if (f.path.toLowerCase().includes(qLower)) {
+        if (buckets[2].length < MAX_FILES) buckets[2].push(f);
+      }
+    }
+    return { items: [...buckets[0], ...buckets[1], ...buckets[2]], isRecent: false };
   }, [files, search, recent]);
 
   // Don't render the group at all while loading the tree on first open

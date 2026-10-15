@@ -299,4 +299,10 @@ describe("stripEmojis", () => {
   it("should preserve non-emoji text", () => {
     expect(stripEmojis("hello world 123")).toBe("hello world 123");
   });
+
+  it("should preserve tree indentation (spacing is structure there)", () => {
+    expect(stripEmojis("│   ├── assets")).toBe("│   ├── assets");
+    expect(stripEmojis("| |— dist/")).toBe("| |— dist/");
+    expect(stripEmojis("plain  prose  here")).toBe("plain prose here");
+  });
 });

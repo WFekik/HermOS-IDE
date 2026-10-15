@@ -1133,6 +1133,51 @@ function SecurityTab() {
 }
 
 /* ----------------------------- About ----------------------------- */
+interface ReleaseFeedItem {
+  tag: string;
+  name: string;
+  publishedAt: string;
+  notes: string;
+  url: string;
+}
+
+let releaseFeedCache: { repo: string; at: number; items: ReleaseFeedItem[] } | null = null;
+const RELEASE_FEED_TTL_MS = 5 * 60 * 1000;
+
+async function fetchReleaseFeed(repoUrl: string, signal?: AbortSignal): Promise<ReleaseFeedItem[]> {
+  const m = /github\.com\/([^/]+\/[^/]+)/.exec(repoUrl);
+  const repo = m ? m[1].replace(/\/$/, "") : "WFekik/HermOS-IDE";
+  const now = Date.now();
+  if (releaseFeedCache && releaseFeedCache.repo === repo && now - releaseFeedCache.at < RELEASE_FEED_TTL_MS) {
+    return releaseFeedCache.items;
+  }
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`, {
+    headers: { Accept: "application/vnd.github+json" },
+    signal: signal ?? AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const err = new Error(`releases ${res.status}`);
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  const json = (await res.json()) as Array<{
+    tag_name?: unknown;
+    name?: unknown;
+    published_at?: unknown;
+    body?: unknown;
+    html_url?: unknown;
+  }>;
+  const items = (Array.isArray(json) ? json : []).slice(0, 3).map((r) => ({
+    tag: typeof r.tag_name === "string" ? r.tag_name : "",
+    name: typeof r.name === "string" && r.name ? r.name : typeof r.tag_name === "string" ? r.tag_name : "",
+    publishedAt: typeof r.published_at === "string" ? r.published_at : "",
+    notes: typeof r.body === "string" ? r.body.slice(0, 600) : "",
+    url: typeof r.html_url === "string" ? r.html_url : "",
+  }));
+  releaseFeedCache = { repo, at: now, items };
+  return items;
+}
+
 function AboutTab() {
   const { t, language } = useTranslation();
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
@@ -1226,6 +1271,30 @@ function AboutTab() {
   const displayHash = appInfo?.buildHash ?? "local";
   const repoUrl = appInfo?.repoUrl ?? "https://github.com/WFekik/HermOS-IDE";
 
+  const [feed, setFeed] = React.useState<ReleaseFeedItem[] | null>(null);
+  const [feedError, setFeedError] = React.useState<"offline" | "rate-limited" | null>(null);
+  React.useEffect(() => {
+    setFeed(null);
+    setFeedError(null);
+    let cancelled = false;
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    fetchReleaseFeed(repoUrl, ctrl?.signal)
+      .then((items) => {
+        if (!cancelled) setFeed(items);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const status = typeof (e as { status?: unknown })?.status === "number"
+          ? (e as { status: number }).status
+          : 0;
+        setFeedError(status === 403 || status === 429 ? "rate-limited" : "offline");
+      });
+    return () => {
+      cancelled = true;
+      ctrl?.abort();
+    };
+  }, [repoUrl]);
+
   return (
     <div className="space-y-5 max-w-md">
       <div>
@@ -1286,6 +1355,49 @@ function AboutTab() {
         >
           <ExternalLink className="size-3.5" /> {t("release_notes")}
         </a>
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {t("whats_new")}
+        </h4>
+        {feed === null && !feedError && (
+          <p className="text-xs text-muted-foreground">{t("loading_releases")}</p>
+        )}
+        {feedError && (
+          <p className="text-xs text-muted-foreground">
+            {feedError === "rate-limited" ? t("releases_rate_limited") : t("releases_unavailable")}
+          </p>
+        )}
+        {feed !== null &&
+          feed.map((r, i) => (
+            <div key={`${r.tag || r.name || "release"}-${i}`} className="rounded-md border p-2.5 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-xs font-medium">{r.tag || r.name}</span>
+                {r.publishedAt && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date(r.publishedAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs font-medium">{r.name}</div>
+              {r.notes && (
+                <p className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-4">
+                  {r.notes}
+                </p>
+              )}
+              {r.url && (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-brand hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ExternalLink className="size-3" /> {t("view_release")}
+                </a>
+              )}
+            </div>
+          ))}
       </div>
       <Separator />
       <p className="text-[11px] text-muted-foreground">

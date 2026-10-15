@@ -45,6 +45,13 @@ import {
   LANGUAGES,
   applyLanguageDocumentDir,
 } from "@/lib/i18n";
+import {
+  isValidFontSize,
+  sanitizeContextPatch,
+  isValidThemePatch,
+  isValidRedactionRegex,
+  safeSetItem,
+} from "@/lib/settings-manifest";
 
 const SECURITY_SETTINGS_KEY = "hermos_security_settings_v1";
 
@@ -79,9 +86,26 @@ function loadSecuritySettings(): SecuritySettings {
   if (typeof window === "undefined") return { ...DEFAULT_SECURITY_SETTINGS };
   try {
     const raw = window.localStorage.getItem(SECURITY_SETTINGS_KEY);
-    if (raw) return { ...DEFAULT_SECURITY_SETTINGS, ...JSON.parse(raw) };
-  } catch {}
-  return { ...DEFAULT_SECURITY_SETTINGS };
+    if (!raw) return { ...DEFAULT_SECURITY_SETTINGS };
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ...DEFAULT_SECURITY_SETTINGS };
+    }
+    const record = parsed as Record<string, unknown>;
+    // Allowlist merge — never spread untrusted storage keys over defaults.
+    return {
+      autoScrubSecrets:
+        typeof record.autoScrubSecrets === "boolean"
+          ? record.autoScrubSecrets
+          : DEFAULT_SECURITY_SETTINGS.autoScrubSecrets,
+      customRedactionRegex:
+        typeof record.customRedactionRegex === "string"
+          ? record.customRedactionRegex
+          : DEFAULT_SECURITY_SETTINGS.customRedactionRegex,
+    };
+  } catch {
+    return { ...DEFAULT_SECURITY_SETTINGS };
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -263,7 +287,8 @@ export type RightPanelTab =
   | "browser"
   | "office"
   | "subagents"
-  | "git";
+  | "git"
+  | "problems";
 
 export interface ComposerDraft {
   text: string;
@@ -554,6 +579,10 @@ interface AppState {
   setActiveFileTab: (path: string) => void;
   /** Close every open tab. */
   closeAllFileTabs: () => void;
+  /** Workspace-relative paths with unsaved editor drafts. Set by FileEditor; read by the tab bar (dirty dot + close guard). */
+  dirtyFileTabs: string[];
+  /** Mark or unmark a tab as dirty. No-op when the state already matches. */
+  setFileTabDirty: (path: string, dirty: boolean) => void;
 
   /** Whether the editor auto-refreshes open files via file-watch SSE. */
   fileWatchEnabled: boolean;
@@ -753,6 +782,14 @@ interface AppState {
   clearOpenFolderDialogRequest: () => void;
 
   hydrate: () => Promise<void>;
+  /**
+   * Apply persisted localStorage prefs (appearance, context, security,
+   * recents) to the store. Called once from <Providers> in a layout effect
+   * before paint: SSR and the first client render both use the compiled
+   * defaults above, so hydration never mismatches, and stored values land
+   * before anything paints (no flash). Idempotent — safe to re-run.
+   */
+  hydrateAppearance: () => void;
   refreshAuth: () => Promise<void>;
   refreshConversations: () => Promise<void>;
   refreshMessages: (conversationId: string) => Promise<void>;
@@ -893,7 +930,7 @@ interface AppState {
   testProviderKey: (provider: ProviderId) => Promise<{ ok: boolean; latencyMs?: number; error?: string }>;
 
   /* Terminal */
-  runTerminal: (req: TerminalRequest) => Promise<TerminalResponse | null>;
+  runTerminal: (req: TerminalRequest, opts?: { signal?: AbortSignal }) => Promise<TerminalResponse | null>;
 
   /* Hydration of selected provider/model defaults from active conversation */
   syncSelectionFromActive: () => void;
@@ -936,6 +973,13 @@ function resolveToolCallTarget(
 }
 /** Cap streamed thinking/text segments to prevent unbounded buffering. */
 const MAX_SEGMENT_CHARS = 500_000;
+const TRUNC_PREFIX = "...[truncated]\n";
+
+let segIdCounter = 0;
+function nextSegId(): string {
+  segIdCounter += 1;
+  return `seg-${Date.now().toString(36)}-${segIdCounter.toString(36)}`;
+}
 
 /* localStorage preference persistence helpers. */
 
@@ -1144,26 +1188,30 @@ export const useAppStore = create<AppState>((set, get) => ({
   openFilesByProject: {},
   activeFileTab: null,
   activeFileTabByProject: {},
+  dirtyFileTabs: [],
 
   /* File watch — enabled by default; the editor opens an EventSource on
      /api/workspace/watch while a file is open. The user can toggle this
      from the editor header (Eye / EyeOff button). */
-  fileWatchEnabled: loadFileWatchEnabled(),
+  fileWatchEnabled: true,
   fileWatchConnected: false,
 
-  /* Appearance — persisted to localStorage */
-  density: loadDensity(),
-  fontSize: loadFontSize(),
-  conversationWidth: loadConversationWidth(),
-  lightThemeConfig: loadLightThemeConfig(),
-  darkThemeConfig: loadDarkThemeConfig(),
-  language: loadLanguage(),
+  /* Appearance — compiled defaults here so SSR and the first client render
+     agree (no hydration mismatch). Stored values are applied by
+     hydrateAppearance() in a layout effect before paint. */
+  density: "comfortable",
+  fontSize: DEFAULT_FONT_SIZE,
+  conversationWidth: "default",
+  lightThemeConfig: { ...DEFAULT_LIGHT_THEME },
+  darkThemeConfig: { ...DEFAULT_DARK_THEME },
+  language: DEFAULT_LANGUAGE,
 
-  /* Context governance — persisted to localStorage */
-  contextConfig: loadContextConfig(),
+  /* Context governance — default; stored values applied by hydrateAppearance(). */
+  contextConfig: { ...DEFAULT_CONTEXT_CONFIG },
 
-  /* Security, Privacy & Secret Redaction settings — persisted to localStorage */
-  securitySettings: loadSecuritySettings(),
+  /* Security, Privacy & Secret Redaction settings — defaults; stored values
+     applied by hydrateAppearance(). */
+  securitySettings: { ...DEFAULT_SECURITY_SETTINGS },
 
   /* Split editor — closed by default. The user opens it via the
      "Split editor" button in the editor header or the ⌘\ shortcut. */
@@ -1176,10 +1224,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   contextTrimmed: null,
   preTurnCheckpointId: null,
 
-  /* Recent commands (command palette) — loaded from localStorage. Empty
-     on first load (no entries yet). The palette pushes a command id onto
-     this list whenever the user runs a command. */
-  recentCommands: loadRecentCommands(),
+  /* Recent commands (command palette) — empty until hydrateAppearance()
+     restores them. The palette pushes a command id onto this list whenever
+     the user runs a command. */
+  recentCommands: [],
 
   /* Checkpoints */
   checkpoints: [],
@@ -1217,6 +1265,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   /* Open-folder dialog request — false until the ProjectSelector
      sets it. The WorkspacePanel consumes it on mount. */
   openFolderDialogRequested: false,
+
+  hydrateAppearance: () => {
+    if (typeof window === "undefined") return;
+    const language = loadLanguage();
+    set({
+      fileWatchEnabled: loadFileWatchEnabled(),
+      density: loadDensity(),
+      fontSize: loadFontSize(),
+      conversationWidth: loadConversationWidth(),
+      lightThemeConfig: loadLightThemeConfig(),
+      darkThemeConfig: loadDarkThemeConfig(),
+      language,
+      contextConfig: loadContextConfig(),
+      securitySettings: loadSecuritySettings(),
+      recentCommands: loadRecentCommands(),
+    });
+    applyLanguageDocumentDir(language);
+  },
 
   hydrate: async () => {
     const savedLang = loadLanguage();
@@ -2350,10 +2416,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
       const idx = msgs.findIndex((m) => m.id === messageId);
       if (idx === -1) return s;
-      let nextContent = msgs[idx].content + delta;
-      if (nextContent.length > MAX_SEGMENT_CHARS) {
-        nextContent = "...[truncated]\n" + nextContent.slice(-MAX_SEGMENT_CHARS);
-      }
+      let nextContent = (msgs[idx].content ?? "") + delta;
+      if (nextContent.length > MAX_SEGMENT_CHARS)
+        nextContent = TRUNC_PREFIX + nextContent.slice(-MAX_SEGMENT_CHARS);
       const updatedMsg = { ...msgs[idx], content: nextContent };
       const updated = msgs.slice();
       updated[idx] = updatedMsg;
@@ -2575,11 +2640,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         const calls = (m.liveToolCalls ?? []).map((t) => {
           if (t.id !== toolCallId) return t;
           const next = (t.liveOutput ?? "") + text;
-          // Incremental cap: drop oldest content beyond threshold to prevent
-          // unbounded buffering from long dev-server runs.
-          const capped = next.length > MAX_LIVE_OUTPUT_CHARS
-            ? "...[truncated]\n" + next.slice(-MAX_LIVE_OUTPUT_CHARS)
-            : next;
+          const capped =
+            next.length > MAX_LIVE_OUTPUT_CHARS
+              ? TRUNC_PREFIX + next.slice(-MAX_LIVE_OUTPUT_CHARS)
+              : next;
           return { ...t, liveOutput: capped };
         });
         const finalCalls = !running
@@ -2611,15 +2675,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tail = segments[segments.length - 1];
       if (tail && tail.kind === "text") {
         let next = tail.content + delta;
-        if (next.length > MAX_SEGMENT_CHARS) next = "...[truncated]\n" + next.slice(-MAX_SEGMENT_CHARS);
+        if (next.length > MAX_SEGMENT_CHARS) next = TRUNC_PREFIX + next.slice(-MAX_SEGMENT_CHARS);
         segments[segments.length - 1] = { kind: "text", id: tail.id, content: next };
       } else {
         let content = delta;
         if (content.length > MAX_SEGMENT_CHARS) content = content.slice(-MAX_SEGMENT_CHARS);
-        segments.push({ kind: "text", id: `seg-${Math.random().toString(36).slice(2, 10)}`, content });
+        segments.push({ kind: "text", id: nextSegId(), content });
       }
       let nextContent = (msg.content ?? "") + delta;
-      if (nextContent.length > MAX_SEGMENT_CHARS) nextContent = "...[truncated]\n" + nextContent.slice(-MAX_SEGMENT_CHARS);
+      if (nextContent.length > MAX_SEGMENT_CHARS)
+        nextContent = TRUNC_PREFIX + nextContent.slice(-MAX_SEGMENT_CHARS);
       const updated = msgs.map((m) =>
         m.id === messageId ? { ...m, segments, content: nextContent, streaming: true } : m,
       );
@@ -2641,15 +2706,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tail = segments[segments.length - 1];
       if (tail && tail.kind === "thinking") {
         let next = tail.content + delta;
-        if (next.length > MAX_SEGMENT_CHARS) next = "...[truncated]\n" + next.slice(-MAX_SEGMENT_CHARS);
+        if (next.length > MAX_SEGMENT_CHARS) next = TRUNC_PREFIX + next.slice(-MAX_SEGMENT_CHARS);
         segments[segments.length - 1] = { kind: "thinking", id: tail.id, content: next };
       } else {
         let content = delta;
         if (content.length > MAX_SEGMENT_CHARS) content = content.slice(-MAX_SEGMENT_CHARS);
-        segments.push({ kind: "thinking", id: `seg-${Math.random().toString(36).slice(2, 10)}`, content });
+        segments.push({ kind: "thinking", id: nextSegId(), content });
       }
       let nextThinking = (msg.thinking ?? "") + delta;
-      if (nextThinking.length > MAX_SEGMENT_CHARS) nextThinking = "...[truncated]\n" + nextThinking.slice(-MAX_SEGMENT_CHARS);
+      if (nextThinking.length > MAX_SEGMENT_CHARS)
+        nextThinking = TRUNC_PREFIX + nextThinking.slice(-MAX_SEGMENT_CHARS);
       const updated = msgs.map((m) => (m.id === messageId ? { ...m, segments, thinking: nextThinking } : m));
       const patch: Partial<AppState> = {
         messagesByConversation: { ...s.messagesByConversation, [convId]: updated },
@@ -2672,7 +2738,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       segments.push({
         kind: "tool_call",
-        id: `seg-${Math.random().toString(36).slice(2, 10)}`,
+        id: nextSegId(),
         toolCallId,
       });
       const updated = msgs.map((m) => (m.id === messageId ? { ...m, segments } : m));
@@ -2743,11 +2809,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
       const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
+      const now = Date.now();
       const updated = msgs.map((m) =>
         m.id === messageId
           ? {
               ...m,
               streaming: false,
+              // Client-measured run time so the turn header can show
+              // "Worked for Xs" immediately. Only fills when absent — the
+              // server-measured value arriving via refresh wins later.
+              latencyMs:
+                (m.latencyMs ?? 0) > 0
+                  ? m.latencyMs
+                  : Math.max(0, now - (Date.parse(m.createdAt) || now)),
               toolCalls: (m.liveToolCalls ?? []).map((t) => ({
                 id: t.id,
                 name: t.name,
@@ -2976,6 +3050,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         return s.activeFileTab === path ? { activeFileTab: null } : s;
       }
       const next = s.openFiles.filter((p) => p !== path);
+      const dirtyFileTabs = s.dirtyFileTabs.filter((p) => p !== path);
       // Focus adjacent tab when active tab is closed
       let nextActive = s.activeFileTab;
       if (s.activeFileTab === path) {
@@ -2992,12 +3067,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         return {
           openFiles: next,
           activeFileTab: nextActive,
+          dirtyFileTabs,
           splitEditorOpen: false,
           splitEditorFile: null,
           splitEditorActive: "left",
         };
       }
-      return { openFiles: next, activeFileTab: nextActive };
+      return { openFiles: next, activeFileTab: nextActive, dirtyFileTabs };
     }),
 
   setActiveFileTab: (path) =>
@@ -3015,6 +3091,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       splitEditorOpen: false,
       splitEditorFile: null,
       splitEditorActive: "left",
+      dirtyFileTabs: [],
+    }),
+
+  setFileTabDirty: (path, dirty) =>
+    set((s) => {
+      const has = s.dirtyFileTabs.includes(path);
+      if (dirty && !has) return { dirtyFileTabs: [...s.dirtyFileTabs, path] };
+      if (!dirty && has) return { dirtyFileTabs: s.dirtyFileTabs.filter((p) => p !== path) };
+      return s;
     }),
 
   setFileWatchEnabled: (v) => {
@@ -3049,11 +3134,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ density: d });
   },
   setFontSize: (s) => {
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(FONT_SIZE_KEY, String(s));
-      }
-    } catch { /* ignore */ }
+    if (!isValidFontSize(s)) {
+      console.warn(`[settings] refusing out-of-range fontSize: ${JSON.stringify(s)}`);
+      return;
+    }
+    safeSetItem(FONT_SIZE_KEY, String(s));
     set({ fontSize: s });
   },
   setLanguage: (lang) => {
@@ -3074,21 +3159,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ conversationWidth: w });
   },
   setLightThemeConfig: (cfg) => {
+    if (!isValidThemePatch(cfg as Record<string, unknown>)) {
+      console.warn("[settings] refusing theme patch with invalid hex");
+      return;
+    }
     const next = { ...get().lightThemeConfig, ...cfg };
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(LIGHT_THEME_KEY, JSON.stringify(next));
-      }
-    } catch { /* ignore */ }
+    safeSetItem(LIGHT_THEME_KEY, JSON.stringify(next));
     set({ lightThemeConfig: next });
   },
   setDarkThemeConfig: (cfg) => {
+    if (!isValidThemePatch(cfg as Record<string, unknown>)) {
+      console.warn("[settings] refusing theme patch with invalid hex");
+      return;
+    }
     const next = { ...get().darkThemeConfig, ...cfg };
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(DARK_THEME_KEY, JSON.stringify(next));
-      }
-    } catch { /* ignore */ }
+    safeSetItem(DARK_THEME_KEY, JSON.stringify(next));
     set({ darkThemeConfig: next });
   },
   resetThemeConfig: (mode) => {
@@ -3109,15 +3194,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   setContextConfig: (cfg) => {
-    const next = { ...get().contextConfig, ...cfg };
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(CONTEXT_CONFIG_KEY, JSON.stringify(next));
-      }
-    } catch { /* ignore */ }
+    // Unknown keys are stripped (forward-compat); out-of-range known keys
+    // reject the whole patch so misconfigurations stay visible.
+    const clean = sanitizeContextPatch(cfg);
+    if (!clean) {
+      console.warn("[settings] refusing out-of-range contextConfig patch");
+      return;
+    }
+    const next = { ...get().contextConfig, ...clean };
+    safeSetItem(CONTEXT_CONFIG_KEY, JSON.stringify(next));
     set({ contextConfig: next });
   },
   setSecuritySettings: (cfg) => {
+    // Validate regex before optimistic apply — invalid patterns never touch
+    // state (caller shows inline error instead of a silent revert).
+    if (cfg.customRedactionRegex !== undefined && !isValidRedactionRegex(cfg.customRedactionRegex)) {
+      console.warn("[settings] refusing invalid customRedactionRegex");
+      return;
+    }
     securitySettingsSeq += 1;
     const mySeq = securitySettingsSeq;
     const next = { ...get().securitySettings, ...cfg };
@@ -4184,11 +4278,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  runTerminal: async (req) => {
+  runTerminal: async (req, opts?: { signal?: AbortSignal }) => {
     try {
-      // Execute terminal command with 10-minute timeout
+      // Execute terminal command with 10-minute timeout. Caller may abort
+      // via AbortSignal (Stop button) — abort surfaces as ApiRequestError.
       const res = await apiPost<TerminalResponse>("/api/terminal/run", req, {
         timeoutMs: 10 * 60_000,
+        signal: opts?.signal,
       });
       return res;
     } catch (e) {
@@ -4204,14 +4300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 }));
 
-function safeParseArgs(raw: string): Record<string, unknown> | undefined {
-  if (!raw) return undefined;
-  try {
-    return parsePartialJson(raw);
-  } catch {
-    return undefined;
-  }
-}
+import { safeParsePartial as safeParseArgs } from "@/lib/safe-json";
 
 export { DEFAULT_SYSTEM_PROMPT };
 

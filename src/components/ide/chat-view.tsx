@@ -2,12 +2,11 @@
 
 import * as React from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, Zap, Clock, Undo2, GitBranch, Copy, Check, Bot, ArrowRight } from "lucide-react";
+import { Undo2, GitBranch, Copy, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageRenderer, cleanUserMessageContent } from "@/components/ide/message-renderer";
 import { Composer } from "@/components/ide/composer";
 import { EmptyState } from "@/components/ide/empty-state";
-import { ProviderLogo } from "@/components/brand/provider-logo";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { apiPost, apiDelete, ApiRequestError } from "@/lib/api-client";
@@ -51,13 +50,76 @@ export function ChatView() {
 
   const saveScrollPosition = useAppStore((s) => s.saveScrollPosition);
 
+  // Message navigator rail (ChatGPT-style): one dot per user message on the
+  // chat's edge; hover previews the message, click jumps to it. Display-only
+  // sampling past MAX_DOTS — no data is dropped, the list itself is intact.
+  const MAX_NAV_DOTS = 40;
+  const userDots = React.useMemo(() => {
+    const dots: Array<{ id: string; index: number; preview: string }> = [];
+    messages.forEach((m, index) => {
+      if (m.role !== "user") return;
+      const raw = (m.content ?? "").trim();
+      if (
+        SUBAGENT_REPORT_RE.test(raw) ||
+        raw.startsWith("[Subagent results]") ||
+        raw.startsWith("[Subagent failed]")
+      ) {
+        return;
+      }
+      const oneLine = cleanUserMessageContent(m.content).trim().replace(/\s+/g, " ");
+      dots.push({
+        id: m.id,
+        index,
+        preview: oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine,
+      });
+    });
+    if (dots.length <= MAX_NAV_DOTS) return dots;
+    const sampled: typeof dots = [];
+    const step = dots.length / MAX_NAV_DOTS;
+    for (let i = 0; i < MAX_NAV_DOTS; i++) sampled.push(dots[Math.floor(i * step)]);
+    return sampled;
+  }, [messages]);
+
+  const [railScrollable, setRailScrollable] = React.useState(false);
+  const measureRailScrollable = React.useCallback(() => {
+    const el = scrollRef.current;
+    setRailScrollable((prev) => {
+      const next = el ? el.scrollHeight > el.clientHeight + 80 : false;
+      return prev === next ? prev : next;
+    });
+  }, []);
+  React.useEffect(() => {
+    measureRailScrollable();
+  }, [messages.length, activeConversationId, measureRailScrollable]);
+  // Content streams without changing message count — observe size changes so
+  // the rail appears as soon as the chat actually overflows.
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measureRailScrollable());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureRailScrollable]);
+
+  const jumpToMessage = React.useCallback(
+    (index: number) => {
+      // Manual jump wins over auto-follow so the view stays where it lands.
+      stickRef.current = false;
+      virtualizer.scrollToIndex(index, { align: "start" });
+    },
+    [virtualizer],
+  );
+  const showRail = userDots.length >= 2 && railScrollable;
+
   const scrollRafId = React.useRef<number | null>(null);
   const lastScrollSave = React.useRef(0);
 
   // Auto-scroll when messages change (if user is at bottom), throttled via
   // requestAnimationFrame to avoid layout thrashing during high-frequency
-  // SSE streaming updates.
+  // SSE streaming updates. Also re-measures rail overflow here (identity
+  // changes every flush, unlike messages.length which is stable mid-answer).
   React.useEffect(() => {
+    measureRailScrollable();
     if (!stickRef.current) return;
     if (scrollRafId.current !== null) return;
 
@@ -74,7 +136,7 @@ export function ChatView() {
         scrollRafId.current = null;
       }
     };
-  }, [messages, virtualizer]);
+  }, [messages, virtualizer, measureRailScrollable]);
 
   // Restore the saved scroll offset once per conversation switch. Must NOT
   // re-run on every message append: `onScroll` persists the offset as the
@@ -113,17 +175,21 @@ export function ChatView() {
     }
   }, [activeConversationId, virtualizer]);
 
-  const onScroll = () => {
+  const onScroll = React.useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     stickRef.current = nearBottom;
+    setRailScrollable((prev) => {
+      const next = el.scrollHeight > el.clientHeight + 80;
+      return prev === next ? prev : next;
+    });
     const now = Date.now();
     if (activeConversationId && now - lastScrollSave.current > 100) {
       lastScrollSave.current = now;
       saveScrollPosition(activeConversationId, el.scrollTop);
     }
-  };
+  }, [activeConversationId, saveScrollPosition]);
 
   // Capture the latest stream() so the wake listener below always launches
   // the autoWake run with current provider/model/mode without re-subscribing.
@@ -553,36 +619,60 @@ export function ChatView() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <RunningSessionBanner />
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 min-h-0 overflow-y-auto [overflow-anchor:auto]"
-      >
-        {messages.length === 0 ? (
-          <EmptyState onPick={(p) => setComposerDraft(p)} />
-        ) : (
-          <div
-            className="relative w-full"
-            style={{ height: virtualizer.getTotalSize() }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const m = messages[virtualRow.index];
-              if (!m) return null;
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  className="absolute top-0 start-0 w-full"
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
-                >
-                  <div className={cn("mx-auto px-4 py-1.5", conversationWidthClass(conversationWidth))}>
-                    <MemoizedMessageRow message={m} index={virtualRow.index} />
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="h-full min-h-0 overflow-y-auto [overflow-anchor:auto]"
+        >
+          {messages.length === 0 ? (
+            <EmptyState onPick={(p) => setComposerDraft(p)} />
+          ) : (
+            <div
+              className="relative w-full"
+              style={{ height: virtualizer.getTotalSize() }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const m = messages[virtualRow.index];
+                if (!m) return null;
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    className="absolute top-0 start-0 w-full"
+                    style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  >
+                    <div className={cn("mx-auto px-4 py-1.5", conversationWidthClass(conversationWidth))}>
+                      <MemoizedMessageRow message={m} index={virtualRow.index} />
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {showRail && (
+          <div className="pointer-events-none absolute bottom-4 right-1.5 top-16 z-10 flex w-5 flex-col items-center">
+            <div aria-hidden className="absolute bottom-1 top-1 w-px bg-border/70" />
+            <div className="flex h-full flex-col items-center justify-evenly">
+              {userDots.map((d) => (
+                <div key={d.id} className="group pointer-events-auto relative flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => jumpToMessage(d.index)}
+                    aria-label={d.preview || t("jump_to_message")}
+                    title={d.preview || t("jump_to_message")}
+                    className="flex size-5 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="size-2 rounded-full bg-muted-foreground/70 ring-2 ring-background transition-all group-hover:scale-125 group-hover:bg-brand group-focus-visible:bg-brand" />
+                  </button>
+                  <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden max-w-[240px] -translate-y-1/2 truncate whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md group-hover:block">
+                    {d.preview || t("jump_to_message")}
+                  </span>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -625,6 +715,8 @@ function MessageRow({ message }: { message: UIMessage; index: number }) {
       message.content.startsWith("[Subagent failed]"));
   const isUser = message.role === "user" && !isSubagentResult;
   const isAssistant = message.role === "assistant";
+  const [assistantCopied, setAssistantCopied] = React.useState(false);
+  const { t: tRow } = useTranslation();
 
   if (isSubagentResult) {
     return (
@@ -639,41 +731,30 @@ function MessageRow({ message }: { message: UIMessage; index: number }) {
   }
 
   return (
-    <div className="scroll-mt-24" data-message-id={message.id}>
+    <div className="scroll-mt-24 group" data-message-id={message.id}>
       <div>
         <MessageRenderer message={message} />
-        {isAssistant && !message.streaming && Boolean((message.tokensIn ?? 0) > 0 || (message.tokensOut ?? 0) > 0 || (message.latencyMs ?? 0) > 0) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground/80 font-mono">
-            {message.provider && (
-              <span className="inline-flex items-center gap-1 rounded-full border bg-muted/30 px-2 py-0.5 font-medium text-foreground/80">
-                <ProviderLogo providerId={message.provider} modelId={message.model} size={12} />
-                <span>
-                  {message.provider === "openrouter"
-                    ? "OpenRouter"
-                    : message.provider === "nvidia"
-                      ? "NVIDIA NIM"
-                      : message.provider === "zen"
-                        ? "OpenCode Zen"
-                        : message.provider.toUpperCase()}
-                </span>
-              </span>
-            )}
-            {Boolean((message.tokensIn ?? 0) > 0 || (message.tokensOut ?? 0) > 0) && (
-              <span className="inline-flex items-center gap-1 rounded-full border bg-muted/20 px-2 py-0.5">
-                <Zap className="size-3 text-brand shrink-0" />
-                <span>
-                  {(message.tokensIn ?? 0).toLocaleString()} in · {(message.tokensOut ?? 0).toLocaleString()} out
-                </span>
-              </span>
-            )}
-            {Boolean((message.latencyMs ?? 0) > 0) && (
-              <span className="inline-flex items-center gap-1 rounded-full border bg-muted/20 px-2 py-0.5">
-                <Clock className="size-3 text-muted-foreground shrink-0" />
-                <span>
-                  {message.latencyMs! >= 1000 ? `${(message.latencyMs! / 1000).toFixed(1)}s` : `${message.latencyMs}ms`}
-                </span>
-              </span>
-            )}
+        {isAssistant && !message.streaming && (message.content ?? "").trim().length > 0 && (
+          <div className="mt-1 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 transition-opacity pointer-coarse:opacity-100">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 gap-1 text-muted-foreground/75 hover:text-foreground text-[10px]"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(message.content);
+                  setAssistantCopied(true);
+                  setTimeout(() => setAssistantCopied(false), 2000);
+                } catch {
+                  /* clipboard unavailable */
+                }
+              }}
+              aria-label={tRow("copy")}
+              type="button"
+            >
+              {assistantCopied ? <Check className="size-3 text-brand" /> : <Copy className="size-3" />}
+              <span>{assistantCopied ? tRow("copied") : tRow("copy")}</span>
+            </Button>
           </div>
         )}
       </div>
@@ -685,8 +766,12 @@ function MessageRow({ message }: { message: UIMessage; index: number }) {
 function UserMessageRow({ message }: { message: UIMessage }) {
   const [busy, setBusy] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
-  const isStreaming = useAppStore((s) => s.isStreaming);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
+  // Per-conversation streaming flag (primitive boolean) — a global `isStreaming`
+  // subscription would re-render every user bubble on any conversation's flush.
+  const isStreaming = useAppStore(
+    (s) => s.streamingStateByConversation[activeConversationId ?? ""]?.isStreaming ?? false,
+  );
   const setComposerDraft = useAppStore((s) => s.setComposerDraft);
   const removeMessageAndAfter = useAppStore((s) => s.removeMessageAndAfter);
   const closeAllFileTabs = useAppStore((s) => s.closeAllFileTabs);
@@ -878,22 +963,22 @@ function UserMessageRow({ message }: { message: UIMessage }) {
         <MessageRenderer message={message} />
       </div>
       {!message.streaming && (
-        <div className="mt-1 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="mt-1 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 transition-opacity pointer-coarse:opacity-100">
           <Button
             variant="ghost"
             size="sm"
-            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/75 hover:text-foreground text-[10px]"
             onClick={copyPrompt}
             aria-label={t("copy")}
             type="button"
           >
-            {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+            {copied ? <Check className="size-3 text-brand" /> : <Copy className="size-3" />}
             <span>{copied ? t("copied") : t("copy")}</span>
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/75 hover:text-foreground text-[10px]"
             onClick={undo}
             disabled={isStreaming || busy}
             aria-label={t("undo")}
@@ -905,7 +990,7 @@ function UserMessageRow({ message }: { message: UIMessage }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-5 px-1.5 gap-1 text-muted-foreground/50 hover:text-foreground text-[10px]"
+            className="h-5 px-1.5 gap-1 text-muted-foreground/75 hover:text-foreground text-[10px]"
             onClick={branch}
             disabled={isStreaming || busy}
             aria-label={t("branch")}
@@ -975,9 +1060,9 @@ function RateLimitRetryBanner({ onStop }: { onStop: (conversationId: string) => 
   const remainingSec = Math.max(0, Math.ceil((rateLimitRetry.retryAfterMs - elapsedMs) / 1000));
 
   return (
-    <div className="mx-4 my-2 p-3 border border-amber-500/30 rounded-lg bg-amber-500/5 text-xs text-amber-600 dark:text-amber-400 flex items-center justify-between animate-pulse">
+    <div className="mx-4 my-2 p-3 border border-amber-500/30 rounded-lg bg-amber-500/5 text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <AlertCircle className="size-4 shrink-0 animate-spin" />
+        <Loader2 className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />
         <span>
           {t("rate_limit_reached")}.{" "}
           {t("retrying_in", {
@@ -990,66 +1075,10 @@ function RateLimitRetryBanner({ onStop }: { onStop: (conversationId: string) => 
       <Button 
         size="sm" 
         variant="outline" 
-        className="h-7 text-[10px] px-2 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 font-medium" 
+        className="h-7 text-[10px] px-2 border-amber-500/30 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 font-medium" 
         onClick={() => onStop(activeConversationId)}
       >
         {t("cancel_run")}
-      </Button>
-    </div>
-  );
-}
-
-function RunningSessionBanner() {
-  const { t } = useTranslation();
-  const activeConversationId = useAppStore((s) => s.activeConversationId);
-  const conversations = useAppStore((s) => s.conversations);
-  const pendingConversations = useAppStore((s) => s.pendingConversations);
-  const streamingByConv = useAppStore((s) => s.streamingStateByConversation);
-  const permissionPrompts = useAppStore((s) => s.permissionPromptsByConversation);
-  const questionPrompts = useAppStore((s) => s.questionPromptsByConversation);
-  const selectConversation = useAppStore((s) => s.selectConversation);
-
-  // Find a running conversation that is NOT the currently active one
-  const runningEntry = Object.entries(streamingByConv).find(
-    ([id, st]) => id !== activeConversationId && st?.isStreaming,
-  );
-
-  if (!runningEntry) return null;
-
-  const [runningId] = runningEntry;
-  const session =
-    conversations.find((c) => c.id === runningId) ||
-    pendingConversations.find((p) => p.id === runningId);
-  const sessionTitle = session?.title || t("conversation");
-
-  const hasPendingInput = Boolean(
-    permissionPrompts[runningId] || questionPrompts[runningId],
-  );
-
-  return (
-    <div className="mx-4 mt-2 p-2.5 rounded-xl border border-brand/30 bg-brand/5 dark:bg-brand/10 text-xs flex items-center justify-between gap-3 shadow-xs transition-all animate-in fade-in slide-in-from-top-2 duration-200">
-      <div className="flex items-center gap-2.5 min-w-0">
-        {hasPendingInput ? (
-          <AlertCircle className="size-4 text-amber-500 shrink-0 animate-bounce" />
-        ) : (
-          <Bot className="size-4 text-brand shrink-0 animate-pulse" />
-        )}
-        <div className="min-w-0 truncate text-foreground/90">
-          <span className="font-medium">
-            {hasPendingInput
-              ? t("agent_needs_input_in_session", { title: sessionTitle })
-              : t("agent_running_in_session", { title: sessionTitle })}
-          </span>
-        </div>
-      </div>
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 text-xs px-2.5 gap-1.5 shrink-0 border-brand/40 text-brand hover:bg-brand/15 font-medium shadow-2xs"
-        onClick={() => void selectConversation(runningId)}
-      >
-        <span>{t("go_to_session")}</span>
-        <ArrowRight className="size-3 rtl:rotate-180" />
       </Button>
     </div>
   );

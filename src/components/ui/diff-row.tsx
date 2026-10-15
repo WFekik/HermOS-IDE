@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { SyntaxHighlighter, oneDark, oneLight, normalizePrismLanguage } from "@/lib/prism";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/theme/theme-provider";
 
@@ -41,7 +40,7 @@ const DiffCode = React.memo(
     }
     return (
       <SyntaxHighlighter
-        language={language}
+        language={normalizePrismLanguage(language)}
         style={dark ? oneDark : oneLight}
         PreTag="span"
         customStyle={{ margin: 0, padding: 0, background: "transparent", display: "inline" }}

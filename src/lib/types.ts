@@ -167,6 +167,12 @@ export interface ChatRequest {
   attachmentIds?: string[];
   /** Runtime environment capabilities detected on the client (PWA app vs browser). */
   capabilities?: string[];
+  /**
+   * UI language selected on the client (e.g. "ar"). Used only as the
+   * fallback for response-language detection — the message text itself
+   * decides first (see detectPromptLanguage).
+   */
+  uiLanguage?: string;
   /** Context governance overrides from user settings (retention policies). */
   contextConfig?: Partial<{
     pruneProtectTokens: number;
@@ -333,7 +339,6 @@ export interface PluginDTO {
 export interface TerminalRequest {
   command: string;
   shell: "bash" | "pwsh" | "cmd" | "zsh";
-  cwd?: string;
 }
 
 export interface TerminalResponse {

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/use-translation";
 
 /* -------------------------------------------------------------------------- *
  * Minimap
@@ -61,6 +62,7 @@ export function Minimap({
   viewport,
   className,
 }: MinimapProps) {
+  const { t } = useTranslation();
   const lines = React.useMemo(() => content.split("\n"), [content]);
   const lineCount = lines.length;
 
@@ -118,12 +120,12 @@ export function Minimap({
     <div
       ref={rootRef}
       role="slider"
-      aria-label="Minimap — click to scroll the editor"
+      aria-label={t("minimap_aria")}
       aria-orientation="vertical"
       aria-valuemin={1}
       aria-valuemax={Math.max(1, lineCount)}
       aria-valuenow={activeLine ?? undefined}
-      aria-valuetext={activeLine ? `Line ${activeLine} of ${lineCount}` : undefined}
+      aria-valuetext={activeLine ? t("minimap_position", { line: activeLine, total: lineCount }) : undefined}
       tabIndex={lineCount > 0 ? 0 : -1}
       onClick={handleClick}
       onKeyDown={(e) => {

@@ -45,6 +45,8 @@ export interface WorkspaceFile {
   startLine?: number;
   /** Last line of the returned range (1-based, inclusive). Set on range reads. */
   endLine?: number;
+  /** True when the backend detected binary content. Never editable. */
+  isBinary?: boolean;
 }
 
 export interface CommandResult extends TerminalResponse {
@@ -255,8 +257,9 @@ export async function deleteFile(path: string): Promise<DeleteResponse> {
 export async function renamePath(
   from: string,
   to: string,
+  opts?: { overwrite?: boolean },
 ): Promise<RenameResponse> {
-  return apiPost<RenameResponse>("/api/workspace/rename", { from, to });
+  return apiPost<RenameResponse>("/api/workspace/rename", { from, to, overwrite: opts?.overwrite ?? false });
 }
 
 export async function runCommand(command: string): Promise<CommandResponse> {
@@ -321,4 +324,41 @@ export function joinPath(dir: string, name: string): string {
   const n = clean(name);
   if (!d) return n;
   return `${d}/${n}`;
+}
+
+const WIN_RESERVED = new Set([
+  "con", "prn", "aux", "nul",
+  "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+  "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+]);
+
+/**
+ * Validate a single file/dir name (no separators). Returns an error message
+ * or null when valid. Explicit rejection — never silently rewrite the name.
+ */
+export function validateFileName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Name cannot be empty.";
+  if (trimmed.length > 255) return "Name is too long (max 255 characters).";
+  if (trimmed.includes("/") || trimmed.includes("\\")) return "Name cannot contain path separators.";
+  if (trimmed.includes("\u0000")) return "Name cannot contain NUL bytes.";
+  if (/[<>:\"|?*]/.test(trimmed)) return "Name cannot contain < > : \" | ? *.";
+  if (/[\x00-\x1f]/.test(trimmed)) return "Name cannot contain control characters.";
+  if (trimmed === "." || trimmed === "..") return "Name cannot be . or ..";
+  // Leading dots are legitimate (dotfiles: .gitignore, .env). Only a leading
+  // space or a trailing dot/space is rejected (trailing is illegal on Windows).
+  if (/^[ ]|[. ]$/.test(trimmed)) return "Name cannot start with a space or end with a dot or space.";
+  if (WIN_RESERVED.has(trimmed.toLowerCase().replace(/\.[^.]*$/, ""))) {
+    return "Name is reserved on Windows.";
+  }
+  return null;
+}
+
+/**
+ * True when content is the backend binary placeholder
+ * (`(binary file: N bytes — cannot be displayed as text)`). Full-format
+ * match so a legitimate text file starting with those words still edits.
+ */
+export function isBinaryPlaceholder(content: string): boolean {
+  return /^\(binary file: \d+ bytes — cannot be displayed as text\)$/.test(content);
 }

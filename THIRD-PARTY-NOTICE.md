@@ -58,3 +58,7 @@ All remaining runtime components are npm packages declared in `package.json`
 BSD, Apache-2.0, or ISC licensed; consult each package's own distribution for
 its license text. Nothing in this product's default configuration transmits
 telemetry or personal data to third parties.
+
+Each GitHub release additionally ships `sbom.json`: a direct-dependency
+manifest (npm ranges from `package.json`, cargo pins from
+`src-tauri/Cargo.lock`) plus `SHA256SUMS` for first-download verification.

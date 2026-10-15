@@ -57,7 +57,21 @@ export function stripEmojis(text: string): string {
     /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\uFFFD]+/gu,
     "",
   );
-  cleaned = cleaned.replace(/[ \t]{2,}/g, " ");
+  // Collapse runs left by emoji removal — but never inside tree-shaped
+  // lines (branch markers + indentation), where spacing IS the structure.
+  // Tree detection here is intentionally loose (a single marker suffices):
+  // worst case a prose line keeps a double space, which HTML collapses
+  // visually anyway.
+  cleaned = cleaned
+    .split("\n")
+    .map((line) => {
+      const indent = line.match(/^[ \t]*/)?.[0] ?? "";
+      const rest = line.slice(indent.length);
+      if (/[├└│┬]/.test(rest)) return line;
+      if (/(?:^|[ \t(])(?:\+|\||\\|│)(?:-{1,2}|─|—|–)[ \t]+\S/.test(rest)) return line;
+      return indent + rest.replace(/[ \t]{2,}/g, " ");
+    })
+    .join("\n");
   return cleaned.replace(/\*\*\s*\*\*/g, "").replace(/__\s*__/g, "");
 }
 

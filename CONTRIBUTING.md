@@ -55,14 +55,14 @@ npm run smoke:prod   # verify /api/health, /, /robots.txt
 Requires Rust stable.
 
 ```bash
-npm run tauri build   # → src-tauri/target/release/bundle/
+npx tauri build   # → src-tauri/target/release/bundle/
 ```
 
 `npm run build:desktop` runs `provision-node-sidecar → prisma generate → nextjs-build` before Tauri bundles the standalone server into `resources`.
 
 ### Updater Signing
 
-Releases are signed with [Tauri updater](https://tauri.app/plugin/updater/). CI reads `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` from GitHub Secrets. The public key lives in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`). Rotate via `npx tauri signer generate`.
+Releases are signed with [Tauri updater](https://tauri.app/plugin/updater/). CI reads `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` from Azure Pipelines variables (not GitHub Secrets). The public key lives in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`). Rotate via `npx tauri signer generate`. Note: `HERMOS_TAURI_UPDATER_PUBKEY` override is debug-only (`#[cfg(debug_assertions)]` in `src-tauri/src/lib.rs`).
 
 ## Runtime Data
 
@@ -70,7 +70,11 @@ Releases are signed with [Tauri updater](https://tauri.app/plugin/updater/). CI 
 - **Desktop**: `%APPDATA%\com.hermos.ide` (Windows) / OS app-data dir
 - Override with `HERMOS_APP_DATA_DIR`
 
-Default workspace: `~/.hermos/workspaces/<userId>` (browser mode); desktop opens real folders via the native dialog.
+Default workspace: `~/.hermos/workspaces/<userId>/default` (browser mode); desktop opens real folders via the native dialog.
+
+## Versioning
+
+Single source is `package.json`. Bump only via `node scripts/version.mjs bump [major|minor|patch|x.y.z]`, then verify with `node scripts/version.mjs check` (also enforced in Azure `test` job). Tags `vX.Y.Z` trigger Azure releases.
 
 ## Environment Variables
 

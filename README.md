@@ -1,5 +1,8 @@
 # HermOS IDE — Local-First AI Coding Environment
 
+[![Latest release](https://img.shields.io/github/v/release/WFekik/HermOS-IDE?label=download)](https://github.com/WFekik/HermOS-IDE/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Your code stays on your machine. Your models, your keys, your data — never leaves your device.**
 
 HermOS IDE is a desktop code editor with a built-in autonomous coding agent. It runs entirely offline on your computer: edit files, run commands, browse the web, and generate documents — all powered by your own AI provider keys. No accounts, no cloud, no telemetry.
@@ -44,7 +47,7 @@ Get the latest release for your platform:
 
 Or browse all assets on the [Releases page](https://github.com/WFekik/HermOS-IDE/releases/latest).
 
-> Free code signing provided by the [SignPath Foundation](https://signpath.org/).
+> Windows installers are currently unsigned (SmartScreen may warn) — Authenticode signing via the [SignPath Foundation](https://signpath.org/) lands with the official open-source certificate. Auto-update integrity is covered by minisign signatures today.
 
 > **Website & Docs:** https://hermos.is-a.dev/
 

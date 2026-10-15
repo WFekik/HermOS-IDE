@@ -367,7 +367,9 @@ describe("Dependabot Security & Strict Schema Verification", () => {
     expect(azureContent).toContain("npm ci");
     expect(azureContent).toContain("npm run typecheck");
     expect(azureContent).toContain("npm test");
-    expect(azureContent).toContain("cargo check --manifest-path src-tauri/Cargo.toml");
+    expect(azureContent).toContain("cargo check");
+    expect(azureContent).toContain("--manifest-path src-tauri/Cargo.toml");
+    expect(azureContent).toContain("--locked");
 
     // Validates that CD release mechanism to GitHub is configured
     expect(azureContent).toContain("scripts/release-to-github.mjs");

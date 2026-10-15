@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | ✅        |
+| 1.1.x   | ✅        |
+| 1.0.x   | ⚠️ security fixes only |
 
 ## Reporting a Vulnerability
 
@@ -19,5 +20,6 @@ Out-of-scope for the default local deployment: an attacker who already has arbit
 ## Known Limitations
 
 - Outbound requests (agent HTTP tools, Built-in Browser proxy, plugin endpoints) are guarded against SSRF and DNS-rebinding TOCTOU via an undici dispatcher with custom DNS lookup verification, validating resolved IP addresses against private/link-local policies before connection while preserving SNI, Host headers, and TLS certificate validation.
-- Desktop shell port selection probes loopback ports 3001–3999; a local process squatting the chosen port at startup is mitigated by an instance-token handshake (`HERMOS_INSTANCE_TOKEN` echoed as `X-HermOS-Instance-Token` on `/api/health`) before the webview navigates. `remote.urls` in `src-tauri/capabilities/default.json` is scoped to `http://127.0.0.1:*` only.
+- Desktop shell port selection probes loopback ports 3001–3999; a local process squatting the chosen port at startup is mitigated by an instance-token handshake (`HERMOS_INSTANCE_TOKEN` echoed as `X-HermOS-Instance-Token` on `/api/health`) before the webview navigates. `remote.urls` in `src-tauri/capabilities/default.json` is scoped to `http://127.0.0.1:3*` and `http://localhost:3*` (Tauri capability glob).
 - `HERMOS_ENABLE_COMMANDS` is opt-out (default enabled) — set `HERMOS_ENABLE_COMMANDS=false` to disable terminal/command execution.
+- Rotate `~/.hermos/.secret_key` by stopping the app, deleting the key file and `db/hermos.db` (encrypted keys become unreadable), then restarting to provision a fresh key. Back up workspaces first.

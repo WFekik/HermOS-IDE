@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { SyntaxHighlighter, oneDark, oneLight, normalizePrismLanguage } from "@/lib/prism";
 import { useTheme } from "@/components/theme/theme-provider";
 import { toast } from "sonner";
 import {
@@ -45,6 +44,7 @@ import {
   formatBytes,
   langFromPath,
   isFormattablePath,
+  isBinaryPlaceholder,
   formatFile,
   type WorkspaceFile,
 } from "@/components/workspace/types";
@@ -201,8 +201,39 @@ export function FileEditor({
 
   const dirty = mode === "edit" && file != null && draft !== file.content;
 
+  // Report dirty state to the tab bar (dirty dot + close guard). Cleared on
+  // save/cancel/unmount/path-change via the same flag.
+  const setFileTabDirty = useAppStore((s) => s.setFileTabDirty);
+  React.useEffect(() => {
+    if (!path) return;
+    setFileTabDirty(path, dirty);
+  }, [path, dirty, setFileTabDirty]);
+  React.useEffect(() => {
+    return () => {
+      if (path) setFileTabDirty(path, false);
+    };
+  }, [path, setFileTabDirty]);
+
+  // Warn on window/tab close when edits would be lost. In-app tab switches are
+  // handled by the parent (which owns the tab list); this is the last line of
+  // defense against silent data loss.
+  React.useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      // Chrome/Edge require returnValue to be set (preventDefault alone
+      // is a no-op there) — without it the prompt never shows.
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  const isBinaryFile =
+    file?.isBinary === true || isBinaryPlaceholder(file?.content ?? "");
+
   const enterEdit = () => {
-    if (!file) return;
+    if (!file || isBinaryFile) return;
     setDraft(file.content);
     setMode("edit");
   };
@@ -297,6 +328,15 @@ export function FileEditor({
     if (!formatResult || !path) return;
     setFormatApplyBusy(true);
     try {
+      // Rebase check: refuse to clobber edits that landed after the preview
+      // was taken. No silent merge — the user re-runs format on fresh content.
+      if (file && formatResult.oldContent !== undefined && file.content !== formatResult.oldContent) {
+        toast.error(t("format_stale"), {
+          description: t("format_stale_desc"),
+        });
+        setFormatResult(null);
+        return;
+      }
       await onSave(path, formatResult.newContent);
       setFormatResult(null);
       toast.success(t("file_formatted"));
@@ -398,10 +438,11 @@ export function FileEditor({
           toast.warning(t("file_was_deleted"), { description: path });
           return;
         }
-        if (evtType === "change") {
+        if (evtType === "change" || evtType === "rename") {
           // Only refetch when not in edit mode (don't clobber user edits).
           // We re-read `mode` from a ref because the closure captures the
-          // value at subscription time.
+          // value at subscription time. `rename` covers create/replace flows
+          // (atomic save = tmp write + rename) that `change` alone misses.
           if (modeRef.current !== "edit") {
             onExternalChange?.();
           }
@@ -721,7 +762,8 @@ export function FileEditor({
                 variant="ghost"
                 className="h-6 gap-1 px-2 text-[11px]"
                 onClick={enterEdit}
-                disabled={!file || loading}
+                disabled={!file || loading || isBinaryFile}
+                title={isBinaryFile ? t("binary_not_editable") : undefined}
               >
                 <Pencil className="size-3" /> {t("edit")}
               </Button>
@@ -1051,7 +1093,7 @@ const CodeView = React.memo(function CodeView({
               </pre>
             ) : (
               <SyntaxHighlighter
-                language={lang}
+                language={normalizePrismLanguage(lang)}
                 style={isDark ? oneDark : oneLight}
                 showLineNumbers={false}
                 customStyle={{

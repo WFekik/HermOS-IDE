@@ -1641,6 +1641,9 @@ export type ToolCtx = {
   /** Whether execution outside workspace is explicitly permitted. */
   userAllowedOutsideWorkspace?: boolean;
 };
+// Canonical types live in ./tool-registry (imported as `import type` there);
+// this definition is kept in sync intentionally for backward-compat imports.
+// New code should `import type { ToolCtx } from "@/lib/ai/tool-registry"`.
 
 export type ToolResult = { ok: boolean; result: unknown };
 
@@ -2786,7 +2789,8 @@ async function runToolImpl(
         return { ok: true, result: { snapshot: r.snapshot } };
       }
       case "browser_screenshot": {
-        browserVoidSchema.safeParse(args);
+        const parsed = browserVoidSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const r = await browserScreenshot(browserKey);
         if (!r.ok) return { ok: false, result: { error: r.error } };
@@ -2814,28 +2818,32 @@ async function runToolImpl(
         return { ok: true, result: { snapshot: r.snapshot } };
       }
       case "browser_extract": {
-        browserVoidSchema.safeParse(args);
+        const parsed = browserVoidSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const r = await browserExtractText(browserKey);
         if (!r.ok) return { ok: false, result: { error: r.error } };
         return { ok: true, result: { text: r.text } };
       }
       case "browser_go_back": {
-        browserVoidSchema.safeParse(args);
+        const parsed = browserVoidSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const backR = await browserGoBack(browserKey);
         if (!backR.ok) return { ok: false, result: { error: backR.error } };
         return { ok: true, result: { snapshot: backR.snapshot } };
       }
       case "browser_go_forward": {
-        browserVoidSchema.safeParse(args);
+        const parsed = browserVoidSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const fwdR = await browserGoForward(browserKey);
         if (!fwdR.ok) return { ok: false, result: { error: fwdR.error } };
         return { ok: true, result: { snapshot: fwdR.snapshot } };
       }
       case "browser_close": {
-        browserVoidSchema.safeParse(args);
+        const parsed = browserVoidSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         const browserKey = ctx?.userId || "default";
         const closeR = await browserClose(browserKey);
         if (!closeR.ok) return { ok: false, result: { error: closeR.error } };
@@ -3522,7 +3530,8 @@ async function runToolImpl(
         }
       }
       case "todo_read": {
-        todoReadSchema.safeParse(args);
+        const parsed = todoReadSchema.safeParse(args);
+        if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx || !convScope(ctx)) {
           return { ok: false, result: { error: "No conversation context (no todos to read)." } };
         }
@@ -3586,6 +3595,9 @@ async function runToolImpl(
                   isMultiSelect: parsed.data.is_multi_select,
                 },
               ];
+        if (normalizedQuestions.length === 0 || !normalizedQuestions.every((q) => q.question?.trim())) {
+          return { ok: false, result: { error: "Every question must have non-empty text." } };
+        }
 
         const toolCallId = ctx.toolCallId ?? `tc_${Date.now()}`;
         const { id: questionId, promise } = createPendingQuestion({

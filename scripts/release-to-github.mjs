@@ -6,6 +6,7 @@
 //   RELEASE_TAG   - e.g. v1.0.0 (Azure provides Build.SourceBranchName)
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const TOKEN = process.env.GITHUB_TOKEN;
 const TAG = process.env.RELEASE_TAG;
@@ -19,6 +20,14 @@ if (!TOKEN) {
 }
 if (!TAG) {
   console.error("RELEASE_TAG is required");
+  process.exit(1);
+}
+if (!/^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(TAG)) {
+  console.error(`Refusing to publish: RELEASE_TAG must look like vX.Y.Z (got ${JSON.stringify(TAG)}). Branch builds must not create releases.`);
+  process.exit(1);
+}
+if (!OWNER || !REPO) {
+  console.error(`Invalid repo ${JSON.stringify(fullRepo)} — expected OWNER/REPO.`);
   process.exit(1);
 }
 
@@ -36,11 +45,34 @@ async function ghJson(method, urlPath, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${urlPath} -> ${res.status}: ${text}`);
-  return text ? JSON.parse(text) : null;
+  if (!res.ok) throw new Error(`${method} ${urlPath} -> ${res.status}: ${text.slice(0, 500)}`);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${method} ${urlPath} -> ${res.status}: non-JSON response: ${text.slice(0, 500)}`);
+  }
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.1" || tag === "1.1.1") {
+    return `### HermOS IDE ${tag} — Smarter Chat, Honest Agent & Full Arabic UX
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### ⚡ What's New in ${tag}
+- **💬 Agent Turns That Collapse**: Completed runs fold into a "Worked for 3m 52s · 9 steps" row — the final answer stays visible, scrolling stays cheap (collapsed turns unmount).
+- **🗺️ Message Navigator**: A dot rail on the chat edge jumps between your messages with hover previews.
+- **🌳 Trees That Stay Vertical**: The agent is instructed to emit fenced tree blocks; the renderer rescues smeared blobs, unwraps misplaced fences, and preserves indentation end to end.
+- **🌍 Agent Speaks Your Language**: Replies follow your prompt's language (Arabic, Russian, Chinese, Japanese, French, German, Spanish, Portuguese) with UI-language fallback — no more English-by-default.
+- **🛡️ Reliability Fixes**: Parallel runs get titled (no more "New conversation" everywhere), Stop actually kills the server process, renames validate + offer Replace, deletes close their tabs, binary files can't be clobbered.
+- **🌍 Fully Translated**: Every new string in all 9 languages (English, Spanish, French, German, Chinese, Japanese, Arabic RTL, Russian, Portuguese) — including the new Problems tab, turn headers, and navigator.
+- **🔒 Release Integrity**: Every release now ships SHA256SUMS + sbom.json alongside the minisign signatures.
+- **✅ Verified End-to-End**: typecheck clean, eslint clean, full test suite green, production build green (Azure test gate).
+
+#### 📦 Downloads & Verification
+Verify installers against SHA256SUMS. Auto-update integrity is covered by minisign signatures. Download the installer for your platform below.`;
+  }
   if (tag === "v1.1.0" || tag === "1.1.0") {
     return `### HermOS IDE ${tag} — Instant Startup, Reliable Undo & BYOK Providers
 
@@ -217,6 +249,69 @@ for (const file of files) {
     process.exit(1);
   }
   console.log(`Uploaded ${name} (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
+}
+
+/**
+ * First-download integrity: minisign .sig files cover auto-update, but a
+ * fresh download needs hash verification against a tamper-evident manifest.
+ * SHA256SUMS lists every uploaded bundle file (BSD-style `SHA256 (name) =
+ * hex`); sbom.json is a direct-dependency manifest (npm + cargo, versions
+ * pinned from lockfiles — not a full transitive SBOM, documented as such).
+ */
+async function uploadTextAsset(releaseId, existingByName, name, content, contentType) {
+  const stale = existingByName.get(name);
+  if (stale) {
+    await ghJson("DELETE", `/repos/${OWNER}/${REPO}/releases/assets/${stale}`);
+    console.log(`Removed stale asset ${name}`);
+  }
+  const url = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": contentType },
+    body: Buffer.from(content, "utf-8"),
+  });
+  if (!res.ok) throw new Error(`Failed to upload ${name}: ${res.status} ${await res.text()}`);
+  console.log(`Uploaded ${name}`);
+}
+
+{
+  // Streamed hashing: bundle installers can exceed available RAM, so hash
+  // chunk-by-chunk instead of readFileSync.
+  const lines = [];
+  for (const file of files) {
+    const name = path.basename(file);
+    if (name.startsWith(".")) continue;
+    const hash = await new Promise((resolve, reject) => {
+      const h = crypto.createHash("sha256");
+      const stream = fs.createReadStream(file);
+      stream.on("data", (chunk) => h.update(chunk));
+      stream.on("end", () => resolve(h.digest("hex")));
+      stream.on("error", reject);
+    });
+    lines.push(`SHA256 (${name}) = ${hash}`);
+  }
+  lines.sort();
+  await uploadTextAsset(release.id, existing, "SHA256SUMS", lines.join("\n") + "\n", "text/plain");
+}
+
+{
+  const sbom = { version: TAG, generatedAt: new Date().toISOString(), npm: {}, cargo: {} };
+  try {
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf-8"));
+    for (const scope of ["dependencies", "devDependencies"]) {
+      for (const [dep, ver] of Object.entries(pkg[scope] ?? {})) {
+        sbom.npm[`${scope}:${dep}`] = String(ver);
+      }
+    }
+  } catch { /* manifest is best-effort */ }
+  try {
+    const lock = fs.readFileSync("src-tauri/Cargo.lock", "utf-8");
+    for (const m of lock.matchAll(/\[\[package\]\]\r?\nname = "([^"]+)"\r?\nversion = "([^"]+)"/g)) {
+      sbom.cargo[m[1]] = m[2];
+    }
+  } catch { /* manifest is best-effort */ }
+  sbom.note = "Direct-dependency manifest (npm ranges from package.json, cargo pins from Cargo.lock). Not a full transitive CycloneDX SBOM — see THIRD-PARTY-NOTICE.md.";
+  await uploadTextAsset(release.id, existing, "sbom.json", JSON.stringify(sbom, null, 2) + "\n", "application/json");
 }
 
 /**

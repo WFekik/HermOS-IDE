@@ -2,6 +2,7 @@ import { z } from "zod";
 import { THINKING_LEVEL_INPUTS, normalizeThinkingLevel } from "@/lib/reasoning";
 import type { ThinkingLevelInput } from "@/lib/reasoning";
 import { isValidRedactionRegex } from "@/lib/security-types";
+import { SUPPORTED_LANGUAGE_CODES } from "@/lib/i18n";
 
 const PROVIDER_IDS = [
   "puter",
@@ -48,6 +49,13 @@ export const mcpTransportSchema = z.enum(MCP_TRANSPORTS).refine(
   { message: "streamable-http transport is not supported yet — use stdio or sse." }
 );
 export const shellSchema = z.enum(SHELLS);
+
+/** UI language code sent by the client — fallback only; the message text
+ * decides the response language first (see detectPromptLanguage). */
+export const uiLanguageSchema = z.string().trim().min(1).max(16).refine(
+  (val) => (SUPPORTED_LANGUAGE_CODES as readonly string[]).includes(val),
+  { message: "Invalid UI language" },
+);
 
 /**
  * Accepts canonical + legacy thinking levels and normalizes to canonical
@@ -103,6 +111,7 @@ export const chatRequestSchema = z.object({
   messageId: z.string().trim().min(1).max(64).optional(),
   maxIterations: z.number().int().min(1).max(500).optional(),
   autoWake: z.boolean().optional(),
+  uiLanguage: uiLanguageSchema.optional(),
   contextConfig:   z.object({
     pruneProtectTokens: z.number().int().min(1000).max(500000).optional(),
     compactionBuffer: z.number().int().min(1000).max(200000).optional(),
@@ -204,6 +213,17 @@ export function noNulBytes(content: string): boolean {
   return !content.includes("\u0000");
 }
 
+/**
+ * Single authoritative content-size check in UTF-8 bytes (matching
+ * writeFileWs's internal cap). A plain `.max()` counts UTF-16 code units,
+ * which disagrees with the byte cap on non-ASCII text — use this instead.
+ */
+export function byteCappedContent(maxBytes: number) {
+  return z.string().refine((s) => Buffer.byteLength(s, "utf8") <= maxBytes, {
+    message: "Content too large.",
+  });
+}
+
 export function isAllowedAttachmentType(type: string): boolean {
   const lower = (type || "").toLowerCase().trim();
   if (!lower) return false;
@@ -230,11 +250,15 @@ export const createMcpServerSchema = z.object({
   headers: z.record(z.string(), z.string().trim().max(2000)).optional(),
 });
 
-export const terminalSchema = z.object({
-  command: z.string().trim().min(1).max(1000),
-  shell: shellSchema,
-  cwd: z.string().trim().max(500).optional(),
-});
+export const terminalSchema = z
+  .object({
+    command: z.string().trim().min(1).max(1000),
+    shell: shellSchema,
+    // NOTE: no `cwd` — commands always start at the workspace root and each
+    // spawn is independent (bare `cd` is a no-op success). Strict so a stale
+    // caller sending `cwd` fails loudly instead of assuming it is honored.
+  })
+  .strict();
 
 export const createPluginSchema = z.object({
   name: SAFE_STRING(120),

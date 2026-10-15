@@ -93,6 +93,11 @@ function createWatcher(userId: string, entry: WatcherEntry): fs.FSWatcher | null
     if (!filename) return;
     const name = typeof filename === "string" ? filename : filename.toString("utf8");
     if (!name) return;
+    // Atomic-write temps (`<file>.hermos-tmp-<pid>-<ts>-<rand>`, see
+    // atomicWriteFile) fire rename storms on every save — filter by the
+    // trailing temp suffix so a legitimate `my.hermos-tmp-notes.txt` still
+    // watches. The final rename to the real path still emits.
+    if (/\.hermos-tmp-\d+-\d+-[a-z0-9]+$/.test(name)) return;
 
     const abs = path.join(entry.rootDir, name);
     const rel = toRel(entry.rootDir, abs);

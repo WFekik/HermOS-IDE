@@ -215,21 +215,18 @@ describe("Empirical Stress-Test: formatZodError & Tool Zod Validation", () => {
     expect((resTodoClear.result as { error: string }).error).toBe("No conversation context.");
   });
 
-  it("empirically verifies tools where safeParse result is IGNORED (validation bypass flaw)", async () => {
-    // Spy on browser functions to verify if they get called despite invalid args
+  it("empirically verifies tools where safeParse result is ENFORCED (validation fixed)", async () => {
+    // Spy on browser functions to verify they are NOT called with invalid args
     const spyScreenshot = vi.spyOn(browserModule, "browserScreenshot").mockResolvedValue({
       ok: false,
       error: "No active browser session. Open a URL first.",
     });
 
-    // Pass invalid primitive (123) to browser_screenshot
+    // Pass invalid primitive (123) to browser_screenshot — must fail validation
+    // without executing the browser (fixed: safeParse result is enforced).
     const resScreenshot = await runTool("browser_screenshot", 123);
-    // Notice: safeParse(123) returns failure, BUT it is ignored!
-    // So instead of returning { ok: false, result: { error: "Invalid arguments: ..." } },
-    // it executes browserScreenshot() and returns browser error!
-    expect(spyScreenshot).toHaveBeenCalled();
-    expect((resScreenshot.result as { error: string }).error).toBe("No active browser session. Open a URL first.");
-    expect((resScreenshot.result as { error: string }).error).not.toMatch(/^Invalid arguments:/);
+    expect(spyScreenshot).not.toHaveBeenCalled();
+    expect((resScreenshot.result as { error: string }).error).toMatch(/^Invalid arguments:/);
 
     // Test browser_extract with invalid primitive
     const spyExtract = vi.spyOn(browserModule, "browserExtractText").mockResolvedValue({
@@ -237,8 +234,8 @@ describe("Empirical Stress-Test: formatZodError & Tool Zod Validation", () => {
       error: "No active browser session.",
     });
     const resExtract = await runTool("browser_extract", "invalid_string_args");
-    expect(spyExtract).toHaveBeenCalled();
-    expect((resExtract.result as { error: string }).error).not.toMatch(/^Invalid arguments:/);
+    expect(spyExtract).not.toHaveBeenCalled();
+    expect((resExtract.result as { error: string }).error).toMatch(/^Invalid arguments:/);
 
     // Test browser_go_back with invalid primitive
     const spyBack = vi.spyOn(browserModule, "browserGoBack").mockResolvedValue({
@@ -246,8 +243,8 @@ describe("Empirical Stress-Test: formatZodError & Tool Zod Validation", () => {
       error: "No active browser session.",
     });
     const resBack = await runTool("browser_go_back", 9999);
-    expect(spyBack).toHaveBeenCalled();
-    expect((resBack.result as { error: string }).error).not.toMatch(/^Invalid arguments:/);
+    expect(spyBack).not.toHaveBeenCalled();
+    expect((resBack.result as { error: string }).error).toMatch(/^Invalid arguments:/);
 
     // Test browser_go_forward with invalid primitive
     const spyForward = vi.spyOn(browserModule, "browserGoForward").mockResolvedValue({
@@ -255,15 +252,13 @@ describe("Empirical Stress-Test: formatZodError & Tool Zod Validation", () => {
       error: "No active browser session.",
     });
     const resForward = await runTool("browser_go_forward", false);
-    expect(spyForward).toHaveBeenCalled();
-    expect((resForward.result as { error: string }).error).not.toMatch(/^Invalid arguments:/);
+    expect(spyForward).not.toHaveBeenCalled();
+    expect((resForward.result as { error: string }).error).toMatch(/^Invalid arguments:/);
 
-    // Test todo_read with invalid primitive
+    // Test todo_read with invalid primitive — validation enforced
     const resTodoRead = await runTool("todo_read", 12345);
-    // todoReadSchema.safeParse(args) is called but ignored, proceeds to check ctx
     expect(resTodoRead.ok).toBe(false);
-    expect((resTodoRead.result as { error: string }).error).toBe("No conversation context (no todos to read).");
-    expect((resTodoRead.result as { error: string }).error).not.toMatch(/^Invalid arguments:/);
+    expect((resTodoRead.result as { error: string }).error).toMatch(/^Invalid arguments:/);
   });
 
   it("checks validation error behavior across ALL built-in tools", async () => {
@@ -292,12 +287,13 @@ describe("Empirical Stress-Test: formatZodError & Tool Zod Validation", () => {
 
     expect(withoutZodFormat).toContain("create_artifact");
     expect(withoutZodFormat).toContain("command_stop");
-    expect(withoutZodFormat).toContain("browser_screenshot");
-    expect(withoutZodFormat).toContain("browser_extract");
-    expect(withoutZodFormat).toContain("browser_go_back");
-    expect(withoutZodFormat).toContain("browser_go_forward");
-    expect(withoutZodFormat).toContain("todo_read");
     expect(withoutZodFormat).toContain("todo_clear");
+    // Fixed tools must now use formatZodError (validation enforced):
+    expect(withZodFormat).toContain("browser_screenshot");
+    expect(withZodFormat).toContain("browser_extract");
+    expect(withZodFormat).toContain("browser_go_back");
+    expect(withZodFormat).toContain("browser_go_forward");
+    expect(withZodFormat).toContain("todo_read");
   });
 });
 

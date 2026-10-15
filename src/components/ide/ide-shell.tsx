@@ -6,6 +6,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import {
   Tooltip,
   TooltipContent,
@@ -57,6 +58,7 @@ const RAIL_WIDTH_PX = 48;
 const RIGHT_PANEL_TAB_ORDER: RightPanelTab[] = RIGHT_PANEL_TABS.map((t) => t.value);
 
 export function IdeShell() {
+  const { t } = useTranslation();
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(true);
   const [rightCollapsed, setRightCollapsed] = React.useState(true);
 
@@ -115,6 +117,22 @@ export function IdeShell() {
     setRightPanelOpen(!current);
   }, [setRightPanelOpen]);
 
+  // Panel-resize fluidity: while a divider drags, iframes (browser preview,
+  // artifacts) would swallow the pointer and stall the drag — the group opts
+  // out via data-resizing (see globals.css). Double-clicking a divider
+  // restores the default 25/52/23 layout (persisted by autoSaveId).
+  const [resizingPanels, setResizingPanels] = React.useState(false);
+  const panelGroupRef = React.useRef<ImperativePanelGroupHandle | null>(null);
+  const resetPanelLayout = React.useCallback(() => {
+    try {
+      const group = panelGroupRef.current;
+      // Only reset when all three panels are mounted (nothing collapsed to a rail).
+      if (group && group.getLayout().length === 3) group.setLayout([25, 52, 23]);
+    } catch {
+      /* non-fatal UI nicety */
+    }
+  }, []);
+
   // Global keyboard shortcut handler.
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -126,6 +144,12 @@ export function IdeShell() {
         tag === "INPUT" ||
         tag === "TEXTAREA" ||
         (e.target as HTMLElement | null)?.isContentEditable;
+      // Inside a modal dialog (palette, settings, confirm) global chrome
+      // shortcuts stay dead — the dialog owns the keyboard. Everywhere else
+      // (composer, editor, plain view) they work while typing.
+      const inDialog =
+        (e.target as HTMLElement | null)?.closest?.('[role="dialog"]') != null;
+      const chromeOk = !inDialog;
 
       // ⌘? (shift+/) or ⌘/ — toggle shortcuts overlay.
       if ((e.key === "?" || e.key === "/") && !e.altKey) {
@@ -156,7 +180,7 @@ export function IdeShell() {
         void useAppStore
           .getState()
           .createConversation()
-          .then(() => toast.success("New conversation"));
+          .then(() => toast.success(t("cmd_new_conversation")));
         return;
       }
 
@@ -168,7 +192,7 @@ export function IdeShell() {
         e.preventDefault();
         const { activeConversationId } = useAppStore.getState();
         if (!activeConversationId || isPendingConversationId(activeConversationId)) {
-          toast.error("No active conversation to export");
+          toast.error(t("export_no_conversation"));
           return;
         }
         dispatchExportConversation();
@@ -181,7 +205,7 @@ export function IdeShell() {
         e.preventDefault();
         const s = useAppStore.getState();
         if (s.conversations.length === 0) {
-          toast.error("No conversations to select");
+          toast.error(t("no_conversations_select"));
           return;
         }
         s.setBulkSelectMode(true);
@@ -225,23 +249,23 @@ export function IdeShell() {
         return;
       }
 
-      // ⌘B — toggle sidebar.
-      if (e.key.toLowerCase() === "b" && !inText) {
+      // ⌘B — toggle sidebar (works while typing outside dialogs).
+      if (e.key.toLowerCase() === "b" && chromeOk) {
         e.preventDefault();
         toggleSidebar();
         return;
       }
 
-      // ⌘J — toggle right panel.
-      if (e.key.toLowerCase() === "j" && !inText) {
+      // ⌘J — toggle right panel (works while typing outside dialogs).
+      if (e.key.toLowerCase() === "j" && chromeOk) {
         e.preventDefault();
         toggleRight();
         return;
       }
 
-      // ⌘1–9 — switch right-panel tab.
+      // ⌘1–9 — switch right-panel tab (works while typing outside dialogs).
       const numMatch = /^[1-9]$/.test(e.key);
-      if (numMatch && !inText) {
+      if (numMatch && chromeOk) {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
         const tab = RIGHT_PANEL_TAB_ORDER[idx];
@@ -249,8 +273,8 @@ export function IdeShell() {
         return;
       }
 
-      // ⌘⇧P — alias for command palette.
-      if (e.shiftKey && e.key.toLowerCase() === "p" && !inText) {
+      // ⌘⇧P — alias for command palette (works while typing outside dialogs).
+      if (e.shiftKey && e.key.toLowerCase() === "p" && chromeOk) {
         e.preventDefault();
         setCommandOpen(true);
         return;
@@ -267,6 +291,7 @@ export function IdeShell() {
     setSettingsOpen,
     toggleShortcutsOpen,
     setFindInFilesOpen,
+    t,
   ]);
 
   // Subagent polling is handled by SubagentsPanel (single source of truth).
@@ -282,7 +307,12 @@ export function IdeShell() {
           rightCollapsed={rightCollapsed}
         />
         <div className="flex-1 min-h-0 relative">
-          <ResizablePanelGroup direction="horizontal" autoSaveId="hermos-layout">
+          <ResizablePanelGroup
+            direction="horizontal"
+            autoSaveId="hermos-layout"
+            ref={panelGroupRef}
+            data-resizing={resizingPanels}
+          >
               {sidebarCollapsed ? (
                 /* Collapsed-left rail — 48px wide, just the logo +
                    new-chat + settings icons. Clicking the rail
@@ -293,7 +323,7 @@ export function IdeShell() {
                     void useAppStore
                       .getState()
                       .createConversation()
-                      .then(() => toast.success("New conversation"))
+                      .then(() => toast.success(t("cmd_new_conversation")))
                   }
                   onOpenSettings={openSettings}
                 />
@@ -307,7 +337,11 @@ export function IdeShell() {
                       />
                     </ErrorBoundary>
                   </ResizablePanel>
-                  <ResizableHandle withHandle />
+                  <ResizableHandle
+                    withHandle
+                    onDragging={setResizingPanels}
+                    onDoubleClick={resetPanelLayout}
+                  />
                 </>
               )}
               <ResizablePanel id="main" order={2} defaultSize={52} minSize={15} className="min-w-0">
@@ -328,7 +362,11 @@ export function IdeShell() {
                 />
               ) : (
                 <>
-                  <ResizableHandle withHandle />
+                  <ResizableHandle
+                    withHandle
+                    onDragging={setResizingPanels}
+                    onDoubleClick={resetPanelLayout}
+                  />
                   <ResizablePanel id="right-panel" order={3} defaultSize={23} minSize={18} maxSize={85} className="min-w-0 md:min-w-[280px]">
                     <ErrorBoundary fallbackTitle="Panel encountered an error">
                       <RightPanel />

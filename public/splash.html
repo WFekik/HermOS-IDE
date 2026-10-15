@@ -16,29 +16,66 @@
     background: #0a0a0a; color: #e8e8e8;
     display: flex; align-items: center; justify-content: center;
     -webkit-app-region: drag; user-select: none;
+    border: 1px solid #262626;
   }
-  .wrap { text-align: center; padding: 32px; }
+  .wrap { text-align: center; padding: 48px 32px 32px; }
   .logo { width: 76px; height: 76px; margin: 0 auto 20px; display: block; filter: drop-shadow(0 0 22px rgba(16,185,129,.35)); }
   h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   p.sub { margin-top: 8px; font-size: 13px; color: #888; }
   .bar { width: 220px; height: 3px; margin: 24px auto 0; background: #222; border-radius: 99px; overflow: hidden; }
   .bar > div { height: 100%; width: 40%; background: #10B981; border-radius: 99px; animation: slide 1.1s ease-in-out infinite; }
-  @keyframes slide { 0% { transform: translateX(-100%);} 100% { transform: translateX(550%);} }
-  .status { margin-top: 14px; font-size: 12px; color: #666; min-height: 16px; }
+  /* Inner block is 40% of the track: -100% (fully left, hidden) to +150%
+     (fully right, hidden). The old 550% overshoot left the track empty for
+     part of every cycle, reading as stutter. */
+  @keyframes slide { 0% { transform: translateX(-100%);} 100% { transform: translateX(250%);} }
+  .status { margin-top: 14px; font-size: 12px; color: #999; min-height: 16px; }
+  /* Window chrome — visible during load, progressively wired via tauri-window-controls.js */
+  .chrome { position: fixed; top: 0; z-index: 10; display: flex; gap: 2px; padding: 4px; -webkit-app-region: no-drag; }
+  .chrome.right { right: 0; }
+  .chrome.left { left: 0; flex-direction: row; }
+  .chrome button {
+    width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; border-radius: 8px; color: #999; cursor: default;
+    -webkit-app-region: no-drag;
+  }
+  .chrome button:enabled { cursor: pointer; color: #bbb; }
+  .chrome button:enabled:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .chrome button.close:enabled:hover { background: #e81123; color: #fff; }
+  .chrome button:focus-visible { outline: 2px solid #10B981; outline-offset: -2px; }
+  .chrome button:disabled { opacity: .45; }
+  .chrome.mac button { width: 44px; }
+  .chrome.mac .dot { width: 12px; height: 12px; border-radius: 99px; display: block; }
   @media (prefers-color-scheme: light) {
-    body { background: #ffffff; color: #111; }
-    p.sub { color: #666; } .bar { background: #eee; } .status { color: #999; }
+    body { background: #ffffff; color: #111; border-color: #e5e5e5; }
+    p.sub { color: #666; } .bar { background: #eee; } .status { color: #666; }
+    .chrome button:enabled { color: #444; }
+    .chrome button:enabled:hover { background: rgba(0,0,0,.06); color: #111; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Static fallback: full track fills instead of a frozen mid-frame bar. */
+    .bar > div { animation: none; width: 100%; transform: none; }
   }
 </style>
 </head>
 <body>
+<div class="chrome right" id="chrome-win" data-tauri-drag-region="false" aria-label="Window controls">
+  <button type="button" id="btn-min" aria-label="Minimize" data-tauri-drag-region="false" disabled><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+  <button type="button" id="btn-max" aria-label="Maximize" data-tauri-drag-region="false" disabled><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <button type="button" id="btn-close" class="close" aria-label="Close" data-tauri-drag-region="false" disabled><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+</div>
+<div class="chrome left mac" id="chrome-mac" data-tauri-drag-region="false" aria-label="Window controls" hidden>
+  <button type="button" id="btn-close-mac" class="close" aria-label="Close" data-tauri-drag-region="false" disabled><span class="dot" style="background:#FF5F57"></span></button>
+  <button type="button" id="btn-min-mac" aria-label="Minimize" data-tauri-drag-region="false" disabled><span class="dot" style="background:#FEBC2E"></span></button>
+  <button type="button" id="btn-max-mac" aria-label="Maximize" data-tauri-drag-region="false" disabled><span class="dot" style="background:#28C840"></span></button>
+</div>
 <div class="wrap">
   <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0a0a0a" stroke="#262626" stroke-width="1"/><path d="M10 8v16M22 8v16M10 16h12" stroke="#10B981" stroke-width="2.5" stroke-linecap="round" fill="none"/><circle cx="16" cy="24.5" r="1.5" fill="#10B981" opacity="0.6"/></svg>
   <h1>HermOS IDE</h1>
   <p class="sub">Starting local engine…</p>
   <div class="bar"><div></div></div>
-  <div class="status" id="st">Booting backend</div>
+  <div class="status" id="st" role="status" aria-live="polite">Booting backend</div>
 </div>
+<script src="./tauri-window-controls.js" defer></script>
 <script>
 (function(){
   var msgs = ["Booting backend", "Warming workspace", "Almost there"];

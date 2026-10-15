@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Terminal as TerminalIcon, Trash2, CornerDownLeft, AlertTriangle, ChevronDown, Check } from "lucide-react";
+import { Terminal as TerminalIcon, Trash2, CornerDownLeft, AlertTriangle, ChevronDown, Check, Square } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,7 +62,15 @@ export function TerminalPanel() {
   const [history, setHistory] = React.useState<string[]>([]);
   const [histIdx, setHistIdx] = React.useState<number | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const abortRef = React.useRef<AbortController | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Abort any in-flight command on unmount so hung processes don't leak.
+  React.useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -106,9 +114,13 @@ export function TerminalPanel() {
     }
 
     setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const res = await runTerminal({ command: cmd, shell });
-      if (!res) {
+      const res = await runTerminal({ command: cmd, shell }, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        append({ kind: "warn", text: t("terminal_stopped") });
+      } else if (!res) {
         append({ kind: "err", text: t("terminal_no_response") });
       } else if (res.blocked) {
         append({
@@ -123,13 +135,25 @@ export function TerminalPanel() {
         }
       }
     } catch (e: any) {
-      append({
-        kind: "err",
-        text: t("terminal_error_prefix", { message: e?.message ?? t("terminal_failed_default") }),
-      });
+      if (controller.signal.aborted || e?.name === "AbortError") {
+        append({ kind: "warn", text: t("terminal_stopped") });
+      } else {
+        append({
+          kind: "err",
+          text: t("terminal_error_prefix", { message: e?.message ?? t("terminal_failed_default") }),
+        });
+      }
     } finally {
+      // Guarded clear: a second command may have started (and overwritten
+      // abortRef) before this one settled — only clear our own controller
+      // so Stop keeps working for the live command.
+      if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
     }
+  };
+
+  const stopRunning = () => {
+    abortRef.current?.abort();
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -212,6 +236,18 @@ export function TerminalPanel() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {busy && (
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={stopRunning}
+              aria-label={t("terminal_stop")}
+              title={t("terminal_stop")}
+            >
+              <Square className="size-3" /> {t("terminal_stop")}
+            </Button>
+          )}
           <Button
             size="icon"
             variant="ghost"
@@ -227,7 +263,7 @@ export function TerminalPanel() {
 
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-3 py-2 font-mono text-[12px] leading-relaxed"
+        className="terminal-lines flex-1 min-h-0 overflow-y-auto px-3 py-2 font-mono text-[12px] leading-relaxed"
         role="log"
       >
         {lines.map((l) => (

@@ -68,20 +68,36 @@ function bumpSemver(current, type) {
 function readVersions() {
   const versions = {};
 
-  if (fs.existsSync(PKG_PATH)) {
-    const pkg = JSON.parse(fs.readFileSync(PKG_PATH, "utf-8"));
-    versions.packageJson = pkg.version;
+  try {
+    if (fs.existsSync(PKG_PATH)) {
+      const pkg = JSON.parse(fs.readFileSync(PKG_PATH, "utf-8"));
+      versions.packageJson = pkg.version;
+    }
+  } catch (e) {
+    throw new Error(`Invalid JSON in package.json: ${e.message}`);
   }
 
-  if (fs.existsSync(TAURI_CONF_PATH)) {
-    const tauri = JSON.parse(fs.readFileSync(TAURI_CONF_PATH, "utf-8"));
-    versions.tauriConf = tauri.version;
+  try {
+    if (fs.existsSync(TAURI_CONF_PATH)) {
+      const tauri = JSON.parse(fs.readFileSync(TAURI_CONF_PATH, "utf-8"));
+      versions.tauriConf = tauri.version;
+    }
+  } catch (e) {
+    throw new Error(`Invalid JSON in tauri.conf.json: ${e.message}`);
   }
 
   if (fs.existsSync(CARGO_TOML_PATH)) {
     const cargo = fs.readFileSync(CARGO_TOML_PATH, "utf-8");
     const m = cargo.match(/^version\s*=\s*"([^"]+)"/m);
     if (m) versions.cargoToml = m[1];
+  }
+
+  if (fs.existsSync(CARGO_LOCK_PATH)) {
+    const lockContent = fs.readFileSync(CARGO_LOCK_PATH, "utf-8");
+    const m =
+      lockContent.match(/\[\[package\]\]\r?\nname = "hermos-ide"\r?\nversion = "([^"]+)"/m) ??
+      lockContent.match(/\[\[package\]\]\r?\nname = "app"\r?\nversion = "([^"]+)"/m);
+    if (m) versions.cargoLock = m[1];
   }
 
   if (fs.existsSync(PKG_LOCK_PATH)) {
@@ -130,9 +146,15 @@ function updateTauriConf(newVersion) {
 
 function updateCargoToml(newVersion) {
   if (!fs.existsSync(CARGO_TOML_PATH)) return;
-  let content = fs.readFileSync(CARGO_TOML_PATH, "utf-8");
-  content = content.replace(/^version\s*=\s*"[^"]+"/m, `version = "${newVersion}"`);
-  fs.writeFileSync(CARGO_TOML_PATH, content, "utf-8");
+  const content = fs.readFileSync(CARGO_TOML_PATH, "utf-8");
+  // Scoped to the [package] section so dependency `version = ...` lines
+  // (tauri-build, serde, ...) are never touched even if section order changes.
+  const sectioned = content.replace(
+    /(\[package\][^\[]*?^version\s*=\s*")[^"]+(")/ms,
+    `$1${newVersion}$2`,
+  );
+  if (sectioned === content) throw new Error("Could not locate [package] version in Cargo.toml");
+  fs.writeFileSync(CARGO_TOML_PATH, sectioned, "utf-8");
 }
 
 function updateCargoLock(newVersion) {
@@ -159,8 +181,10 @@ function updateHermosWebsite(newVersion) {
   // semver-valued `version:` keys so unrelated keys are never touched.
   content = content.replace(/\bversion:\s*"\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?"/g, `version: "${newVersion}"`);
   // Versioned installer filenames baked into static download hrefs
-  // (e.g. HermOS.IDE_1.0.6_x64-setup.exe) — otherwise the site keeps
-  // pointing at the previous release's assets after a bump.
+  // (e.g. HermOS.IDE_1.0.6_x64-setup.exe, dot-form). Space-form hrefs
+  // (HermOS%20IDE_... / HermOS IDE_...) are resolved at runtime via the
+  // GitHub API in /api/download and index.html CONFIG, so only dot-form
+  // statics need rewriting here.
   content = content.replace(/HermOS\.IDE_\d+\.\d+\.\d+_/g, `HermOS.IDE_${newVersion}_`);
   fs.writeFileSync(WEBSITE_PATH, content, "utf-8");
 }
@@ -193,13 +217,21 @@ try {
     console.log(`- hermos-website:        ${vers.website || "N/A"}`);
   } else if (action === "check") {
     const vers = readVersions();
-    const unique = new Set(Object.values(vers).filter(Boolean));
+    // Compare semver-normalized (strip leading v / build metadata) so
+    // "1.1.0" vs "v1.1.0" doesn't false-positive; real drift still fails.
+    const norm = (v) => String(v || "").trim().replace(/^v/i, "").split("+")[0];
+    const entries = Object.entries(vers).filter(([, v]) => Boolean(v));
+    const unique = new Set(entries.map(([, v]) => norm(v)));
     if (unique.size > 1) {
       console.error("✗ Version mismatch detected across workspace files:");
       console.error(vers);
       process.exit(1);
     }
-    console.log(`✓ All project files are in lockstep at version v${vers.packageJson}`);
+    if (entries.length === 0) {
+      console.error("✗ No version found in any workspace file.");
+      process.exit(1);
+    }
+    console.log(`✓ All project files are in lockstep at version v${norm(vers.packageJson)}`);
   } else if (action === "sync") {
     const vers = readVersions();
     const target = vers.packageJson;

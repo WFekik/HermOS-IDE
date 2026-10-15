@@ -82,7 +82,7 @@ export function KeyboardShortcuts() {
             {t("keyboard_shortcuts_title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            {t("keyboard_shortcuts_desc")}
+            {t("keyboard_shortcuts_desc")} {t("ks_works_while_typing")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x">

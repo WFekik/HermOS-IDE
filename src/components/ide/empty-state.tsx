@@ -23,6 +23,10 @@ interface SuggestionCardDef {
   icon: React.ElementType;
 }
 
+/** Fallback when the no-file explain prompt has no dictionary entry. */
+const FALLBACK_NO_FILE_PROMPT =
+  "No file is open. Survey this workspace and explain the project structure: what each top-level area does, where the entry points are, and which file I should read first for a detailed breakdown.";
+
 const SUGGESTIONS: SuggestionCardDef[] = [
   {
     key: "scaffold_feature",
@@ -43,7 +47,7 @@ const SUGGESTIONS: SuggestionCardDef[] = [
   {
     key: "explain_code",
     title: "Explain code",
-    description: "Point at a file and get a clear breakdown.",
+    description: "Break down the active file — or tour the project when none is open.",
     prompt:
       "Open the active file and explain what it does, line by line. Call out anything surprising, risky, or worth refactoring.",
     icon: FileSearch,
@@ -68,24 +72,32 @@ export function EmptyState({ onPick, className }: EmptyStateProps) {
   const { t } = useTranslation();
   const activeFileTab = useAppStore((s) => s.activeFileTab);
   const hasActiveFile = Boolean(activeFileTab);
-  const requestOpenFolderDialog = useAppStore((s) => s.requestOpenFolderDialog);
-  const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const conversationWidth = useAppStore((s) => s.conversationWidth);
   const isMac = isMacPlatform();
   const suggestions = SUGGESTIONS;
 
+  // Every card fills the composer with a self-sufficient prompt — no
+  // dead-ends into file/folder pickers. Explain-code adapts: with a file
+  // open it references it via @file: mention; otherwise the prompt asks
+  // for a project tour that needs no selection at all.
   const handlePick = React.useCallback(
     (cardKey: string, fallbackPrompt: string) => {
+      if (cardKey === "explain_code" && hasActiveFile && activeFileTab) {
+        const baseKey = "explain_code_prompt";
+        const base = t(baseKey) !== baseKey ? t(baseKey) : fallbackPrompt;
+        onPick(`@file:${activeFileTab} ${base}`);
+        return;
+      }
       if (cardKey === "explain_code" && !hasActiveFile) {
-        setRightPanelTab("files");
-        requestOpenFolderDialog();
+        const noFileKey = "explain_code_prompt_no_file";
+        onPick(t(noFileKey) !== noFileKey ? t(noFileKey) : FALLBACK_NO_FILE_PROMPT);
         return;
       }
       const promptKey = `${cardKey}_prompt`;
       const prompt = t(promptKey) !== promptKey ? t(promptKey) : fallbackPrompt;
       onPick(prompt);
     },
-    [hasActiveFile, onPick, requestOpenFolderDialog, setRightPanelTab, t],
+    [hasActiveFile, activeFileTab, onPick, t],
   );
 
   return (

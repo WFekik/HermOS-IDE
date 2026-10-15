@@ -38,12 +38,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { fileNameIconKind, type FileNameIconKind } from "@/lib/tool-ui-shared";
+import { toast } from "sonner";
 import { useTranslation } from "@/hooks/use-translation";
 import {
   type FileNode,
   baseName,
   dirName,
   joinPath,
+  validateFileName,
 } from "@/components/workspace/types";
 import type { GitStatus, GitFileStatus } from "@/stores/app-store";
 
@@ -135,6 +137,11 @@ export function FileTree(props: FileTreeProps) {
       setRenaming(null);
       return;
     }
+    const nameError = validateFileName(trimmed);
+    if (nameError) {
+      toast.error(nameError);
+      return;
+    }
     const to = joinPath(dirName(renaming), trimmed);
     const from = renaming;
     setRenaming(null);
@@ -203,7 +210,7 @@ export function FileTree(props: FileTreeProps) {
   return (
     <>
       <div className="h-full min-h-0 overflow-y-auto overflow-x-auto">
-        <div className="py-1.5 pe-2" role="tree" aria-label="Workspace files">
+        <div className="py-1.5 pe-2" role="tree" aria-label={t("workspace_files")}>
           {tree.map((node) => (
             <TreeNode
               key={node.path}

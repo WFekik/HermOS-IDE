@@ -257,10 +257,44 @@ function SegmentedMessageRenderer({
     [segments, toolCallById],
   );
 
-  return (
-    <div className="space-y-2 overflow-hidden">
-      {groupedItems.map((item, idx) => {
-        const hasNextItem = idx < groupedItems.length - 1;
+  // Turn split: the LAST non-empty text item is the answer and stays visible;
+  // everything before it (thinking + tool calls + intermediate text) is the
+  // working trace that collapses into "Worked for Xs" once the turn completes.
+  // Streaming turns render inline (no block). No work or no answer → as today.
+  const isTurn = message.role === "assistant" && !streaming;
+  let resultIdx = -1;
+  if (isTurn) {
+    for (let i = groupedItems.length - 1; i >= 0; i--) {
+      const item = groupedItems[i];
+      if (item.type === "seg" && item.seg.kind === "text" && (item.seg.content ?? "").trim()) {
+        resultIdx = i;
+        break;
+      }
+    }
+  }
+  const hasWork = resultIdx > 0 && groupedItems.slice(0, resultIdx).some((item) => {
+    if (item.type !== "seg") return true;
+    const k = (item.seg as { kind?: string }).kind;
+    return k === "thinking" || k === "tool_call";
+  });
+  const showTurnBlock = isTurn && hasWork && resultIdx >= 0;
+  const stepCount = showTurnBlock
+    ? groupedItems.slice(0, resultIdx).reduce((n, item) => {
+        if (item.type !== "seg") return n + item.toolCalls.length;
+        return (item.seg as { kind?: string }).kind === "tool_call" ? n + 1 : n;
+      }, 0)
+    : 0;
+
+  // Auto-collapse once when the turn completes; user toggles freely after.
+  const [workOpen, setWorkOpen] = React.useState(streaming);
+  const prevStreamingRef = React.useRef(streaming);
+  React.useEffect(() => {
+    if (prevStreamingRef.current && !streaming) setWorkOpen(false);
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
+
+  const renderGroupedItem = (item: (typeof groupedItems)[number], idx: number) => {
+    const hasNextItem = idx < groupedItems.length - 1;
         if (item.type === "read_group") {
           return (
             <ToolBatchBlock
@@ -334,7 +368,25 @@ function SegmentedMessageRenderer({
             <ToolCallCard tc={tc} />
           </div>
         );
-      })}
+  };
+
+  return (
+    <div className="space-y-2 overflow-hidden">
+      {showTurnBlock ? (
+        <>
+          <AgentWorkBlock
+            open={workOpen}
+            onOpenChange={setWorkOpen}
+            durationMs={message.latencyMs}
+            stepCount={stepCount}
+          >
+            {groupedItems.slice(0, resultIdx).map((item, i) => renderGroupedItem(item, i))}
+          </AgentWorkBlock>
+          {renderGroupedItem(groupedItems[resultIdx], resultIdx)}
+        </>
+      ) : (
+        groupedItems.map((item, idx) => renderGroupedItem(item, idx))
+      )}
       {message.attachments && message.attachments.length > 0 && (
         <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
           {message.attachments.map((att) => (
@@ -389,8 +441,27 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
     [hasToolCalls, message.liveToolCalls],
   );
 
-  return (
-    <div className="space-y-2">
+  // Same turn split as the segmented flow: completed assistant turns with
+  // thinking/tool work AND a text answer collapse the work into the block.
+  const streaming = !!message.streaming;
+  const showTurnBlock =
+    message.role === "assistant" &&
+    !streaming &&
+    (thinking !== undefined || groupedToolCalls.length > 0) &&
+    sanitized.trim().length > 0;
+  const flatStepCount = groupedToolCalls.reduce(
+    (n, g) => (g.type === "single" ? n + 1 : n + g.toolCalls.length),
+    0,
+  );
+  const [flatWorkOpen, setFlatWorkOpen] = React.useState(streaming);
+  const flatPrevStreamingRef = React.useRef(streaming);
+  React.useEffect(() => {
+    if (flatPrevStreamingRef.current && !streaming) setFlatWorkOpen(false);
+    flatPrevStreamingRef.current = streaming;
+  }, [streaming]);
+
+  const flatWork = (
+    <>
       {(thinking || isThinking) && (
         <ThinkingBlock
           open={thinkingExpanded[message.id] ?? isThinking}
@@ -442,6 +513,23 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
             return <ToolCallCard key={tc.id} tc={tc} />;
           })}
         </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="space-y-2">
+      {showTurnBlock ? (
+        <AgentWorkBlock
+          open={flatWorkOpen}
+          onOpenChange={setFlatWorkOpen}
+          durationMs={message.latencyMs}
+          stepCount={flatStepCount}
+        >
+          {flatWork}
+        </AgentWorkBlock>
+      ) : (
+        flatWork
       )}
       <MarkdownContent content={sanitized} streaming={!!message.streaming} />
       {message.streaming && sanitized !== "" && <StreamingCursor />}
@@ -553,6 +641,62 @@ const markdownImageRenderer = ({ src, alt }: { src?: unknown; alt?: unknown }) =
   );
 };
 
+const CALLOUT_RE = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i;
+const CALLOUT_STYLES: Record<string, string> = {
+  note: "border-sky-500/40 bg-sky-500/5",
+  tip: "border-emerald-700/40 dark:border-emerald-400/40 bg-emerald-700/5 dark:bg-emerald-400/5",
+  important: "border-violet-500/40 bg-violet-500/5",
+  warning: "border-amber-700/40 dark:border-amber-400/40 bg-amber-700/5 dark:bg-amber-400/5",
+  caution: "border-red-500/40 bg-red-500/5",
+};
+
+/** GitHub-style callouts (`> [!NOTE]`). Strips only an exact leading marker text node; complex children render as a plain quote. */
+function CalloutQuote({ children }: { children?: React.ReactNode }) {
+  const kids = React.Children.toArray(children);
+  let kind: string | null = null;
+  let stripped: React.ReactNode[] = kids;
+  const first = kids[0];
+  if (React.isValidElement(first)) {
+    // GFM typically nests the marker in <p>[!NOTE] ...</p> — check its text.
+    const pText = React.Children.toArray((first.props as { children?: React.ReactNode }).children);
+    const firstText = pText[0];
+    if (typeof firstText === "string") {
+      const m = CALLOUT_RE.exec(firstText);
+      if (m) {
+        kind = m[1].toLowerCase();
+        const rest = firstText.slice(m[0].length);
+        const newP = React.cloneElement(first as React.ReactElement<any>, {
+          children: rest ? [rest, ...pText.slice(1)] : pText.slice(1),
+        });
+        stripped = [newP, ...kids.slice(1)];
+      }
+    }
+  } else if (typeof first === "string") {
+    const m = CALLOUT_RE.exec(first);
+    if (m) {
+      kind = m[1].toLowerCase();
+      const rest = first.slice(m[0].length);
+      stripped = rest ? [rest, ...kids.slice(1)] : kids.slice(1);
+    }
+  }
+  if (!kind) {
+    return (
+      <blockquote className="my-2 border-s-2 border-brand/40 ps-3 text-muted-foreground italic">
+        {children}
+      </blockquote>
+    );
+  }
+  const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+  return (
+    <aside
+      className={`my-2 rounded-md border border-s-2 px-3 py-2 text-sm not-italic ${CALLOUT_STYLES[kind] ?? CALLOUT_STYLES.note}`}
+    >
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-foreground/80">{label}</div>
+      <div className="text-foreground/90">{stripped}</div>
+    </aside>
+  );
+}
+
 const markdownComponents: Components = {
   pre({ children }) {
     // We render code blocks via the `code` renderer above; pre is just a passthrough.
@@ -577,7 +721,12 @@ const markdownComponents: Components = {
     try {
       cleanPath = decodeURIComponent(cleanPath);
     } catch {}
-    const isWebUrl = Boolean(href?.startsWith("http://") || href?.startsWith("https://"));
+    const isWebUrl = Boolean(
+      href?.startsWith("http://") ||
+        href?.startsWith("https://") ||
+        href?.startsWith("mailto:") ||
+        href?.startsWith("tel:"),
+    );
 
     if (!isWebUrl && href) {
       const isMd = Boolean(
@@ -600,7 +749,7 @@ const markdownComponents: Components = {
               store.openFileTab(cleanPath);
             }
           }}
-          className="inline-flex items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-2 py-0.5 font-mono text-xs text-brand hover:bg-brand/20 hover:border-brand/60 transition-all my-0.5 cursor-pointer font-medium shadow-2xs"
+          className="inline-flex items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-2 py-0.5 font-mono text-xs text-brand hover:bg-brand/20 hover:border-brand/60 transition-all my-0.5 cursor-pointer font-medium shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={`Open ${cleanPath} in HermOS`}
         >
           {isMd ? <Sparkles className="size-3 shrink-0 text-brand" /> : null}
@@ -628,7 +777,14 @@ const markdownComponents: Components = {
     );
   },
   thead({ children }) {
-    return <thead className="bg-muted/70 font-semibold text-foreground border-b">{children}</thead>;
+    return (
+      <thead className="sticky top-0 z-10 bg-muted font-semibold text-foreground border-b shadow-[0_1px_0_var(--border)]">
+        {children}
+      </thead>
+    );
+  },
+  tbody({ children }) {
+    return <tbody className="[&_tr:nth-child(even)]:bg-muted/20">{children}</tbody>;
   },
   tr({ children }) {
     return <tr className="hover:bg-muted/30 transition-colors border-b last:border-b-0">{children}</tr>;
@@ -643,9 +799,7 @@ const markdownComponents: Components = {
   },
   blockquote({ children }) {
     return (
-      <blockquote className="my-2 border-s-2 border-brand/40 ps-3 text-muted-foreground italic">
-        {children}
-      </blockquote>
+      <CalloutQuote>{children}</CalloutQuote>
     );
   },
   // Explicit renderers so emphasis doesn't fall back to the default browser
@@ -662,13 +816,28 @@ const markdownComponents: Components = {
     return <del className="line-through opacity-80">{children}</del>;
   },
   ul({ children }) {
-    return <ul className="my-1.5 list-disc ps-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ul>;
+    return (
+      <ul className="my-1.5 list-disc space-y-1 ps-5 text-sm marker:text-muted-foreground [&:has(>li>input[type=checkbox])]:list-none [&:has(>li>input[type=checkbox])]:ps-1">
+        {children}
+      </ul>
+    );
   },
   ol({ children }) {
-    return <ol className="my-1.5 list-decimal ps-5 space-y-1 text-sm marker:text-muted-foreground">{children}</ol>;
+    return (
+      <ol className="my-1.5 list-decimal space-y-1 ps-5 text-sm marker:text-muted-foreground [&:has(>li>input[type=checkbox])]:list-none [&:has(>li>input[type=checkbox])]:ps-1">
+        {children}
+      </ol>
+    );
   },
-  li({ children }) {
-    return <li className="leading-[1.7]">{children}</li>;
+  li({ children, ...props }: any) {
+    return (
+      <li
+        className="leading-[1.7] [&>input[type=checkbox]]:me-2 [&>input[type=checkbox]]:accent-brand has-[>input[type=checkbox]]:flex has-[>input[type=checkbox]]:items-baseline"
+        {...props}
+      >
+        {children}
+      </li>
+    );
   },
   h1({ children }) {
     return <h1 className="mt-5 mb-2 text-[15px] font-semibold tracking-tight">{children}</h1>;
@@ -737,12 +906,142 @@ export function isTreeLineContent(line: string): boolean {
   if (/^[|\s│]*[├└+│\\][─—–\-]{1,2}/.test(trimmed)) return true;
   if (/\b(├──|└──)\b/.test(trimmed)) return true;
   // Branch markers mid-line (a header + inline blob on ONE physical line,
-  // e.g. `walid/ |— public/ ... |— src/`): need 2+ so single mentions
+  // e.g. `project/ |— public/ ... |— src/`): need 2+ so single mentions
   // ("see |-- docs") stay prose, and each marker must be followed by real
   // content so GFM table separators (`|---|---|`) never match.
   const midLine = trimmed.match(/(?:^|[ \t(])(?:\+|\||\\|│)(?:-{1,2}|─|—|–)[ \t]+[^|\s]/g);
   if (midLine && midLine.length >= 2) return true;
   return false;
+}
+
+/**
+ * Clean a line for placement inside a ```tree fence: strip triple backticks
+ * (fence markers) and single-backtick wraps (inline-code spans the model
+ * adds around paths). Inside a tree fence everything renders as plain
+ * preformatted text, so surviving backticks would show literally.
+ */
+export function stripTreeFenceLine(line: string): string {
+  let t = line
+    .replace(/`{3,}/g, "")
+    .replace(/`([^`\n]+)`/g, "$1");
+  // Strip trailing separator runs (` |`, ` │`, possibly nested) repeatedly,
+  // then trailing whitespace. Leading indentation is significant — kept.
+  let prev = "";
+  while (prev !== t) {
+    prev = t;
+    t = t.replace(/[ \t]+[│|][ \t]*$/, "");
+  }
+  t = t.replace(/[ \t]+$/, "");
+  // Never return empty for a line that had content (degenerate input would
+  // otherwise render an empty fence where the old code showed the raw line).
+  return t === "" ? line.replace(/`{3,}/g, "").trim() : t;
+}
+
+const TREE_MARKER_RE = /(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–))/g;
+
+/**
+ * Reflow smeared tree blobs at the paragraph level, independent of line
+ * breaks: any blank-line-separated block (outside fences/tables) with 3+
+ * branch markers AND path-like tokens becomes one-entry-per-line inside a
+ * ```tree fence. Catches shapes line-based detection cannot see (single
+ * wrapped lines, marker-less continuations, NBSP spacing).
+ *
+ * Conservative by construction: fenced code passes through untouched, blocks
+ * with table separator rows are skipped, list items are left alone, and CLI
+ * flag lists ("--foo | --bar") fail the path-token requirement.
+ */
+export function reflowTreeParagraphs(raw: string): string {
+  const lines = raw.replace(/\u00A0/g, " ").split("\n");
+  const out: string[] = [];
+  let block: string[] = [];
+  let inFence = false;
+  const flush = () => {
+    if (block.length > 0) {
+      out.push(reflowTreeBlock(block));
+      block = [];
+    }
+  };
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      flush();
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    if (line.trim() === "") {
+      flush();
+      out.push(line);
+      continue;
+    }
+    block.push(line);
+  }
+  flush();
+  return out.join("\n");
+}
+
+function reflowTreeBlock(lines: string[]): string {
+  const joinLines = () => lines.join("\n");
+  // Strip single-backtick wraps FIRST for analysis: a blob smeared inside
+  // one code span (`` `. |— dist/ | ...` ``) hides every marker from the
+  // checks below. Prologue/epilogue keep original lines so prose rendering
+  // (inline code spans) is untouched when we bail or split around them.
+  const strippedLines = lines.map((l) => l.replace(/`([^`\n]+)`/g, "$1"));
+  const text = strippedLines.join("\n");
+  const markers = text.match(TREE_MARKER_RE);
+  if (!markers || markers.length < 3) return joinLines();
+  // Already vertical: several lines each carrying markers (with nesting
+  // indentation) — reflowing would flatten the structure. Leave it for the
+  // line-based pass, which preserves indentation. (Fresh regex: module-level
+  // TREE_MARKER_RE is global, so .test() would read lastIndex.)
+  const lineMarkerTest = /(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–))/;
+  const markerLines = strippedLines.filter((l) => lineMarkerTest.test(l));
+  if (lines.length >= 3 && markerLines.length >= 3) return joinLines();
+  // Tables (separator rows) and list items are handled elsewhere — bail.
+  if (
+    lines.some((l) => /^[\s|:\-]+$/.test(l) && /-{2,}/.test(l)) ||
+    lines.some((l) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(l))
+  ) {
+    return joinLines();
+  }
+  // Path-like tokens (dirs/ or dotted filenames) distinguish trees from
+  // CLI flag prose.
+  const paths = text.match(/[\w.@~\-]+\/[\w.@~/\-]*|[\w~\-]+\.[A-Za-z0-9]{1,5}\b/g);
+  if (!paths || paths.length < 2) return joinLines();
+  // Split before every marker; non-marker lines stay prose outside the fence
+  // (e.g. a "Here's the tree:" intro glued to the blob).
+  const prologue: string[] = [];
+  const entries: string[] = [];
+  const epilogue: string[] = [];
+  let inEntries = false;
+  let doneEntries = false;
+  strippedLines.forEach((strippedLine, i) => {
+    const hasMarker = lineMarkerTest.test(strippedLine);
+    if (!inEntries && !hasMarker) {
+      prologue.push(lines[i]);
+      return;
+    }
+    if (inEntries && !hasMarker) {
+      doneEntries = true;
+    } else {
+      inEntries = true;
+    }
+    if (doneEntries) {
+      epilogue.push(lines[i]);
+      return;
+    }
+    for (const part of strippedLine.split(
+      /(?=(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–)))/g,
+    )) {
+      const clean = stripTreeFenceLine(part);
+      if (clean !== "" && !/^[│|]+$/.test(clean)) entries.push(clean);
+    }
+  });
+  if (entries.length < 2) return joinLines();
+  return [...prologue, "```tree", ...entries, "```", ...epilogue].join("\n");
 }
 
 /**
@@ -762,9 +1061,12 @@ export function isTreeLineContent(line: string): boolean {
  *   ├── landing/
  *   └── cli/
  *
- * If the line contains fewer than 2 tree branch markers it is returned as-is.
+ * If the line contains fewer than `minMarkers` tree branch markers it is
+ * returned as-is. The default 2 keeps lone prose mentions ("see |-- docs")
+ * out of fences; pass 1 for lines already inside a tree chain (established
+ * block or tree neighbor), where a single marker is a continuation.
  */
-export function splitInlineTree(line: string): string[] {
+export function splitInlineTree(line: string, minMarkers = 2): string[] {
   if (!line) return [line];
 
   // A branch marker is ├ / └, or a pipe/plus/backslash/│ followed by one of
@@ -772,7 +1074,7 @@ export function splitInlineTree(line: string): string[] {
   // trees (e.g. `|— public/ ... |— src/`) carry zero ├└, so count both.
   const branchPattern = /(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–))/g;
   const matches = line.match(branchPattern);
-  if (!matches || matches.length < 2) return [line];
+  if (!matches || matches.length < minMarkers) return [line];
 
   // Split just before each branch marker WITHOUT consuming it (lookahead
   // only): the previous consuming split ate the `|` of `|—`, leaving
@@ -984,6 +1286,14 @@ export function preprocessContent(content: string): string {
     return raw;
   }
 
+  // Paragraph-level blob rescue: a tree smeared across one wrapped paragraph
+  // (or several lines) is reflowed into one entry per line regardless of line
+  // breaks — line-based detection below cannot see shapes the model never
+  // broke into lines. Conservative by design: needs 3+ branch markers AND
+  // path-like tokens (CLI flag lists like "--foo | --bar" stay prose), skips
+  // fenced code, tables (separator rows), and list markers are preserved.
+  raw = reflowTreeParagraphs(raw);
+
   const lines = raw.split("\n");
   let processed = "";
   let inTreeBlock = false;
@@ -995,19 +1305,25 @@ export function preprocessContent(content: string): string {
   };
 
   const isPossibleTreeHeader = (line: string, nextLine?: string): boolean => {
-    if (!nextLine) return false;
-    const trimmed = line.trim();
-    if (trimmed === ".") return isTreeLine(nextLine);
-    if (trimmed.endsWith("/") || trimmed.endsWith("\\")) return isTreeLine(nextLine);
+    if (!nextLine || !isTreeLine(nextLine)) return false;
+    // Strip inline-code wraps: models backtick paths (`src/`, `dist/`), which
+    // defeats the plain-text header shapes below.
+    const stripped = line.replace(/`([^`\n]+)`/g, "$1").trim();
+    if (stripped === ".") return true;
+    if (stripped.endsWith("/") || stripped.endsWith("\\") || stripped.endsWith("|")) return true;
     if (
-      trimmed.length <= 50 &&
-      /^[\w.@\-]+$/.test(trimmed) &&
-      !trimmed.startsWith("```") &&
-      !trimmed.startsWith("|")
+      stripped.length <= 50 &&
+      /^[\w.@\-]+$/.test(stripped) &&
+      !stripped.startsWith("```") &&
+      !stripped.startsWith("|")
     ) {
-      return isTreeLine(nextLine);
+      return true;
     }
-    return false;
+    // Blob header: prose/paths plus at least one branch marker on the same
+    // line (e.g. "`project/` |— `dist/` |"). Separator-only lines (GFM table
+    // `|---|---|` rows) are excluded so tables directly above trees survive.
+    if (/^[|\s:=\-]+$/.test(stripped)) return false;
+    return /(?:[├└]|(?:\+|\||\\|│)(?:-{1,2}|─|—|–))/.test(stripped);
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -1016,7 +1332,7 @@ export function preprocessContent(content: string): string {
     if (line.trim().startsWith("```")) {
       inMarkdownCodeBlock = !inMarkdownCodeBlock;
       if (inTreeBlock) {
-        processed += "```tree\n" + treeLines.join("\n") + "\n```\n\n";
+        processed += "```tree\n" + treeLines.map(stripTreeFenceLine).join("\n") + "\n```\n\n";
         inTreeBlock = false;
         treeLines = [];
       }
@@ -1033,9 +1349,12 @@ export function preprocessContent(content: string): string {
     const isTree = isTreeLine(line) || (treeLines.length === 0 && isPossibleTreeHeader(line, nextLine));
 
     if (isTree) {
-      const expandedLines = splitInlineTree(line);
       const hasTreeNeighbors =
-        treeLines.length > 0 || (nextLine && isTreeLine(nextLine));
+        treeLines.length > 0 || (nextLine !== undefined && isTreeLine(nextLine));
+      // Inside a chain (or adjacent to one), a single marker is a
+      // continuation — split it. Standalone lines keep the 2-marker minimum
+      // so lone prose mentions ("see |-- docs") never get fenced.
+      const expandedLines = splitInlineTree(line, hasTreeNeighbors ? 1 : 2);
       if (hasTreeNeighbors || expandedLines.length > 1) {
         if (!inTreeBlock) {
           inTreeBlock = true;
@@ -1046,13 +1365,13 @@ export function preprocessContent(content: string): string {
         }
         continue;
       }
-      const clean = line.replace(/`{3,}/g, "");
+      const clean = stripTreeFenceLine(line);
       processed += "```tree\n" + clean + "\n```\n\n";
       continue;
     }
 
     if (inTreeBlock) {
-      const cleanTree = treeLines.map((l) => l.replace(/`{3,}/g, "")).join("\n");
+      const cleanTree = treeLines.map(stripTreeFenceLine).join("\n");
       processed += "```tree\n" + cleanTree + "\n```\n\n";
       inTreeBlock = false;
       treeLines = [];
@@ -1061,9 +1380,26 @@ export function preprocessContent(content: string): string {
   }
 
   if (inTreeBlock) {
-    const cleanTree = treeLines.map((l) => l.replace(/`{3,}/g, "")).join("\n");
+    const cleanTree = treeLines.map(stripTreeFenceLine).join("\n");
     processed += "```tree\n" + cleanTree + "\n```\n";
   }
+
+  // Unwrap model-authored ```tree fences that contain no tree at all (prose
+  // landed inside the fence while the actual tree went elsewhere). A fence
+  // with zero branch markers renders as a confusing mislabeled block — drop
+  // the fence and let the prose flow normally. Generated fences always carry
+  // markers, so only misplaced model fences are affected.
+  processed = processed.replace(/```tree[ \t]*\n([\s\S]*?)\n```/g, (m, body: string) => {
+    const text = String(body ?? "");
+    const hasMarker = text
+      .split("\n")
+      .some(
+        (l) =>
+          /[├└│┬]/.test(l) ||
+          /(?:^|[ \t(])(?:\+|\||\\|│)(?:-{1,2}|─|—|–)[ \t]+\S/.test(l),
+      );
+    return hasMarker ? m : text;
+  });
 
   processed = processed.replace(/\n+$/, "");
   if (endsWithNewline) processed += "\n";
@@ -1419,6 +1755,56 @@ function AttachmentBlock({ att, isUser }: { att: AttachmentDTO; isUser?: boolean
 }
 
 /**
+ * Collapsible "Worked for Xs" turn block (Cursor/Antigravity style). A
+ * completed agent turn's working trace — thinking blocks + tool calls +
+ * intermediate text — collapses behind one row; the final answer stays
+ * visible outside so scrolling between messages stays cheap. While the turn
+ * streams everything renders inline (no block); the block auto-collapses
+ * once on completion and the user can re-expand it any time.
+ */
+export function formatWorkDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 10) return `${totalSeconds.toFixed(1)}s`;
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+function AgentWorkBlock({
+  open,
+  onOpenChange,
+  durationMs,
+  stepCount,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  durationMs?: number;
+  stepCount: number;
+  children: React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const duration = formatWorkDuration(durationMs ?? 0);
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-sm py-0.5">
+        <ChevronRight className={cn("size-3 shrink-0 transition-transform [[data-state=open]_&]:rotate-90")} />
+        <span className="truncate">
+          {t("worked_for", { duration })}
+          {stepCount > 0 ? ` · ${t("worked_steps", { count: stepCount })}` : ""}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-1">
+        <div className="space-y-2 border-s-2 border-border/50 ps-3">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/**
  * Markdown renderer for reasoning/thinking blocks. Reuses the same component
  * map as message text, so code fences get full syntax highlighting via
  * CodeBlock (Prism, line numbers, copy), inline code gets chips, and links,
@@ -1530,12 +1916,27 @@ function ThinkingBlock({
     };
   }, [content, isLive]);
 
+  // Collapsed preview — first meaningful line so "Reasoning" isn't a dead label.
+  const summary = React.useMemo(() => {
+    if (!content || isLive || open) return null;
+    const firstLine = content
+      .split("\n")
+      .map((l) => l.replace(/^#+\s*/, "").replace(/[*_`>]/g, "").trim())
+      .find((l) => l.length > 0);
+    if (!firstLine) return null;
+    return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+  }, [content, isLive, open]);
+
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
+      <CollapsibleTrigger
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-sm"
+        aria-live={isLive ? undefined : "polite"}
+      >
         <ChevronRight className={cn("size-3 shrink-0 transition-transform [[data-state=open]_&]:rotate-90")} />
-        <Brain className={cn("size-3.5 shrink-0", isLive ? "text-brand animate-pulse" : "text-brand")} />
+        <Brain className={cn("size-3.5 shrink-0 text-brand", isLive && "animate-pulse")} />
         <span className="truncate">{isLive ? (emptyLabel || t("thinking_indication")) : t("reasoning")}</span>
+        {summary && <span className="truncate text-muted-foreground/75 font-normal">— {summary}</span>}
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1.5">
         <div

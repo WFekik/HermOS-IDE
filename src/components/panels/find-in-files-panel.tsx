@@ -58,8 +58,8 @@ import { useTranslation } from "@/hooks/use-translation";
  *
  * Clicking a file header or a match row dispatches `hermos:open-file`
  * (with the path) and switches the right panel to the Files tab so the
- * workspace panel can open the file. The line/column are passed in the
- * event detail so a future listener can scroll to the match.
+ * workspace panel can open the file. The line/column ride in the event
+ * detail and the workspace panel forwards them to `hermos:scroll-to-line`.
  * ------------------------------------------------------------------ */
 
 interface GrepMatch {

@@ -14,7 +14,7 @@ import {
   resolveWorkspace,
   switchWorkspace,
 } from "@/lib/workspace";
-import { parseJson, apiError, unauthorized, ok, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { parseJson, apiError, unauthorized, ok, enforceLoopbackRequest, withErrorHandler } from "@/app/api/_lib/helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +51,7 @@ const openSchema = z.object({
  * Rate-limited at 60/min/user (terminal bucket) — the same as the prior
  * implementation, since this is the most-called workspace endpoint.
  */
-export async function GET(req: NextRequest): Promise<Response> {
+export const GET = withErrorHandler(async (req: NextRequest): Promise<Response> => {
   const blocked = enforceLoopbackRequest(req);
   if (blocked) return blocked;
   let user;
@@ -73,15 +73,13 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   const ws = active ?? await ensureDefaultWorkspace(user.id);
 
-  // If the user still has no workspace (ensureDefaultWorkspace returns null),
-  // return null — the frontend handles a missing workspace gracefully.
   return ok({
     workspace: ws ? { id: ws.id, name: ws.name, isActive: true, rootDir: ws.rootDir } : null,
-    workspaces: ws ? all : all, // all already includes rootDir from listUserWorkspaces
+    workspaces: all, // all already includes rootDir from listUserWorkspaces
   });
-}
+});
 
-export async function POST(req: NextRequest): Promise<Response> {
+export const POST = withErrorHandler(async (req: NextRequest): Promise<Response> => {
   const blocked = enforceLoopbackRequest(req);
   if (blocked) return blocked;
   let user;
@@ -140,4 +138,4 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!name) return apiError("Workspace name is required.", 400);
   const ws = await openWorkspace(user.id, name);
   return ok({ workspace: { id: ws.id, name: ws.name, isActive: true, rootDir: ws.rootDir } });
-}
+});

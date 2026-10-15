@@ -12,24 +12,29 @@ import {
   createFileWs,
   deletePathWs,
   mkdirWs,
+  MAX_FILE_BYTES,
 } from "@/lib/workspace";
 import { parseJson, apiError, ok, withErrorHandler } from "@/app/api/_lib/helpers";
-import { noNulBytes } from "@/lib/validation";
+import { noNulBytes, byteCappedContent } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
+const pathSchema = z.string().trim().min(1).max(300).refine(noNulBytes, {
+  message: "Invalid path.",
+});
+
 const writeSchema = z.object({
-  path: z.string().trim().min(1).max(300),
-  content: z.string().max(1_000_000),
+  path: pathSchema,
+  content: byteCappedContent(MAX_FILE_BYTES),
 }).refine((d) => noNulBytes(d.content), {
   message: "Content cannot contain NUL bytes",
   path: ["content"],
 });
 
 const createSchema = z.object({
-  path: z.string().trim().min(1).max(300),
+  path: pathSchema,
   type: z.enum(["file", "dir"]).default("file"),
-  content: z.string().max(1_000_000).optional(),
+  content: byteCappedContent(MAX_FILE_BYTES).optional(),
 }).refine((d) => d.content === undefined || noNulBytes(d.content), {
   message: "Content cannot contain NUL bytes",
   path: ["content"],
@@ -282,6 +287,9 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
 export const PUT = withErrorHandler(async (req: NextRequest) => {
   const user = await requireUser();
 
+  const limited = await withRateLimit(req, `ws-files-write:${user.id}`, RATE_LIMITS.terminal);
+  if (limited) return limited;
+
   const body = await parseJson<any>(req);
   const parsed = writeSchema.safeParse(body);
   if (!parsed.success) {
@@ -291,12 +299,25 @@ export const PUT = withErrorHandler(async (req: NextRequest) => {
   }
 
   const ws = await resolveWs(user.id);
-  const res = await writeFileWs(user.id, ws.name, parsed.data.path, parsed.data.content, ws.rootDir);
-  return ok({ file: res });
+  try {
+    const res = await writeFileWs(user.id, ws.name, parsed.data.path, parsed.data.content, ws.rootDir);
+    return ok({ file: res });
+  } catch (e) {
+    // writeFileWs validates too (defense in depth behind the schema): map
+    // its client errors to 400 so they never surface as 500s.
+    const msg = e instanceof Error ? e.message : "Write failed.";
+    if (msg === "Invalid path." || msg.startsWith("Content too large") || msg.startsWith("Refusing to save")) {
+      return apiError(msg, 400);
+    }
+    throw e;
+  }
 });
 
 export const POST = withErrorHandler(async (req: NextRequest) => {
   const user = await requireUser();
+
+  const limited = await withRateLimit(req, `ws-files-write:${user.id}`, RATE_LIMITS.terminal);
+  if (limited) return limited;
 
   const body = await parseJson<any>(req);
   const parsed = createSchema.safeParse(body);
@@ -313,18 +334,45 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     const res = await mkdirWs(user.id, ws.name, parsed.data.path, ws.rootDir);
     return ok({ dir: res });
   }
-  const res = await createFileWs(user.id, ws.name, parsed.data.path, parsed.data.content ?? "", ws.rootDir);
-  return ok({ file: res });
+  try {
+    const res = await createFileWs(user.id, ws.name, parsed.data.path, parsed.data.content ?? "", ws.rootDir);
+    return ok({ file: res });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Create failed.";
+    if (msg === "Invalid path." || msg.startsWith("Content too large") || msg.startsWith("Refusing to save")) {
+      return apiError(msg, 400);
+    }
+    throw e;
+  }
 });
 
 export const DELETE = withErrorHandler(async (req: NextRequest) => {
   const user = await requireUser();
 
+  const limited = await withRateLimit(req, `ws-files-write:${user.id}`, RATE_LIMITS.terminal);
+  if (limited) return limited;
+
   const url = new URL(req.url);
   const rel = url.searchParams.get("path") || "";
   if (!rel) return apiError("Missing path query.", 400);
+  if (rel.includes("\u0000")) return apiError("Invalid path.", 400);
 
   const ws = await resolveWs(user.id);
-  const res = await deletePathWs(user.id, ws.name, rel, ws.rootDir);
-  return ok({ deleted: res });
+  try {
+    const res = await deletePathWs(user.id, ws.name, rel, ws.rootDir);
+    return ok({ deleted: res });
+  } catch (e) {
+    // Fail-closed guards (sibling-workspace refusal, unverifiable boundary)
+    // are client-actionable rejections, not server faults — map them like
+    // PUT/POST. Only genuine verification failures stay 500.
+    const msg = e instanceof Error ? e.message : "Delete failed.";
+    if (
+      msg === "Invalid path." ||
+      msg === "Cannot delete workspace root." ||
+      msg.startsWith("Refusing to delete")
+    ) {
+      return apiError(msg, 400);
+    }
+    throw e;
+  }
 });

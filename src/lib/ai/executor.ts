@@ -109,6 +109,11 @@ import {
   isTransientStreamError,
 } from "@/lib/ai/retry-utils";
 import {
+  detectPromptLanguage,
+  languageDisplayName,
+} from "@/lib/detect-language";
+import type { SupportedLanguage } from "@/lib/i18n";
+import {
   resolveReasoningPlan,
   normalizeThinkingLevel,
   rememberReasoningRejected,
@@ -138,8 +143,15 @@ function throwProviderError(resp: Response, retryText: string) {
 }
 
 /** Max agent iterations — configurable via HERMOS_MAX_AGENT_ITERATIONS.
- *  Defaults to Infinity (uncapped) to preserve autonomous design.
- *  Operators can set a finite ceiling as a global safety net. */
+ *  Defaults to Infinity (uncapped) to preserve the autonomous design:
+ *  runaway cost is bounded by independent layers, not by an arbitrary
+ *  iteration number — the route's maxDuration (1h), the 5-minute provider-
+ *  silence timeout, and the ConvergenceDetector (identical-prose/cycle
+ *  ladders). An operator who wants a hard ceiling sets it explicitly via
+ *  the env var (honored verbatim, no silent re-clamping), and callers may
+ *  pass per-request maxIterations (validated 1..500). Do NOT reintroduce a
+ *  silent finite default here: stopping a legitimate long run early is a
+ *  behavior break, not a safety feature. */
 const MAX_ITERATIONS: number = (() => {
   const raw = process.env.HERMOS_MAX_AGENT_ITERATIONS;
   if (!raw) return Infinity;
@@ -150,38 +162,19 @@ const MAX_ITERATIONS: number = (() => {
 // Fallback max_tokens only where a provider API REQUIRES the field.
 // See ANTHROPIC_SDK_DEFAULT_MAX_TOKENS in provider-payloads.ts.
 
-/** Helper to build compound cache key for rejected tools (so switching models/providers doesn't stay stuck). */
-function toolsRejectedKey(convId: string, provider?: string, model?: string): string {
-  return `${convId}:${provider || ""}:${model || ""}`;
-}
-
-/** Cache of rejected tool definitions per conversation+model to avoid repeated failed attempts. */
-const toolsRejectedCache = new Map<string, boolean>();
-const TOOLS_REJECTED_CACHE_MAX = 500;
-function setToolsRejected(convId: string, provider?: string, model?: string): void {
-  if (toolsRejectedCache.size >= TOOLS_REJECTED_CACHE_MAX) {
-    const key = toolsRejectedCache.keys().next();
-    if (!key.done) toolsRejectedCache.delete(key.value);
-  }
-  const compoundKey = toolsRejectedKey(convId, provider, model);
-  toolsRejectedCache.set(compoundKey, true);
-}
-
-function isToolsRejected(convId: string, provider?: string, model?: string): boolean {
-  if (provider || model) {
-    return toolsRejectedCache.has(toolsRejectedKey(convId, provider, model));
-  }
-  return toolsRejectedCache.has(convId);
-}
+// Per-conversation tools-rejected cache lives in ./tools-rejected (extracted
+// with no behavior change so the agent loop stays testable in isolation).
+// `clearConversationCache` below preserves the public API (routes import it
+// from here) and additionally clears the session read tracker.
+import {
+  setToolsRejected,
+  isToolsRejected,
+  clearToolsRejectedCache,
+} from "@/lib/ai/tools-rejected";
 
 /** Clear per-conversation in-memory caches (tools-rejected flag, read tracker). */
 export function clearConversationCache(conversationId: string): void {
-  toolsRejectedCache.delete(conversationId);
-  for (const key of Array.from(toolsRejectedCache.keys())) {
-    if (key.startsWith(`${conversationId}:`)) {
-      toolsRejectedCache.delete(key);
-    }
-  }
+  clearToolsRejectedCache(conversationId);
   sessionReadTracker.delete(conversationId);
 }
 
@@ -270,9 +263,19 @@ async function resolveHistoryImages(
 
   for (const m of recentUserMessages) {
     try {
-      const atts = JSON.parse(m.attachments!) as Array<{ id: string; type: string }>;
-      for (const a of atts) {
-        if (a.type.startsWith("image/")) allIds.add(a.id);
+      if (typeof m.attachments !== "string" || m.attachments.length === 0) continue;
+      const parsed: unknown = JSON.parse(m.attachments);
+      if (!Array.isArray(parsed)) continue;
+      for (const a of parsed) {
+        if (
+          a !== null &&
+          typeof a === "object" &&
+          typeof (a as { id?: unknown }).id === "string" &&
+          typeof (a as { type?: unknown }).type === "string" &&
+          (a as { type: string }).type.startsWith("image/")
+        ) {
+          allIds.add((a as { id: string }).id);
+        }
       }
     } catch { /* ignore malformed JSON */ }
   }
@@ -602,7 +605,7 @@ const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermO
 - SECRETS & BUDGET: Never print or commit real keys/secrets. Quote key log lines, not full walls.
 - TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
 - ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
-- CONCISE, ENGLISH: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
+- CONCISE: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
 - PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
 - SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
 
@@ -629,7 +632,7 @@ function buildTextFallbackSystemPrompt(enabledTools: string[], mode: AgentMode):
 - SECRETS & BUDGET: Never print or commit real keys/secrets. Quote key log lines, not full walls.
 - TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
 - ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
-- CONCISE, ENGLISH: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
+- CONCISE: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
 - PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
 - SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
 
@@ -3985,7 +3988,20 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
       ? `\n\n## Original Request (Mission)\n${originalRequest.slice(0, 2000)}`
       : "";
 
-    let systemPrompt = baseSystemPrompt + workspaceRulesBlock + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock;
+    // Response language follows the user's prompt (detected from message
+    // text, UI language as fallback). Recomputed per run; mid-run queued
+    // turns keep the run's language. Appended after custom base prompts, so
+    // it overrides any language baked into them.
+    const uiLang = (req.uiLanguage as SupportedLanguage | undefined) ?? "en";
+    const runLanguage = detectPromptLanguage(req.message ?? "", uiLang);
+    const runLanguageName = languageDisplayName(runLanguage);
+    // Single response-rules line: language + tree format together, appended
+    // after every base prompt (including custom ones), so it always applies.
+    const languageBlock =
+      `\n\n## Response Rules\n- Always respond ENTIRELY in ${runLanguageName} unless the user explicitly asks for another language (code identifiers stay as-is). ` +
+      `Show directory structures ONLY as fenced "tree" code blocks with one entry per line — never inline with | separators or backticks.`;
+
+    let systemPrompt = baseSystemPrompt + workspaceRulesBlock + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
 
     let openaiTools = buildOpenAITools(enabledTools);
     let anthropicTools = buildAnthropicTools(enabledTools);
@@ -4341,7 +4357,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
           anthropicTools = [];
           if (baseSystemPrompt === NATIVE_SYSTEM_PROMPT) {
             baseSystemPrompt = buildTextFallbackSystemPrompt(enabledTools, mode);
-            systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock;
+            systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
           }
         }
         // Real queuing: drain user turns queued while the loop was working
@@ -5413,7 +5429,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             // to output tool calls as JSON text rather than the native API.
             if (baseSystemPrompt === NATIVE_SYSTEM_PROMPT) {
               baseSystemPrompt = buildTextFallbackSystemPrompt(enabledTools, mode);
-              systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock;
+              systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
             }
           } else {
             // No tools were present — empty might be thinking-related.

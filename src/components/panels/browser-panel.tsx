@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import {
-  QueryClient,
-  QueryClientProvider,
   useQuery,
   useMutation,
   useQueryClient,
@@ -80,25 +78,12 @@ import { useTranslation } from "@/hooks/use-translation";
 /* ------------------------------------------------------------------ *
  * BrowserPanel — exported entry point.
  *
- * Wraps the inner panel in a local React Query provider because the
- * global app providers do not include one (matching the workspace panel
- * pattern). A single QueryClient is created per mounted instance.
+ * Uses the global QueryClient from <Providers> so browser state cache
+ * persists across tab switches.
  * ------------------------------------------------------------------ */
 
 export function BrowserPanel() {
-  const [queryClient] = React.useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: { refetchOnWindowFocus: false, retry: 1, staleTime: 0 },
-        },
-      }),
-  );
-  return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserPanelInner />
-    </QueryClientProvider>
-  );
+  return <BrowserPanelInner />;
 }
 
 const QUICK_LINKS = [
@@ -162,19 +147,20 @@ function BrowserPanelInner() {
   // giving the iframe a same-origin src.
   const [previewNonce, setPreviewNonce] = React.useState(0);
 
-  // Snapshot query — only enabled once a session exists. Polling is just a
-  // fallback: SSE events carry live url/title and drive realtime updates.
+  // Snapshot query — only enabled once a session exists. SSE is primary;
+  // polling is fallback-only while SSE is disconnected (tracked below).
+  const [sseConnected, setSseConnected] = React.useState(false);
   const snapshotQuery = useQuery({
     queryKey: browserKeys.snapshot,
     queryFn: ({ signal }) => fetchSnapshot(signal),
     enabled: !!session,
-    refetchInterval: browserAgentActive ? 2500 : false,
+    refetchInterval: browserAgentActive && !sseConnected ? 2500 : false,
   });
 
   const sessionQuery = useQuery({
     queryKey: browserKeys.session,
     queryFn: ({ signal }) => fetchSession(signal),
-    refetchInterval: browserAgentActive ? 4000 : false,
+    refetchInterval: browserAgentActive && !sseConnected ? 4000 : false,
   });
 
   // While the user is editing the URL bar, incoming session syncs must not
@@ -273,10 +259,12 @@ function BrowserPanelInner() {
         void queryClient.invalidateQueries({ queryKey: browserKeys.snapshot });
       };
       es.onerror = () => {
-        // EventSource reconnects automatically with backoff; polling below
-        // covers the gap while the stream is down.
+        // EventSource reconnects automatically with backoff; polling covers
+        // the gap while the stream is down.
+        setSseConnected(false);
         console.warn("[BrowserPanel] SSE stream error — relying on polling until it recovers.");
       };
+      es.onopen = () => setSseConnected(true);
     } catch (err) {
       console.warn("[BrowserPanel] SSE unavailable — relying on query polling:", err);
     }

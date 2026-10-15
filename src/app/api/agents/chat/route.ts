@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { chatRequestSchema } from "@/lib/validation";
 import { executeChat } from "@/lib/ai/executor";
@@ -12,6 +13,17 @@ import { withErrorHandler, parseJson, apiError } from "@/app/api/_lib/helpers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600; // 1 hour — let the agent work as long as needed
+
+const pluginActionSchema = z.object({
+  action: z.literal("execute_plugin_tool"),
+  pluginName: z.string().trim().min(1).max(120).refine((s) => !s.includes("/") && !s.includes("\\") && !s.includes(".."), {
+    message: "Invalid plugin name",
+  }),
+  toolName: z.string().trim().min(1).max(120).refine((s) => !s.includes("/") && !s.includes("\\"), {
+    message: "Invalid tool name",
+  }),
+  args: z.record(z.string(), z.unknown()).default({}),
+});
 
 export const POST = withErrorHandler(async (req: NextRequest): Promise<Response> => {
   const user = await requireUser();
@@ -41,25 +53,41 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
       },
     });
     return new Response(noop, {
-      headers: { "Content-Type": "text/event-stream; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
     });
   }
 
   if (!body) return apiError("Invalid JSON body.", 400);
 
-  // If this is a plugin testing action, handle synchronously
+  // If this is a plugin testing action, handle synchronously.
+  // Validated with the same strictness as chat requests: plugin/tool names are
+  // allowlisted (1..120 chars, no path separators) and args must be a record.
+  // This branch shares the `chat:` rate-limit bucket by design (it exercises
+  // the agent runtime), but it must NOT bypass validation.
   if (body.action === "execute_plugin_tool") {
+    const pluginParsed = pluginActionSchema.safeParse(body);
+    if (!pluginParsed.success) {
+      return apiError("Invalid plugin tool request.", 400, {
+        details: pluginParsed.error.flatten(),
+      });
+    }
+    const { pluginName, toolName, args } = pluginParsed.data;
     try {
       const { loadPluginTools, executePluginTool } = await import("@/lib/plugins/plugin-runtime");
       const tools = await loadPluginTools(user.id);
       const target = tools.find(
-        (t) => t.pluginName?.toLowerCase() === body.pluginName?.toLowerCase() &&
-               t.name.toLowerCase() === body.toolName?.toLowerCase()
+        (t) => t.pluginName?.toLowerCase() === pluginName.toLowerCase() &&
+               t.name.toLowerCase() === toolName.toLowerCase()
       );
       if (!target) {
         return new Response(JSON.stringify({ ok: false, error: "Plugin tool not found." }), { status: 404 });
       }
-      const res = await executePluginTool(target, body.args || {});
+      const res = await executePluginTool(target, args ?? {});
       return new Response(JSON.stringify({ ok: true, result: res }));
     } catch (e: any) {
       return new Response(JSON.stringify({ ok: false, error: e?.message || String(e) }), { status: 500 });

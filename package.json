@@ -1,6 +1,6 @@
 {
   "name": "hermos-ide",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 -H 127.0.0.1",
@@ -17,6 +17,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:reset": "prisma migrate reset",
     "test": "vitest run --pool=forks",
+    "audit:ci": "npm audit --omit=dev --audit-level=high",
     "version:get": "node scripts/version.mjs get",
     "version:check": "node scripts/version.mjs check",
     "version:sync": "node scripts/version.mjs sync",

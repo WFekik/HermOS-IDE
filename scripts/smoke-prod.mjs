@@ -231,6 +231,18 @@ async function main() {
       splash.status === 200 && splashText.includes("HermOS IDE"),
       `status ${splash.status}, ${splashText.length} bytes`,
     );
+
+    // Splash window chrome: the controls script must ship alongside the
+    // splash (progressive wiring for minimize/maximize/close during load).
+    const chrome = await fetchWithTimeout(`${baseUrl}/tauri-window-controls.js`, 10_000);
+    const chromeText = await chrome.text();
+    report(
+      "window-controls-js-200",
+      chrome.status === 200 &&
+        chromeText.includes("btn-min") &&
+        chromeText.includes("btn-close"),
+      `status ${chrome.status}, ${chromeText.length} bytes`,
+    );
   } catch (err) {
     report("unexpected-error", false, err.message);
   } finally {

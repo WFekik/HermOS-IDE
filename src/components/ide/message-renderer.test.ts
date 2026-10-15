@@ -265,11 +265,15 @@ describe("preprocessContent — trees", () => {
     expect(result).toContain("server.ts");
   });
 
-  it("preserves single backticks in tree line content", () => {
+  it("strips single backticks inside rescued tree fences", () => {
     const result = preprocessContent("└── `file`.ts\n");
     expect(result).toContain("```tree");
-    // Single backticks are preserved (only 3+ consecutive are stripped to avoid fence breakage)
-    expect(result).toContain("└── `file`.ts");
+    // Inside a tree fence everything renders as plain preformatted text, so
+    // surviving backticks would show literally — only the fence markers keep theirs.
+    expect(result).toContain("└── file.ts");
+    const bodyStart = result.indexOf("```tree") + "```tree".length;
+    const fenceBody = result.slice(bodyStart, result.indexOf("```", bodyStart));
+    expect(fenceBody).not.toContain("`");
   });
 
   it("does not process tree inside markdown code blocks", () => {
@@ -810,10 +814,10 @@ describe("preprocessContent — inline tree blobs (horizontal → vertical)", ()
 
   it("splits a pipe+em-dash single-line tree blob into vertical lines", () => {
     const input =
-      "walid/ |— public/ # Static assets (icons.svg) |— src/ | |— assets/ | |— todos/ | | |— todos.ts # Core | | |— index.ts |— package.json";
+      "project/ |— public/ # Static assets (icons.svg) |— src/ | |— assets/ | |— todos/ | | |— todos.ts # Core | | |— index.ts |— package.json";
     const result = preprocessContent(input);
     expect(result).toContain("```tree");
-    expect(result).toContain("walid/");
+    expect(result).toContain("project/");
     expect(result).toContain("|— public/");
     expect(result).toContain("|— src/");
     expect(result).toContain("package.json");
@@ -844,10 +848,10 @@ describe("preprocessContent — inline tree blobs (horizontal → vertical)", ()
 
   it("splits a pipe+box-dash single-line tree blob into vertical lines", () => {
     const input =
-      "walid/ |─ public/ |─ src/ | |─ todos/ | | |─ index.ts |─ package.json";
+      "project/ |─ public/ |─ src/ | |─ todos/ | | |─ index.ts |─ package.json";
     const result = preprocessContent(input);
     expect(result).toContain("```tree");
-    expect(result).toContain("walid/");
+    expect(result).toContain("project/");
     expect(result).toContain("|─ public/");
     expect(result).toContain("|─ src/");
     const lines = result.split("\n").map((l) => l.trim());

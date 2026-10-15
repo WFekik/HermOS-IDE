@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAppStore, isUndoneMessage } from "@/stores/app-store";
+import { useAppStore, isUndoneMessage, isPendingConversationId } from "@/stores/app-store";
 import { apiStream, apiPost, ApiRequestError } from "@/lib/api-client";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n";
@@ -340,19 +340,35 @@ export function useChatStream(): UseChatStreamReturn {
         flushPending();
         store.finishToolCall(evt.toolCallId, evt.result, evt.ok, convId);
         void store.refreshSubagents(convId);
-        if (evt.result && typeof evt.result === "object" && "manifest" in (evt.result as any)) {
-          const rawManifest = (evt.result as any).manifest;
-          // Prefer the workspace-relative `path` sibling when present so the
-          // Office panel can match the doc across polls (legacy manifests
-          // stored absolute paths).
-          const relPath = (evt.result as any).path;
-          const manifest =
-            rawManifest && typeof relPath === "string" && rawManifest.path !== relPath
-              ? { ...rawManifest, path: relPath }
-              : rawManifest;
-          store.setActiveOfficeDoc(manifest);
-          store.setRightPanelTab("office");
-          store.setRightPanelOpen(true);
+        if (evt.result && typeof evt.result === "object" && "manifest" in evt.result) {
+          const resultRecord = evt.result as Record<string, unknown>;
+          const rawManifest = resultRecord.manifest;
+          const relPath = resultRecord.path;
+          // Validate manifest shape before touching office state — SSE payloads
+          // must never drive UI without a shape check.
+          if (
+            rawManifest !== null &&
+            typeof rawManifest === "object" &&
+            !Array.isArray(rawManifest) &&
+            typeof relPath === "string" &&
+            relPath.length > 0 &&
+            relPath.length <= 500
+          ) {
+            const manifestRecord = rawManifest as Record<string, unknown>;
+            const manifest =
+              typeof manifestRecord.path === "string" && manifestRecord.path !== relPath
+                ? { ...(manifestRecord as object), path: relPath }
+                : rawManifest;
+            if (
+              manifest !== null &&
+              typeof manifest === "object" &&
+              typeof (manifest as { path?: unknown }).path === "string"
+            ) {
+              store.setActiveOfficeDoc(manifest as never);
+              store.setRightPanelTab("office");
+              store.setRightPanelOpen(true);
+            }
+          }
         }
         break;
       }
@@ -530,29 +546,6 @@ export function useChatStream(): UseChatStreamReturn {
           // queue-injected subagent report rows delivered at iteration
           // boundaries / run teardown — never mid-stream.
           void store.refreshMessages(convId);
-
-          if (convId !== store.activeConversationId) {
-            const session =
-              store.conversations.find((c) => c.id === convId) ||
-              store.pendingConversations.find((p) => p.id === convId);
-            const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
-            // Read language live at toast time — the captured `store` snapshot
-            // goes stale if the user switches language mid-run. Toast id is
-            // per-conversation (overwrites across runs by design; concurrent
-            // runs for one conversation are deduped upstream).
-            const liveLang = useAppStore.getState().language;
-            toast.success(t("agent_finished_task", liveLang), {
-              id: `done-${convId}`,
-              description: sessionTitle,
-              duration: 10000,
-              action: {
-                label: t("go_to_session", liveLang),
-                onClick: () => {
-                  void useAppStore.getState().selectConversation(convId);
-                },
-              },
-            });
-          }
         }
         break;
       }
@@ -580,10 +573,26 @@ export function useChatStream(): UseChatStreamReturn {
       }
       case "ui_action": {
         if (evt.action === "switch_panel") {
-          store.setRightPanelTab(evt.panel as any);
-          store.setRightPanelOpen(true);
-          if (evt.panel === "browser") {
-            store.setBrowserAgentActive(true);
+          const allowedPanels = new Set([
+            "files",
+            "artifacts",
+            "outline",
+            "mcp",
+            "plugins",
+            "skills",
+            "terminal",
+            "browser",
+            "office",
+            "subagents",
+            "git",
+            "problems",
+          ]);
+          if (typeof evt.panel === "string" && allowedPanels.has(evt.panel)) {
+            store.setRightPanelTab(evt.panel as never);
+            store.setRightPanelOpen(true);
+            if (evt.panel === "browser") {
+              store.setBrowserAgentActive(true);
+            }
           }
         } else if (evt.action === "sync_selection") {
           // A `/model` slash command changed the conversation's provider/model
@@ -616,6 +625,14 @@ export function useChatStream(): UseChatStreamReturn {
         if (id) store.appendAssistantError(id, evt.message, convId);
         setError(evt.message);
         toast.error(`Agent error: ${evt.message}`);
+        break;
+      }
+      default: {
+        // Unknown future event types must be visible, never silently dropped.
+        const unknownType = (evt as { type?: unknown }).type;
+        if (typeof unknownType === "string") {
+          console.warn("[stream] unknown event type:", unknownType);
+        }
         break;
       }
     }
@@ -659,6 +676,12 @@ export function useChatStream(): UseChatStreamReturn {
 
     const controller = new AbortController();
     activeStreamControllers.set(convId, controller);
+
+    // UI language rides along for response-language detection fallback —
+    // the message text itself decides first (see detectPromptLanguage).
+    if (!req.uiLanguage) {
+      req.uiLanguage = store.language;
+    }
 
     let streamCompleted = false;
     let rateLimited = false;
@@ -747,11 +770,20 @@ export function useChatStream(): UseChatStreamReturn {
     finalSt.setStreamingMessageId(null, convId);
     if (!rateLimited) finalSt.setRateLimitRetry(null);
 
+    // Title the conversation that just finished — not just the active one.
+    // The old code only titled the active conversation, so parallel runs
+    // in background sessions kept "New conversation" forever.
     try {
-      const activeId = finalSt.activeConversationId;
-      const conv = finalSt.conversations.find((c) => c.id === activeId);
-      if (conv && conv.title === "New conversation") {
-        await apiPost(`/api/conversations/${encodeURIComponent(conv.id)}/generate-title`, {});
+      const st = useAppStore.getState();
+      const conv =
+        st.conversations.find((c) => c.id === convId) ??
+        st.pendingConversations.find((p) => p.id === convId);
+      if (
+        conv &&
+        !isPendingConversationId(convId) &&
+        (conv.title ?? "New conversation") === "New conversation"
+      ) {
+        await apiPost(`/api/conversations/${encodeURIComponent(convId)}/generate-title`, {});
       }
     } catch (e) { console.warn("[HermOS] post-stream title generation failed:", e); }
 

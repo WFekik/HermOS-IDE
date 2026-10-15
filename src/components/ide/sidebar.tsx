@@ -34,6 +34,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useTranslation } from "@/hooks/use-translation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { displayConversationTitle } from "@/lib/conversation-title";
 import type { ConversationDTO } from "@/lib/types";
 
 interface SidebarProps {
@@ -86,7 +87,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
   const commitRename = React.useCallback(async (workspaceId: string) => {
     const next = renameDraft.trim();
     if (!next || next.length > 64) {
-      toast.error("Name must be 1–64 characters");
+      toast.error(t("project_name_length"));
       cancelRename();
       return;
     }
@@ -172,10 +173,10 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
   const onNew = async (workspaceId?: string) => {
     try {
       await createConversation(workspaceId ? { workspaceId } : undefined);
-      toast.success("New conversation");
+      toast.success(t("cmd_new_conversation"));
       onNavigate?.();
     } catch {
-      toast.error("Failed to create conversation");
+      toast.error(t("conversation_create_failed"));
     }
   };
 
@@ -296,7 +297,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                           e.stopPropagation();
                           toggleProjectCollapse(workspace.id);
                         }}
-                        aria-label={isCollapsed ? "Expand project" : "Collapse project"}
+                        aria-label={isCollapsed ? t("expand_project") : t("collapse_project")}
                       >
                         {isCollapsed ? (
                           <ChevronRight className="size-3" />
@@ -338,7 +339,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             size="sm"
                             className="size-5 p-0 text-muted-foreground hover:text-foreground"
                             onClick={(e) => { e.stopPropagation(); void onNew(workspace.id); }}
-                            aria-label={`New chat in ${workspace.name}`}
+                            aria-label={t("new_chat_in", { name: workspace.name })}
                             title={t("new_chat")}
                           >
                             <Plus className="size-3" />
@@ -348,7 +349,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             size="sm"
                             className="size-5 p-0 text-muted-foreground hover:text-foreground"
                             onClick={(e) => { e.stopPropagation(); startRename(workspace); }}
-                            aria-label={`Rename ${workspace.name}`}
+                            aria-label={t("rename_x", { name: workspace.name })}
                             title={t("rename")}
                           >
                             <Pencil className="size-3" />
@@ -358,7 +359,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
                             size="sm"
                             className="size-5 p-0 text-muted-foreground hover:text-destructive"
                             onClick={(e) => { e.stopPropagation(); setConfirmCloseId(workspace.id); }}
-                            aria-label={`Delete ${workspace.name}`}
+                            aria-label={t("delete_x", { name: workspace.name })}
                             title={t("delete")}
                           >
                             <Trash2 className="size-3" />
@@ -518,6 +519,7 @@ function ConversationRow({
   const [draft, setDraft] = React.useState(conversation.title);
   const [saving, setSaving] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const displayTitle = displayConversationTitle(conversation.title, t);
 
   React.useEffect(() => {
     if (!editing) setDraft(conversation.title);
@@ -606,16 +608,16 @@ function ConversationRow({
             onClick={(e) => e.stopPropagation()}
             disabled={saving}
             maxLength={100}
-            aria-label="Conversation title"
+            aria-label={t("conversation_title")}
             className="h-6 text-xs font-medium px-1.5 py-0"
           />
         ) : (
-          <div className="flex items-center gap-1.5 min-w-0" title={conversation.title}>
+          <div className="flex items-center gap-1.5 min-w-0" title={displayTitle}>
             {streaming && (
               <span className="size-1.5 rounded-full bg-brand animate-pulse shrink-0" />
             )}
             <span className="truncate text-xs leading-snug flex-1 min-w-0 font-normal">
-              <HighlightedTitle title={conversation.title} query={query} />
+              <HighlightedTitle title={displayTitle} query={query} />
             </span>
           </div>
         )}
@@ -629,7 +631,7 @@ function ConversationRow({
               variant="ghost"
               size="sm"
               className="size-5 p-0 text-muted-foreground hover:text-foreground"
-              aria-label={conversation.pinned ? "Unpin" : "Pin"}
+              aria-label={conversation.pinned ? t("unpin") : t("pin")}
               onClick={(e) => { e.stopPropagation(); onPin(); }}
             >
               <Pin className={cn("size-3", conversation.pinned ? "text-brand fill-brand" : "text-muted-foreground")} />

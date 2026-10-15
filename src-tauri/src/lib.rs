@@ -935,6 +935,10 @@ fn boot_backend_and_navigate(app_handle: tauri::AppHandle) {
   }
 
   // Navigate the already-visible splash window to the real app.
+  // Dismiss race: the user may close the splash mid-boot (after spawn,
+  // before navigate). Then the window is gone — exit the thread silently
+  // instead of fail_startup (which would pop a native dialog on a dead app
+  // and sleep 8s before exit).
   if let Some(window) = app_handle.get_webview_window("main") {
     let url: tauri::Url = match final_server_url.parse() {
       Ok(u) => u,
@@ -952,12 +956,19 @@ fn boot_backend_and_navigate(app_handle: tauri::AppHandle) {
     }
     log::info!("Window navigated to {}", final_server_url);
   } else {
+    // User closed the splash during boot — stop quietly. The RunEvent::Exit
+    // handler reaps the sidecar via the pidfile; no dialog, no 8s hang.
+    log::info!("Splash window closed during boot; stopping backend thread quietly.");
     kill_managed_child(&app_handle);
-    fail_startup(&app_handle, "Application window disappeared during startup.");
+    return;
   }
 
   // Warmup AFTER first paint so provisioning (/api/auth/me -> SQLite
   // migrate on first boot) overlaps the IDE shell instead of blocking it.
+  // Skip when the window is gone (closed during navigate).
+  if app_handle.get_webview_window("main").is_none() {
+    return;
+  }
   warmup_server(&final_server_url);
 }
 
@@ -1016,6 +1027,12 @@ pub fn run() {
       .title("HermOS IDE")
       .inner_size(1280.0, 800.0)
       .min_inner_size(900.0, 600.0)
+      // Frameless by design: custom chrome lives in React (WindowControls)
+      // and in the static splash (public/splash.html + tauri-window-controls.js).
+      // No `titleBarStyle: Overlay` anywhere — with decorations(false) on
+      // macOS the native traffic lights are removed, so the app draws its own
+      // (see top-bar macOS gate). Don't add a second Tauri window for the
+      // splash: single-window navigate() keeps chrome state trivial.
       .decorations(false)
       .shadow(true)
       .resizable(true)

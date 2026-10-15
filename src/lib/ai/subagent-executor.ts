@@ -33,7 +33,8 @@ import {
   unmarkSubagentReportDelivered,
   drainSubagentMailbox,
 } from "./subagent-queue";
-import { runTool, resolveWs, PUBLIC_BUILTIN_TOOLS, type ToolCtx } from "@/lib/ai/tools";
+import { runTool, resolveWs, PUBLIC_BUILTIN_TOOLS } from "@/lib/ai/tools";
+import type { ToolCtx } from "@/lib/ai/tool-registry";
 import {
   getCompletedCommand,
   acknowledgeCompletedCommand,

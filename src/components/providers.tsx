@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { setupGlobalLinkInterceptor } from "@/lib/open-external";
 import { useUpdateStore } from "@/stores/update-store";
+import { useAppStore } from "@/stores/app-store";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // Single shared QueryClient for the whole app. Created once per browser
@@ -34,6 +35,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }),
   );
+
+  // Apply persisted appearance prefs before paint. The store initializes
+  // with compiled defaults (matching SSR) so hydration never mismatches;
+  // stored values land here synchronously — no flash of default width/theme.
+  React.useLayoutEffect(() => {
+    useAppStore.getState().hydrateAppearance();
+  }, []);
 
   React.useEffect(() => {
     // Install global click interceptor for all external links across the app

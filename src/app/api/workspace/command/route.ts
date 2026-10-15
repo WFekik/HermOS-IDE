@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/session";
 import { withRateLimit, RATE_LIMITS, getClientIp } from "@/lib/rate-limit";
 import { z } from "zod";
 import { getActiveWorkspace, ensureDefaultWorkspace, runCommandWs } from "@/lib/workspace";
-import { parseJson, apiError, unauthorized, ok, audit, enforceLoopbackRequest } from "@/app/api/_lib/helpers";
+import { parseJson, apiError, unauthorized, ok, audit, enforceLoopbackRequest, withErrorHandler } from "@/app/api/_lib/helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ const schema = z.object({
   command: z.string().trim().min(1).max(1000),
 });
 
-export async function POST(req: NextRequest): Promise<Response> {
+export const POST = withErrorHandler(async (req: NextRequest): Promise<Response> => {
   const blocked = enforceLoopbackRequest(req);
   if (blocked) return blocked;
   let user;
@@ -46,4 +46,4 @@ export async function POST(req: NextRequest): Promise<Response> {
     reason: res.reason,
     cwd: res.cwd,
   });
-}
+});

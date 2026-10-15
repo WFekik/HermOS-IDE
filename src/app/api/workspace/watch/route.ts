@@ -139,14 +139,14 @@ export async function GET(req: NextRequest): Promise<Response> {
       }
 
       // Send an initial hello so the client knows the stream is alive
-      // before the first file event arrives.
+      // before the first file event arrives. No absolute paths — the client
+      // only needs liveness, never the server's filesystem layout.
       safeEnqueue(
         encoder.encode(
           `data: ${JSON.stringify({
             path: ".",
             event: "ready",
             timestamp: Date.now(),
-            rootDir: ws!.rootDir,
           })}\n\n`,
         ),
       );

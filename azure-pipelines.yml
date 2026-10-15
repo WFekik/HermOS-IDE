@@ -9,6 +9,9 @@
 # Triggers on pushed tags like v1.0.0. You can also run it manually from the UI.
 
 trigger:
+  # Broad `v*` (Azure tag filters don't support [] character classes):
+  # non-semver tags are refused later by scripts/release-to-github.mjs,
+  # which exits non-zero unless RELEASE_TAG matches vX.Y.Z.
   tags:
     include:
       - v*
@@ -57,9 +60,14 @@ jobs:
         displayName: "TypeCheck"
       - script: npm test
         displayName: "Run tests"
+      - script: node scripts/version.mjs check
+        displayName: "Version lockstep check"
+      - script: npm run audit:ci
+        displayName: "npm audit (high+, prod deps — advisory, non-blocking)"
+        continueOnError: true
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar (for cargo check)"
-      - script: cargo check --manifest-path src-tauri/Cargo.toml
+      - script: cargo check --locked --manifest-path src-tauri/Cargo.toml
         displayName: "Cargo check (Tauri)"
 
   - job: windows

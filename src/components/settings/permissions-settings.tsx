@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Save,
   RotateCcw,
@@ -42,19 +41,7 @@ import {
  * ------------------------------------------------------------------ */
 
 export function PermissionsSettings() {
-  const [queryClient] = React.useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: { refetchOnWindowFocus: false, retry: 1 },
-        },
-      }),
-  );
-  return (
-    <QueryClientProvider client={queryClient}>
-      <PermissionsSettingsInner />
-    </QueryClientProvider>
-  );
+  return <PermissionsSettingsInner />;
 }
 
 function PermissionsSettingsInner() {
@@ -309,7 +296,7 @@ function ModeToggle({
     <div
       className="inline-flex overflow-hidden rounded-md border"
       role="group"
-      aria-label="Permission mode"
+      aria-label={t("permission_mode_aria")}
     >
       {modes.map((m) => (
         <button
