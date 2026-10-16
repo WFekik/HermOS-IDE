@@ -83,7 +83,8 @@
     "zustand": "^5.0.15"
   },
   "overrides": {
-    "image-size": "^2.0.4"
+    "image-size": "^2.0.4",
+    "deepmerge-ts": "^8.0.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
