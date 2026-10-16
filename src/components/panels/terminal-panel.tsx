@@ -267,7 +267,7 @@ export function TerminalPanel() {
         role="log"
       >
         {lines.map((l) => (
-          <LineView key={l.id} line={l} prompt={currentPrompt} />
+          <MemoLineView key={l.id} line={l} prompt={currentPrompt} />
         ))}
       </div>
 
@@ -290,8 +290,7 @@ export function TerminalPanel() {
   );
 }
 
-function LineView({ line, prompt }: { line: Line; prompt: string }) {
-  if (line.kind === "banner") {
+function LineView({ line, prompt }: { line: Line; prompt: string }) {  if (line.kind === "banner") {
     return <div className="text-brand/90 italic">{line.text}</div>;
   }
   if (line.kind === "in") {
@@ -315,3 +314,8 @@ function LineView({ line, prompt }: { line: Line; prompt: string }) {
   }
   return <div className={cn("text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap")}>{line.text}</div>;
 }
+
+// Memoized: line objects are append-only stable identities and `prompt`
+// only changes with shell/workspace, so parent re-renders (e.g. every
+// panel-resize frame) skip all existing rows instead of reconciling them.
+const MemoLineView = React.memo(LineView);

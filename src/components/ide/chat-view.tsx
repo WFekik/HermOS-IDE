@@ -430,59 +430,65 @@ export function ChatView() {
   // id → clean dedup on refresh), and tracks it for the end-of-run fallback.
   // Resolves true when the turn was persisted+enqueued — the composer keeps
   // its draft on failure so nothing the user typed is lost.
-  const handleQueue = async (
-    text: string,
-    attachmentIds?: string[],
-    attachmentMetas?: AttachmentDTO[],
-  ): Promise<boolean> => {
-    let convId = activeConversationId;
-    if (!convId) {
-      try {
-        await createConversation();
-        convId = useAppStore.getState().activeConversationId;
-      } catch {
+  // useCallback (not a plain closure): Composer is memoized, so all three of
+  // its callback props must hold identity across ChatView renders — otherwise
+  // every panel resize would reconcile the entire composer subtree.
+  const handleQueue = React.useCallback(
+    async (
+      text: string,
+      attachmentIds?: string[],
+      attachmentMetas?: AttachmentDTO[],
+    ): Promise<boolean> => {
+      let convId = activeConversationId;
+      if (!convId) {
+        try {
+          await createConversation();
+          convId = useAppStore.getState().activeConversationId;
+        } catch {
+          toast.error(t("failed_create_conversation"));
+          return false;
+        }
+      }
+      if (!convId) {
+        toast.error(t("no_active_conversation"));
+        return false;
+      }
+      // Lazy conversations: materialize the pending row before queueing into it.
+      const realConvId = await ensureRealConversation(convId);
+      if (!realConvId) {
         toast.error(t("failed_create_conversation"));
         return false;
       }
-    }
-    if (!convId) {
-      toast.error(t("no_active_conversation"));
-      return false;
-    }
-    // Lazy conversations: materialize the pending row before queueing into it.
-    const realConvId = await ensureRealConversation(convId);
-    if (!realConvId) {
-      toast.error(t("failed_create_conversation"));
-      return false;
-    }
-    convId = realConvId;
-    const messageId = crypto.randomUUID();
-    useAppStore.getState().appendUserMessage({
-      id: messageId,
-      role: "user",
-      content: text,
-      createdAt: new Date().toISOString(),
-      ...(attachmentMetas && attachmentMetas.length > 0 ? { attachments: attachmentMetas } : {}),
-    });
-    queuedPendingRef.current.push({ id: messageId, text, attachmentIds, attachmentMetas, conversationId: convId });
-    try {
-      await apiPost("/api/agents/chat/queue", {
-        conversationId: convId,
-        message: text,
-        messageId,
-        ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+      convId = realConvId;
+      const messageId = crypto.randomUUID();
+      useAppStore.getState().appendUserMessage({
+        id: messageId,
+        role: "user",
+        content: text,
+        createdAt: new Date().toISOString(),
+        ...(attachmentMetas && attachmentMetas.length > 0 ? { attachments: attachmentMetas } : {}),
       });
-      return true;
-    } catch {
-      // No DB row exists — roll back the optimistic copy, drop the marker.
-      // Target the conversation it was queued into: the user may have
-      // switched conversations while the request was in flight.
-      queuedPendingRef.current = queuedPendingRef.current.filter((p) => p.id !== messageId);
-      useAppStore.getState().removeMessage(messageId, convId);
-      toast.error(t("failed_queue_message"));
-      return false;
-    }
-  };
+      queuedPendingRef.current.push({ id: messageId, text, attachmentIds, attachmentMetas, conversationId: convId });
+      try {
+        await apiPost("/api/agents/chat/queue", {
+          conversationId: convId,
+          message: text,
+          messageId,
+          ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+        });
+        return true;
+      } catch {
+        // No DB row exists — roll back the optimistic copy, drop the marker.
+        // Target the conversation it was queued into: the user may have
+        // switched conversations while the request was in flight.
+        queuedPendingRef.current = queuedPendingRef.current.filter((p) => p.id !== messageId);
+        useAppStore.getState().removeMessage(messageId, convId);
+        toast.error(t("failed_queue_message"));
+        return false;
+      }
+    },
+    [activeConversationId, createConversation, ensureRealConversation, t],
+  );
 
   // Consume `done`'s answered-ids so the fallback drops those markers — its
   // own same-run answer detection can't see the answer (the run's rows
@@ -592,6 +598,14 @@ export function ChatView() {
     [stop],
   );
 
+  // Stable Stop handler for the memoized composer (inline arrow would defeat
+  // the memo on every parent render — same reason as handleQueue above).
+  const handleStop = React.useCallback(() => {
+    const activeId = useAppStore.getState().activeConversationId;
+    if (activeId) stopConversation(activeId);
+    else stop();
+  }, [stopConversation, stop]);
+
   // Trigger the fallback for EVERY conversation that stops streaming — a
   // background conversation's run settling is just as terminal for its own
   // queued turns as the active one's. Delay slightly so the done event's
@@ -677,13 +691,17 @@ export function ChatView() {
         )}
       </div>
       <RateLimitRetryBanner onStop={stopConversation} />
-      <Composer onSend={handleSend} onQueue={handleQueue} onStop={() => {
-        const activeId = useAppStore.getState().activeConversationId;
-        if (activeId) stopConversation(activeId); else stop();
-      }} />
+      <MemoComposer onSend={handleSend} onQueue={handleQueue} onStop={handleStop} />
     </div>
   );
 }
+
+// Memoized composer: ChatView re-renders on every virtualizer measurement
+// (container resizes during panel drags), and without memo each of those
+// reconciles the entire composer subtree (pickers, popovers, buttons).
+// Safe: all behavior flows from internal state + store subscriptions, which
+// still update; only identical-props parent renders are skipped.
+const MemoComposer = React.memo(Composer);
 
 const SUBAGENT_REPORT_RE = /^<subagent_report name="([^"]*)"(?: status="([^"]*)")?>[\s\S]*?<\/subagent_report>\s*$/;
 
