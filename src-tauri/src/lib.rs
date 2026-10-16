@@ -663,8 +663,9 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
     return false;
   }
   let self_pid = std::process::id();
-  // Our own image name (tracks productName: "HermOS IDE" -> "HermOS IDE.exe")
-  // so a sibling instance is recognized even if the product is renamed.
+  // Our own image name (Cargo package `app` — the main binary is `app.exe`,
+  // NOT productName-derived; a stale literal would blind sibling detection).
+  // Used to recognize a sibling instance even if the product is renamed.
   let own_name: Option<String> = std::env::current_exe()
     .ok()
     .and_then(|exe| exe.file_name()?.to_str().map(|n| n.to_ascii_lowercase()));
@@ -673,14 +674,15 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
   // provision-node-sidecar (see find_bundled_node / is_node_image_name):
   // a live triple-suffixed orphan holds the same install-dir locks. The
   // install-dir path check below still scopes every kill — a user's own
-  // Node outside our tree is never a candidate. HermOS IDE.exe rows are
-  // enumerated in the SAME query so the sibling check costs no extra spawn.
+  // Node outside our tree is never a candidate. Main-exe rows (`app.exe`
+  // today, `HermOS IDE.exe` kept for a future rename) are enumerated in the
+  // SAME query so the sibling check costs no extra spawn.
   cmd
     .args([
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe' OR Name LIKE 'node-%' OR Name = 'HermOS IDE.exe'\" | Select-Object Name,ProcessId,ExecutablePath | ConvertTo-Csv -NoTypeInformation",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe' OR Name LIKE 'node-%' OR Name = 'app.exe' OR Name = 'HermOS IDE.exe'\" | Select-Object Name,ProcessId,ExecutablePath | ConvertTo-Csv -NoTypeInformation",
     ])
     .creation_flags(CREATE_NO_WINDOW);
   let out = match cmd.output() {
@@ -699,6 +701,7 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
   struct Candidate {
     pid: u32,
     exe_display: String,
+    exe_norm: String,
   }
   let mut nodes: Vec<Candidate> = Vec::new();
   let mut sibling_instances: u32 = 0;
@@ -728,9 +731,20 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
     }
     // Any remaining process carrying our own image name is a SIBLING
     // instance (self was excluded above): count it so the sweep stands
-    // down. The literal covers product renames the dynamic name misses.
-    let is_sibling =
-      own_name.as_ref().is_some_and(|own| name == *own) || name == "hermos ide.exe";
+    // down. The literals cover the current_exe-unknown edge and a future
+    // rename; both are path-scoped (another vendor's app.exe outside our
+    // tree must never veto — nor be killed — while a same-named binary
+    // inside it is unambiguously ours).
+    // Normalize through canonical_lower like the roots: CIM may report an
+    // 8.3 short path while roots are long-form (or differ in case) — a
+    // literal compare would skip a genuine orphan. Normalization failure
+    // falls back to the literal and simply misses (safe side: never kill).
+    let exe_norm = canonical_lower(Path::new(cells[2].trim()));
+    let under_ours = roots.iter().any(|r| exe_norm.starts_with(r));
+    let is_sibling = (own_name.as_ref().is_some_and(|own| name == *own)
+      || name == "hermos ide.exe"
+      || name == "app.exe")
+      && under_ours;
     if is_sibling {
       sibling_instances += 1;
       continue;
@@ -739,6 +753,7 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
       nodes.push(Candidate {
         pid,
         exe_display: cells[2].trim().to_string(),
+        exe_norm,
       });
     }
   }
@@ -751,12 +766,10 @@ fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
   }
   let mut killed_any = false;
   for node in nodes {
-    // Normalize through canonical_lower like the roots: CIM may report an
-    // 8.3 short path while roots are long-form (or differ in case) — a
-    // literal compare would skip a genuine orphan. Normalization failure
-    // falls back to the literal and simply misses (safe side: never kill).
-    let exe_norm = canonical_lower(Path::new(&node.exe_display));
-    if node.exe_display.trim().is_empty() || !roots.iter().any(|r| exe_norm.starts_with(r)) {
+    // exe_norm was computed at partition time (same normalization, no
+    // re-walk). Empty display (denied ExecutablePath) normalizes to "" and
+    // simply misses — safe side: never kill.
+    if node.exe_display.trim().is_empty() || !roots.iter().any(|r| node.exe_norm.starts_with(r)) {
       continue;
     }
     log::info!(
