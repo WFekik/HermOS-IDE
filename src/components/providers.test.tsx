@@ -5,8 +5,8 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { Providers } from "@/components/providers";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/components/theme/theme-provider";
-import * as fs from "fs";
-import * as path from "path";
+import fs from "fs";
+import path from "path";
 
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -52,8 +52,10 @@ describe("Providers Component (Milestone 1)", () => {
   });
 
   it("statically verifies that SessionProvider and next-auth are completely removed from providers.tsx", () => {
-    const providersPath = path.resolve(__dirname, "providers.tsx");
-    const content = fs.readFileSync(providersPath, "utf-8");
+    const resolveFn = path.resolve ?? (path as unknown as { default: typeof path }).default?.resolve;
+    const readFn = fs.readFileSync ?? (fs as unknown as { default: typeof fs }).default?.readFileSync;
+    const providersPath = resolveFn(__dirname, "providers.tsx");
+    const content = readFn(providersPath, "utf-8");
 
     expect(content).not.toContain("SessionProvider");
     expect(content).not.toContain("next-auth");
