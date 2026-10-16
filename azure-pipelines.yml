@@ -54,8 +54,14 @@ jobs:
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
-      - script: "npm ci --no-audit --no-fund"
-        displayName: "npm ci"
+      - script: |
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && break || {
+              echo "npm ci attempt $i failed, retrying in 10s..."
+              sleep 10
+            }
+          done
+        displayName: "npm ci (with network retry)"
       - script: npm run typecheck
         displayName: "TypeCheck"
       - script: npm test
@@ -113,7 +119,7 @@ jobs:
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
-      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
+      - script: "npm ci --no-audit --no-fund --ignore-scripts=false --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000"
         displayName: "npm ci"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar"
@@ -175,8 +181,14 @@ jobs:
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
-      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
-        displayName: "npm ci"
+      - script: |
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund --ignore-scripts=false --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && break || {
+              echo "npm ci attempt $i failed, retrying in 10s..."
+              sleep 10
+            }
+          done
+        displayName: "npm ci (with network retry)"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar (universal)"
         env:
@@ -238,8 +250,14 @@ jobs:
       - task: UseNode@1
         inputs:
           version: "$(NODE_VERSION)"
-      - script: "npm ci --no-audit --no-fund --ignore-scripts=false"
-        displayName: "npm ci"
+      - script: |
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund --ignore-scripts=false --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && break || {
+              echo "npm ci attempt $i failed, retrying in 10s..."
+              sleep 10
+            }
+          done
+        displayName: "npm ci (with network retry)"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar"
       - script: npx tauri build --bundles deb -- --locked

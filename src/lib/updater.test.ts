@@ -9,6 +9,7 @@ import {
   recordPendingUpdate,
   readPendingUpdate,
   clearPendingUpdate,
+  consumeStaleUpdate,
   releaseTagUrl,
   isFileLockError,
   installWithRetries,
@@ -104,6 +105,51 @@ describe('updater', () => {
       recordPendingUpdate('1.0.7', '1.0.7');
       expect(readPendingUpdate()).toBeNull();
       localStorage.setItem('hermos:pending-update', 'not-json{{{');
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('consumeStaleUpdate: returns null when no update was pending', () => {
+      expect(consumeStaleUpdate()).toBeNull();
+    });
+
+    it('consumeStaleUpdate: clears pending and returns null when update applied successfully', () => {
+      // Current app version is 1.1.2
+      recordPendingUpdate('1.1.1', '1.1.2');
+      expect(readPendingUpdate()).not.toBeNull();
+      expect(consumeStaleUpdate()).toBeNull();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('consumeStaleUpdate: normalizes "v" prefix in version comparison', () => {
+      recordPendingUpdate('v1.1.1', 'v1.1.2');
+      expect(consumeStaleUpdate()).toBeNull();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('consumeStaleUpdate: clears pending and returns null when current is already newer', () => {
+      // Current is 1.1.2, pending target was 1.1.0
+      localStorage.setItem(
+        'hermos:pending-update',
+        JSON.stringify({ from: '1.0.9', to: '1.1.0', at: Date.now() }),
+      );
+      expect(consumeStaleUpdate()).toBeNull();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('consumeStaleUpdate: returns pending when current is still on "from" version (install did not apply)', () => {
+      // Current is 1.1.2, update was attempted to 1.1.3
+      recordPendingUpdate('1.1.2', '1.1.3');
+      const stale = consumeStaleUpdate();
+      expect(stale).toMatchObject({ from: '1.1.2', to: '1.1.3' });
+    });
+
+    it('consumeStaleUpdate: drops stale record when on unknown / rollback version', () => {
+      // Current is 1.1.2, pending was between two completely different historical versions
+      localStorage.setItem(
+        'hermos:pending-update',
+        JSON.stringify({ from: '0.9.0', to: '0.9.5', at: Date.now() }),
+      );
+      expect(consumeStaleUpdate()).toBeNull();
       expect(readPendingUpdate()).toBeNull();
     });
   });
