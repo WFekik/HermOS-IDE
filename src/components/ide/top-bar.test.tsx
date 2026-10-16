@@ -4,8 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { TopBar } from "./top-bar";
 import { useAppStore } from "@/stores/app-store";
-import fs from "fs";
-import path from "path";
+import topBarSource from "./top-bar.tsx?raw";
 
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -121,14 +120,9 @@ describe("TopBar Component (Milestone 1)", () => {
   });
 
   it("statically verifies that Sign Out, LogOut icon, and next-auth are not in top-bar.tsx", () => {
-    const resolveFn = path.resolve ?? (path as unknown as { default: typeof path }).default?.resolve;
-    const readFn = fs.readFileSync ?? (fs as unknown as { default: typeof fs }).default?.readFileSync;
-    const topBarPath = resolveFn(__dirname, "top-bar.tsx");
-    const content = readFn(topBarPath, "utf-8");
-
-    expect(content).not.toContain("LogOut");
-    expect(content).not.toContain("Sign out");
-    expect(content).not.toContain("signOut");
-    expect(content).not.toContain("next-auth");
+    expect(topBarSource).not.toContain("LogOut");
+    expect(topBarSource).not.toContain("Sign out");
+    expect(topBarSource).not.toContain("signOut");
+    expect(topBarSource).not.toContain("next-auth");
   });
 });
