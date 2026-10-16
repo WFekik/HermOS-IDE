@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { getAppVersion } from '@/lib/version';
+import { getAppVersion, isNewerVersion } from '@/lib/version';
 import {
   t as translate,
   SUPPORTED_LANGUAGE_CODES,
@@ -133,11 +133,15 @@ export function consumeStaleUpdate(): PendingUpdate | null {
   } catch {
     return null;
   }
-  if (current === pending.to) {
+  const cleanCurrent = String(current || "").trim().replace(/^v/i, "");
+  const cleanTo = String(pending.to || "").trim().replace(/^v/i, "");
+  const cleanFrom = String(pending.from || "").trim().replace(/^v/i, "");
+
+  if (cleanCurrent === cleanTo || isNewerVersion(cleanTo, cleanCurrent)) {
     clearPendingUpdate();
     return null;
   }
-  if (current === pending.from) return pending;
+  if (cleanCurrent === cleanFrom) return pending;
   // Unknown version (dev/rollback) — drop the stale record.
   clearPendingUpdate();
   return null;

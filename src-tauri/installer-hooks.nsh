@@ -76,6 +76,11 @@
     Pop $0
     Pop $0
     System::Call 'kernel32::SetEnvironmentVariable(t "HERMOS_INSTDIR", p 0)'
+    ; Purge obsolete static JS/CSS chunks from previous versions so stale
+    ; hash bundles never linger side-by-side with the new build.
+    ${If} $INSTDIR != ""
+      RMDir /r "$INSTDIR\_up_\.next-build\standalone\.next-build\static\chunks"
+    ${EndIf}
   Pop $2
   Pop $1
   Pop $0
@@ -117,4 +122,13 @@
   Pop $2
   Pop $1
   Pop $0
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ; Recursively remove _up_ (including runtime cache, db files, and old chunks
+  ; that Tauri's default non-recursive uninstaller template leaves behind).
+  ${If} $INSTDIR != ""
+    RMDir /r "$INSTDIR\_up_"
+    RMDir "$INSTDIR"
+  ${EndIf}
 !macroend

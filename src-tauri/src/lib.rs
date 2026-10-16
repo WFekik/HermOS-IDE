@@ -1390,7 +1390,14 @@ fn boot_backend_and_navigate(app_handle: tauri::AppHandle) {
   // instead of fail_startup (which would pop a native dialog on a dead app
   // and sleep 8s before exit).
   if let Some(window) = app_handle.get_webview_window("main") {
-    let url: tauri::Url = match final_server_url.parse() {
+    // Version-tag the document URL (?v=X.Y.Z) so WebView2 / Chromium never
+    // serves a stale cached HTML shell from a prior version across app updates.
+    let versioned_url = format!(
+      "{}/?v={}",
+      final_server_url.trim_end_matches('/'),
+      env!("CARGO_PKG_VERSION")
+    );
+    let url: tauri::Url = match versioned_url.parse() {
       Ok(u) => u,
       Err(e) => {
         kill_managed_child(&app_handle);
@@ -1404,7 +1411,7 @@ fn boot_backend_and_navigate(app_handle: tauri::AppHandle) {
         &format!("Backend is ready but the window could not navigate: {}", e),
       );
     }
-    log::info!("Window navigated to {}", final_server_url);
+    log::info!("Window navigated to {}", versioned_url);
   } else {
     // User closed the splash during boot — stop quietly. The RunEvent::Exit
     // handler reaps the sidecar via the pidfile; no dialog, no 8s hang.

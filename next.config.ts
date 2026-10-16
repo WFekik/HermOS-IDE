@@ -83,6 +83,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // Anti-caching for root HTML document: WebView2 / Chromium must never
+        // serve a stale cached index HTML across desktop app updates.
+        source: "/",
+        headers: [
+          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate, proxy-revalidate" },
+          { key: "Pragma", value: "no-cache" },
+          { key: "Expires", value: "0" },
+        ],
+      },
+      {
         // Strict IDE CSP for all routes. Next.js `headers()` `source` uses
         // path-to-regexp syntax and does NOT support JS negative lookahead
         // (e.g. "/((?!api/browser/proxy).*)" never matches as intended).
