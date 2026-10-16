@@ -55,6 +55,21 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.2" || tag === "1.1.2") {
+    return `### HermOS IDE ${tag} — Updates That Actually Apply on Windows
+
+100% Local-first architecture with zero remote telemetry. Autonomous subagent execution, MCP client, and browser preview.
+
+#### ⚡ What's New in ${tag}
+- **🔧 No More "Error Opening File for Writing"**: The installer refused to replace files while the app was running. Auto-update now verifies every locked file is free BEFORE the installer spawns — and the installer itself asks you to close the app (Retry/Cancel) instead of failing mid-copy.
+- **🚪 Quit-First Guidance, No Reinstall Needed**: If files are still in use, you get the exact locked filenames plus a one-click Quit button. Close fully (all windows), retry — an uninstall was never required.
+- **🔍 Lock Detection That Holds Up**: Pre-install probe covers the triple-suffixed sidecar binary, retries past transient antivirus/indexer holds, and tells apart real locks from disk-full errors. Orphaned sidecars are cleaned up; a second open window vetoes the kill so nothing dies silently.
+- **🌍 Fully Translated**: Every new string in all 9 languages (English, Spanish, French, German, Chinese, Japanese, Arabic RTL, Russian, Portuguese).
+- **✅ Verified End-to-End**: typecheck clean, eslint clean, full test suite green, cargo check clean, production build green (Azure test gate).
+
+#### 📦 Downloads & Verification
+Verify installers against SHA256SUMS. Auto-update integrity is covered by minisign signatures. Download the installer for your platform below.`;
+  }
   if (tag === "v1.1.1" || tag === "1.1.1") {
     return `### HermOS IDE ${tag} — Smarter Chat, Honest Agent & Full Arabic UX
 

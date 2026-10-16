@@ -12,6 +12,7 @@ import {
   releaseTagUrl,
   isFileLockError,
   installWithRetries,
+  InstallBlockedError,
 } from './updater';
 
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
@@ -132,6 +133,16 @@ describe('updater', () => {
       ['locking the directory failed', true],
       // bare "remove" without "directory" must not match.
       ['failed to remove temp file', false],
+      // NSIS "Error opening file for writing" — the dialog shown when the
+      // sidecar (node.exe) or a loaded native module is alive at install
+      // time. Must retry/retain-pending, never drop as definitive.
+      ['Error opening file for writing: C:\\Users\\ADMINI~1\\AppData\\Local\\HermOS IDE\\node.exe', true],
+      ['Error opening file for writing: C:\\PROGRA~1\\HermOS IDE\\resources\\.next-build\\standalone\\node_modules\\prisma\\client\\query_engine-windows.dll.node', true],
+      // "file for reading" is NOT a write lock — must not match.
+      ['failed to open the release-notes file for reading', false],
+      // Bare write failures (disk full etc.) are definitive, not locks —
+      // they must fail fast and clear pending, never retry or re-nag.
+      ['failed to write file to disk: no space left on device', false],
     ])('classifies %q as lock=%s', (message, expected) => {
       expect(isFileLockError(new Error(message))).toBe(expected);
     });
@@ -259,6 +270,67 @@ describe('updater', () => {
       const result = await checkForUpdates(true);
       expect(result.status).toBe('downloaded');
       expect(toast.loading).toHaveBeenCalled();
+    });
+
+    it('blocked by surviving locks: aborts before install, clears pending, no second toast', async () => {
+      const upd = makeUpdate();
+      mockCheck.mockResolvedValue(upd as unknown as Awaited<ReturnType<typeof check>>);
+      // stop_node_sidecar resolves truthy (boolean); the lock probe reports
+      // node.exe still locked. Non-array probe payloads (like this boolean)
+      // must mean "unknown → proceed", so route by command name.
+      mockInvoke.mockImplementation(((cmd: string) =>
+        Promise.resolve(
+          cmd === 'check_install_locks' ? ['C:\\HermOS IDE\\node.exe'] : true,
+        )) as unknown as typeof invoke);
+      await expect(checkForUpdates(true)).rejects.toThrow(InstallBlockedError);
+      expect(upd.install).not.toHaveBeenCalled();
+      expect(readPendingUpdate()).toBeNull();
+      expect(toast.error).toHaveBeenCalled();
+      // Persistent lock: probe retried to ride out transient holders.
+      expect(
+        mockInvoke.mock.calls.filter((args) => args[0] === 'check_install_locks'),
+      ).toHaveLength(3);
+    });
+
+    it('transient lock clears on re-probe: install proceeds', async () => {
+      const upd = makeUpdate();
+      mockCheck.mockResolvedValue(upd as unknown as Awaited<ReturnType<typeof check>>);
+      let probeCalls = 0;
+      mockInvoke.mockImplementation(((cmd: string) => {
+        if (cmd === 'check_install_locks') {
+          probeCalls += 1;
+          return Promise.resolve(probeCalls === 1 ? ['C:\\HermOS IDE\\node.exe'] : []);
+        }
+        return Promise.resolve(true);
+      }) as unknown as typeof invoke);
+      const result = await checkForUpdates(true, { quiet: true });
+      expect(result).toMatchObject({ status: 'downloaded', version: '9.9.9' });
+      expect(upd.install).toHaveBeenCalledTimes(1);
+      expect(probeCalls).toBe(2);
+    });
+
+    it('quiet blocked: throws InstallBlockedError, no error toast, pending cleared', async () => {
+      const upd = makeUpdate();
+      mockCheck.mockResolvedValue(upd as unknown as Awaited<ReturnType<typeof check>>);
+      mockInvoke.mockImplementation(((cmd: string) =>
+        Promise.resolve(
+          cmd === 'check_install_locks'
+            ? ['C:\\HermOS IDE\\node.exe', 'C:\\HermOS IDE\\query_engine-windows.dll.node']
+            : true,
+        )) as unknown as typeof invoke);
+      await expect(checkForUpdates(true, { quiet: true })).rejects.toThrow(
+        InstallBlockedError,
+      );
+      expect(upd.install).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(readPendingUpdate()).toBeNull();
+    });
+
+    it('unknown probe payload proceeds to install (backward compatible)', async () => {
+      mockCheck.mockResolvedValue(makeUpdate() as unknown as Awaited<ReturnType<typeof check>>);
+      mockInvoke.mockResolvedValue(true);
+      const result = await checkForUpdates(true, { quiet: true });
+      expect(result).toMatchObject({ status: 'downloaded', version: '9.9.9' });
     });
   });
 });

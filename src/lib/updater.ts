@@ -175,6 +175,60 @@ async function stopSidecarForUpdate(): Promise<void> {
 }
 
 /**
+ * Marker for "the installer would be blocked by locked files": the probe
+ * site already toasted quit-first guidance (or the quiet caller owns the UI
+ * via e.message), so generic failure handlers must not pile a second
+ * "install failed" toast on top. Thrown BEFORE install() ever spawns NSIS.
+ */
+export class InstallBlockedError extends Error {
+  readonly files: string[];
+  constructor(message: string, files: string[]) {
+    super(message);
+    this.name = "InstallBlockedError";
+    this.files = files;
+  }
+}
+
+/** Best-effort full quit so the user can run the installer over a clean
+ * tree. Needs the `process:allow-exit` capability; without it the user
+ * quits via the OS and nothing here throws. */
+function quitAppNow(): void {
+  import("@tauri-apps/plugin-process")
+    .then(({ exit }) => exit(0))
+    .catch(() => {
+      /* capability missing — user quits via the OS */
+    });
+}
+
+/**
+ * Ask the backend which install-dir files NSIS must replace are still
+ * locked for writing (running node.exe, memory-mapped *.node modules).
+ * Re-probes up to 3x: a transient holder (AV scan, indexer) can clear in a
+ * second, so only a lock that survives every attempt blocks the install.
+ * Returns the locked paths, or null when the probe itself is unavailable
+ * (non-Windows, old backend) — null means "unknown, proceed exactly like
+ * before the probe existed"; the install retries stay the backstop. A
+ * non-array payload (e.g. a boolean from a mocked bridge) is also null.
+ */
+async function checkInstallLocks(): Promise<string[] | null> {
+  if (!isTauriDesktop()) return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const locked = await invoke<unknown>("check_install_locks");
+      if (!Array.isArray(locked)) return null;
+      if (locked.length === 0 || attempt === 2) return locked.map(String);
+    } catch (e) {
+      console.warn("[updater] check_install_locks unavailable, proceeding:", e);
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  // Satisfies the compiler; every loop path above already returned.
+  return null;
+}
+
+/**
  * Exported for unit tests (updater.test.ts). Classifies installer failures
  * caused by Windows file locks so installWithRetries knows what is worth
  * retrying. Matching rules, all deliberate:
@@ -183,6 +237,11 @@ async function stopSidecarForUpdate(): Promise<void> {
  *   have no leading word boundary before "lock", so they never match.
  * - `remove` alone is intentionally NOT a match — it must co-occur with
  *   `directory`, otherwise every rm-style error would retry.
+ * - `opening file for writing`: the NSIS "Error opening file for writing:
+ *   <path>" dialog shown when the sidecar (node.exe) or a loaded native
+ *   module (*.node, e.g. the prisma engine) is still alive at install time.
+ *   Narrowly the NSIS phrasing — a bare "failed to write file" (disk full
+ *   etc.) is definitive, not a lock, and must not retry or retain pending.
  */
 export function isFileLockError(e: unknown): boolean {
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
@@ -196,6 +255,7 @@ export function isFileLockError(e: unknown): boolean {
     msg.includes("being used") ||
     msg.includes("access is denied") ||
     msg.includes("os error 5") ||
+    msg.includes("opening file for writing") ||
     (msg.includes("remove") && msg.includes("directory"))
   );
 }
@@ -359,6 +419,9 @@ export async function checkForUpdates(
             opts.onStage?.("downloading");
             opts.onProgress?.(0, totalBytes);
             if (!opts.quiet) {
+              // A new attempt supersedes any pinned failure toast from a
+              // previous try (blocked/install-failed share this id).
+              toast.dismiss("app-update-failed");
               toast.loading(tx("update_downloading", { version: update.version }), {
                 id: "app-update-progress",
               });
@@ -416,6 +479,37 @@ export async function checkForUpdates(
     // the next boot can verify the install actually applied.
     recordPendingUpdate(currentVersion, update.version);
     await stopSidecarForUpdate();
+    const stillLocked = await checkInstallLocks();
+    if (stillLocked && stillLocked.length > 0) {
+      // Locks survived the kill (orphan Node, a second app instance, an AV
+      // handle…). Running install() now would drive straight into NSIS
+      // "Error opening file for writing" dialogs with Abort/Retry/Ignore —
+      // the exact dead end in the community reports. Abort BEFORE the
+      // installer spawns: undo the pending record (nothing was staged by
+      // us) and hand the user the actual fix — quit fully, then retry.
+      // No uninstall is ever needed; the NSIS installer upgrades in place
+      // over a clean (fully-quit) tree.
+      clearPendingUpdate();
+      const files = stillLocked
+        .map((p) => p.split(/[/\\]/).pop() || p)
+        .slice(0, 5)
+        .join(", ");
+      const blockedMessage = tx("update_blocked_by_lock_desc", { files });
+      if (!opts.quiet) {
+        toast.dismiss("app-update-progress");
+        toast.error(tx("update_blocked_by_lock"), {
+          id: "app-update-failed",
+          duration: Infinity,
+          description: blockedMessage,
+          action: { label: tx("update_quit_now"), onClick: () => quitAppNow() },
+          cancel: {
+            label: tx("update_install_manually"),
+            onClick: () => openReleaseTag(update.version),
+          },
+        });
+      }
+      throw new InstallBlockedError(blockedMessage, stillLocked);
+    }
     opts.onStage?.("installing");
     if (!opts.quiet) {
       toast.loading(tx("update_installing"), {
@@ -470,7 +564,12 @@ export async function checkForUpdates(
     // Quiet callers render the restart state in the titlebar button instead.
     // (Gated: the id is shared across flows, so a quiet flow must not kill
     // a concurrent non-quiet flow's spinner.)
-    if (!opts.quiet) toast.dismiss("app-update-progress");
+    if (!opts.quiet) {
+      toast.dismiss("app-update-progress");
+      // Success clears any stale Infinity failure toast (blocked/failed) so
+      // it cannot linger over the new version.
+      toast.dismiss("app-update-failed");
+    }
     try {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();

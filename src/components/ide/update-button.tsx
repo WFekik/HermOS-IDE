@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Download, Loader2, RotateCcw, ExternalLink } from "lucide-react";
+import { Download, Loader2, RotateCcw, ExternalLink, Power } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUpdateStore, shouldShowUpdateButton } from "@/stores/update-store";
-import { checkForUpdates, isTauriDesktop, releaseTagUrl } from "@/lib/updater";
+import { checkForUpdates, isTauriDesktop, releaseTagUrl, InstallBlockedError } from "@/lib/updater";
 import { useTranslation } from "@/hooks/use-translation";
 
 function formatMb(bytes: number): string {
@@ -49,6 +49,11 @@ export function UpdateButton() {
   const reset = useUpdateStore((s) => s.reset);
 
   const [busy, setBusy] = React.useState(false);
+  // True only when the last failure was lock-blocked (InstallBlockedError):
+  // quitting helps there (quit fully, then retry/manual-install), but not
+  // for signature/download failures — so the Quit button must not ride on
+  // the generic `failed` status. Reset on every new attempt.
+  const [quitOffer, setQuitOffer] = React.useState(false);
   // Single desktop detector (same one the installer flow branches on) —
   // styling and flow must never disagree about the environment.
   const tauriDesktop = isTauriDesktop();
@@ -102,6 +107,7 @@ export function UpdateButton() {
     }
     inflightRef.current = true;
     setBusy(true);
+    setQuitOffer(false);
     try {
       const result = await checkForUpdates(true, {
         quiet: true,
@@ -131,6 +137,7 @@ export function UpdateButton() {
         reset();
       }
     } catch (e) {
+      setQuitOffer(e instanceof InstallBlockedError);
       markFailed(e instanceof Error ? e.message : String(e));
     } finally {
       inflightRef.current = false;
@@ -145,6 +152,19 @@ export function UpdateButton() {
         openExternal(manualUrl);
       });
   }, [manualUrl, openExternal]);
+
+  // One-click quit for the locked-files failure state: the guidance tells
+  // the user to quit fully (all windows) before retrying/installing
+  // manually, so offer it as a button next to Retry. Needs the
+  // `process:allow-exit` capability; without it the click is a no-op and
+  // the user quits via the OS.
+  const handleQuitNow = React.useCallback(() => {
+    import("@tauri-apps/plugin-process")
+      .then(({ exit }) => exit(0))
+      .catch(() => {
+        /* capability missing — user quits via the OS */
+      });
+  }, []);
 
   if (!visible) return null;
 
@@ -241,7 +261,7 @@ export function UpdateButton() {
 
           {status === "failed" && (
             <div className="px-3 pb-2">
-              <p className="text-xs text-destructive">{error ?? t("update_failed")}</p>
+              <p className="text-xs text-destructive break-words">{error ?? t("update_failed")}</p>
             </div>
           )}
 
@@ -263,6 +283,17 @@ export function UpdateButton() {
               >
                 <Download className="size-3.5" />
                 {status === "failed" ? t("update_retry_update") : t("update_now")}
+              </Button>
+            )}
+            {status === "failed" && quitOffer && tauriDesktop && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start gap-2"
+                onClick={handleQuitNow}
+              >
+                <Power className="size-3.5" />
+                {t("update_quit_now")}
               </Button>
             )}
             {status === "ready-restart" && tauriDesktop && (

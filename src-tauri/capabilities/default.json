@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "process:allow-restart",
+    "process:allow-exit",
     "dialog:allow-open",
     "dialog:allow-message",
     "core:window:allow-set-title",

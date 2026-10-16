@@ -79,6 +79,7 @@ fn stop_node_sidecar(app: tauri::AppHandle) -> Result<bool, String> {
   // Take the child out from under a SHORT guard, then kill outside it: the
   // kill waits up to ~5s + 500ms grace, and holding the mutex across that
   // would serialize concurrent invokers / the exit handler behind it.
+  let mut stopped_any = false;
   let child = if let Some(state) = app.try_state::<NodeProcess>() {
     state.0.lock().unwrap_or_else(|e| e.into_inner()).take()
   } else {
@@ -90,21 +91,32 @@ fn stop_node_sidecar(app: tauri::AppHandle) -> Result<bool, String> {
     if let Ok(dir) = app.path().app_data_dir() {
       let _ = std::fs::remove_file(dir.join("node.pid"));
     }
-    return Ok(true);
-  }
-  // In-memory slot is empty (crashed child, or state lost) but a stale
-  // pidfile may still point at a live Node holding install-dir locks — and
-  // this command exists precisely to release those locks before an update.
-  // Fall back to the verified pidfile kill so the updater never proceeds
-  // with a locked `_up_` staging dir.
-  if let Ok(dir) = app.path().app_data_dir() {
+    stopped_any = true;
+  } else if let Ok(dir) = app.path().app_data_dir() {
+    // In-memory slot is empty (crashed child, or state lost) but a stale
+    // pidfile may still point at a live Node holding install-dir locks — and
+    // this command exists precisely to release those locks before an update.
+    // Fall back to the verified pidfile kill so the updater never proceeds
+    // with a locked `_up_` staging dir.
     let before = std::fs::read_to_string(dir.join("node.pid")).unwrap_or_default();
     kill_stale_pidfile(&dir);
     if !before.trim().is_empty() {
-      return Ok(true);
+      stopped_any = true;
     }
   }
-  Ok(false)
+  // Orphan sweep (Windows, update path only — never boot): the slot + pidfile
+  // above cannot see a Node that outlived its parent (Rust crash with a lost
+  // pidfile). Such an orphan keeps node.exe + loaded *.node modules locked
+  // and drives NSIS straight into "Error opening file for writing" dialogs.
+  // Path-scoped: only node.exe processes whose executable lives under OUR
+  // install dirs are candidates; a user's own Node is never touched. A
+  // second live app instance vetoes the sweep (its sidecar is not an
+  // orphan) — the lock probe then aborts with quit-all-windows guidance.
+  #[cfg(target_os = "windows")]
+  if kill_scoped_orphan_nodes(&app) {
+    stopped_any = true;
+  }
+  Ok(stopped_any)
 }
 
 /// Kill the managed child (if any) and drop the stale pidfile so the next
@@ -502,6 +514,338 @@ fn kill_stale_pidfile(app_data_dir: &Path) {
 
 fn write_pidfile(app_data_dir: &Path, pid: u32) {
   let _ = std::fs::write(app_data_dir.join("node.pid"), pid.to_string());
+}
+
+/// Install-dir roots the running app lives under (bundled resources + exe
+/// dir), normalized for comparison on a case-insensitive filesystem with
+/// 8.3 short-vs-long aliases (see canonical_lower): a literal compare could
+/// miss our own tree (false negative → skipped orphan) or, worse, miss our
+/// own exe in the lock-probe exclusion (false positive → every update
+/// aborted). The trailing separator keeps `...\HermOS IDE` from prefix-
+/// matching a sibling like `...\HermOS IDE-old`.
+#[cfg(target_os = "windows")]
+fn install_dir_prefixes(app: &tauri::AppHandle) -> Vec<String> {
+  fn prefix(p: &Path) -> String {
+    let mut s = canonical_lower(p);
+    if !s.ends_with('\\') && !s.ends_with('/') {
+      s.push('\\');
+    }
+    s
+  }
+  let mut roots = Vec::new();
+  if let Ok(d) = app.path().resource_dir() {
+    roots.push(prefix(&d));
+  }
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(parent) = exe.parent() {
+      roots.push(prefix(parent));
+    }
+  }
+  roots
+}
+
+/// Lowercased canonical form of a path for identity/prefix comparison.
+/// Canonicalization resolves 8.3 short-vs-long aliases (`C:\PROGRA~1\…`
+/// vs `C:\Program Files\…`) and lowercasing handles the case-insensitive
+/// filesystem; both sides of every compare go through this, so aliases
+/// agree. Falls back to the lowercased literal when canonicalization fails
+/// (path vanished mid-walk) — callers treat a fallback mismatch as "not
+/// ours", i.e. the safe side (skip, never kill / never mis-exclude).
+#[cfg(target_os = "windows")]
+fn canonical_lower(p: &Path) -> String {
+  std::fs::canonicalize(p)
+    .map(|c| c.to_string_lossy().to_ascii_lowercase())
+    .unwrap_or_else(|_| p.to_string_lossy().to_ascii_lowercase())
+}
+
+/// Kill node.exe processes scoped to OUR install dirs. Update path only —
+/// called from stop_node_sidecar, never from boot (boot stays on the ~50ms
+/// pidfile kill; this CIM enumeration costs ~0.5-1s of cold PowerShell).
+/// Returns true when at least one process was signalled. Best-effort: any
+/// enumeration failure simply yields false — the pre-install lock probe
+/// (check_install_locks) is the backstop that aborts before NSIS spawns.
+///
+/// Multi-instance guard: when ANOTHER live HermOS IDE instance is detected,
+/// NOTHING is killed and false is returned. Killing its sidecar out from
+/// under a sibling window (no single-instance guard exists) would leave that
+/// window backend-less without warning; instead the lock probe sees the
+/// sibling's files as still-locked and aborts with quit-all-windows
+/// guidance — the case the probe was built for.
+#[cfg(target_os = "windows")]
+fn kill_scoped_orphan_nodes(app: &tauri::AppHandle) -> bool {
+  let roots = install_dir_prefixes(app);
+  if roots.is_empty() {
+    return false;
+  }
+  let self_pid = std::process::id();
+  // Our own image name (tracks productName: "HermOS IDE" -> "HermOS IDE.exe")
+  // so a sibling instance is recognized even if the product is renamed.
+  let own_name: Option<String> = std::env::current_exe()
+    .ok()
+    .and_then(|exe| exe.file_name()?.to_str().map(|n| n.to_ascii_lowercase()));
+  let mut cmd = Command::new("powershell");
+  // WQL LIKE covers the `node-<target-triple>.exe` sidecar form shipped by
+  // provision-node-sidecar (see find_bundled_node / is_node_image_name):
+  // a live triple-suffixed orphan holds the same install-dir locks. The
+  // install-dir path check below still scopes every kill — a user's own
+  // Node outside our tree is never a candidate. HermOS IDE.exe rows are
+  // enumerated in the SAME query so the sibling check costs no extra spawn.
+  cmd
+    .args([
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe' OR Name LIKE 'node-%' OR Name = 'HermOS IDE.exe'\" | Select-Object Name,ProcessId,ExecutablePath | ConvertTo-Csv -NoTypeInformation",
+    ])
+    .creation_flags(CREATE_NO_WINDOW);
+  let out = match cmd.output() {
+    Ok(o) if o.status.success() => o,
+    Ok(o) => {
+      log::warn!("orphan sweep: CIM query failed ({})", o.status);
+      return false;
+    }
+    Err(e) => {
+      log::warn!("orphan sweep: powershell unavailable ({})", e);
+      return false;
+    }
+  };
+  let text = String::from_utf8_lossy(&out.stdout);
+  // Partition first, kill second: a sibling instance vetoes every kill.
+  struct Candidate {
+    pid: u32,
+    exe_display: String,
+  }
+  let mut nodes: Vec<Candidate> = Vec::new();
+  let mut sibling_instances: u32 = 0;
+  for line in text.lines().skip(1) {
+    // CSV shape: "node.exe","1234","C:\...\node.exe" — ExecutablePath may be
+    // empty (access denied) or contain commas, so split on the quoted
+    // separator rather than bare commas.
+    let line = line.trim();
+    if line.is_empty() {
+      continue;
+    }
+    let cells: Vec<&str> = line
+      .strip_prefix('"')
+      .and_then(|s| s.strip_suffix('"'))
+      .map(|s| s.split("\",\"").collect())
+      .unwrap_or_default();
+    if cells.len() < 3 {
+      continue;
+    }
+    let name = cells[0].trim().to_ascii_lowercase();
+    let pid: u32 = match cells[1].trim().parse() {
+      Ok(p) => p,
+      Err(_) => continue,
+    };
+    if pid <= 1 || pid == self_pid {
+      continue;
+    }
+    // Any remaining process carrying our own image name is a SIBLING
+    // instance (self was excluded above): count it so the sweep stands
+    // down. The literal covers product renames the dynamic name misses.
+    let is_sibling =
+      own_name.as_ref().is_some_and(|own| name == *own) || name == "hermos ide.exe";
+    if is_sibling {
+      sibling_instances += 1;
+      continue;
+    }
+    if is_node_image_name(cells[0].trim()) {
+      nodes.push(Candidate {
+        pid,
+        exe_display: cells[2].trim().to_string(),
+      });
+    }
+  }
+  if sibling_instances > 0 {
+    log::info!(
+      "orphan sweep: {} other HermOS IDE instance(s) alive — skipping kills, lock probe will abort with quit-all-windows guidance",
+      sibling_instances
+    );
+    return false;
+  }
+  let mut killed_any = false;
+  for node in nodes {
+    // Normalize through canonical_lower like the roots: CIM may report an
+    // 8.3 short path while roots are long-form (or differ in case) — a
+    // literal compare would skip a genuine orphan. Normalization failure
+    // falls back to the literal and simply misses (safe side: never kill).
+    let exe_norm = canonical_lower(Path::new(&node.exe_display));
+    if node.exe_display.trim().is_empty() || !roots.iter().any(|r| exe_norm.starts_with(r)) {
+      continue;
+    }
+    log::info!(
+      "orphan sweep: taskkill node pid {} under install dir ({})",
+      node.pid,
+      node.exe_display
+    );
+    let mut cmd = Command::new("taskkill");
+    cmd.args(["/PID", &node.pid.to_string(), "/T", "/F"]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    // success(), not is_ok(): spawning taskkill is not killing — a pid-exit
+    // race that taskkill reports as failure must not count as stopped.
+    if cmd.status().is_ok_and(|s| s.success()) {
+      killed_any = true;
+    }
+  }
+  killed_any
+}
+
+/// Collect the install-dir files NSIS must be able to replace that are also
+/// the ones a live sidecar holds: the node binary itself (running = locked)
+/// plus native modules (`*.node` stay memory-mapped while loaded — e.g. the
+/// prisma query engine). Bounded walk (depth + file caps) so a large install
+/// dir cannot stall the update flow.
+#[cfg(target_os = "windows")]
+fn collect_lock_probe_targets(roots: &[PathBuf]) -> Vec<PathBuf> {
+  const MAX_DEPTH: usize = 10;
+  const MAX_FILES: usize = 5000;
+  let mut targets = Vec::new();
+  let mut stack: Vec<(PathBuf, usize)> = roots.iter().map(|r| (r.clone(), 0)).collect();
+  let mut seen: usize = 0;
+  while let Some((dir, depth)) = stack.pop() {
+    // Depth overflow skips only this subtree (continue): breaking here would
+    // discard shallower branches still waiting on the stack and could hide
+    // a locked node.exe / *.node elsewhere. Only the global file cap breaks.
+    if depth > MAX_DEPTH {
+      continue;
+    }
+    if seen > MAX_FILES {
+      break;
+    }
+    let entries = match std::fs::read_dir(&dir) {
+      Ok(e) => e,
+      Err(_) => continue,
+    };
+    for entry in entries.flatten() {
+      seen += 1;
+      if seen > MAX_FILES {
+        break;
+      }
+      let path = entry.path();
+      if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        stack.push((path, depth + 1));
+        continue;
+      }
+      let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+      // Same identity as find_bundled_node (plain `node[.exe]` plus the
+      // `node-<target-triple>[.exe]` sidecar form) plus loaded native
+      // modules — a triple-suffixed orphan holds identical locks.
+      let is_node_bin = name == "node.exe"
+        || name == "node"
+        || (name.starts_with("node-") && (name.ends_with(".exe") || !name.contains('.')));
+      if is_node_bin || name.ends_with(".node") {
+        targets.push(path);
+      }
+    }
+  }
+  targets
+}
+
+/// True when another process holds `path` open in a way that blocks
+/// replacement. Probe = open-for-write WITHOUT truncate/create: success is
+/// closed immediately and modifies nothing; a Windows sharing violation
+/// (OS error 32: running exe, memory-mapped DLL) is the lock signal. Any
+/// other error (gone, ACL) is NOT our signal — NSIS fails differently there
+/// and the install retries stay the backstop for those.
+#[cfg(target_os = "windows")]
+fn is_write_locked(path: &Path) -> bool {
+  const ERROR_SHARING_VIOLATION: i32 = 32;
+  match std::fs::OpenOptions::new().write(true).open(path) {
+    Ok(_) => false,
+    Err(e) => e.raw_os_error() == Some(ERROR_SHARING_VIOLATION),
+  }
+}
+
+/// Tauri command: report install-dir files the updater's NSIS step must
+/// replace that are currently locked for writing (live sidecar / loaded
+/// native modules). The frontend calls this AFTER stop_node_sidecar and
+/// BEFORE install(): a non-empty list means install() would drive straight
+/// into NSIS "Error opening file for writing" dialogs, so the UI aborts
+/// early with quit-first guidance instead of spawning a doomed installer.
+///
+/// Our own running exe is excluded (always locked — replacing it is the
+/// installer's job once we exit). Non-Windows returns an empty list: without
+/// mandatory locking, in-use replacement works there by OS design, and the
+/// same write-open probe would trivially succeed.
+#[tauri::command]
+fn check_install_locks(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = app;
+    return Ok(Vec::new());
+  }
+  #[cfg(target_os = "windows")]
+  {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(d) = app.path().resource_dir() {
+      roots.push(d);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+      if let Some(parent) = exe.parent() {
+        roots.push(parent.to_path_buf());
+      }
+    }
+    let own_exe = std::env::current_exe().ok();
+    // Own-exe identities, both raw and canonicalized: if EITHER form of a
+    // target matches EITHER form of our exe, it is us. Missing the exclusion
+    // reports our own running image as locked on EVERY update (sharing
+    // violation 32, like any running image) and permanently aborts
+    // auto-update — so err toward excluding on any alias agreement.
+    let own_ids: Vec<String> = own_exe
+      .as_ref()
+      .map(|exe| {
+        let raw = exe.to_string_lossy().to_ascii_lowercase();
+        let canon = canonical_lower(exe);
+        if canon == raw {
+          vec![raw]
+        } else {
+          vec![raw, canon]
+        }
+      })
+      .unwrap_or_default();
+    // Seed the exact sidecar binary first (find_bundled_node covers plain
+    // AND triple-suffixed forms): the bounded walk below can hit its file
+    // cap inside `.next-build/standalone` before reaching it, and the node
+    // binary is the single most probative lock signal.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    if let Some(node) = find_bundled_node(&app) {
+      targets.push(node);
+    }
+    for walked in collect_lock_probe_targets(&roots) {
+      if !targets.contains(&walked) {
+        targets.push(walked);
+      }
+    }
+    let mut locked: Vec<String> = Vec::new();
+    for target in targets {
+      if locked.len() >= 12 {
+        break;
+      }
+      let target_raw = target.to_string_lossy().to_ascii_lowercase();
+      let target_canon = canonical_lower(&target);
+      if own_ids
+        .iter()
+        .any(|o| *o == target_raw || *o == target_canon)
+      {
+        continue;
+      }
+      if is_write_locked(&target) {
+        locked.push(target.to_string_lossy().into_owned());
+      }
+    }
+    if !locked.is_empty() {
+      log::warn!("pre-install lock probe: {} file(s) still locked", locked.len());
+      for p in &locked {
+        log::warn!("  locked: {}", p);
+      }
+    }
+    Ok(locked)
+  }
 }
 
 /// Cached-port helpers: reuse the last working loopback port so warm boots
@@ -999,7 +1343,11 @@ pub fn run() {
         .build(),
     )
     .manage(NodeProcess(Mutex::new(None)))
-    .invoke_handler(tauri::generate_handler![pick_folder, stop_node_sidecar]);
+    .invoke_handler(tauri::generate_handler![
+      pick_folder,
+      stop_node_sidecar,
+      check_install_locks
+    ]);
 
   let app = builder
     .setup(move |app| {
@@ -1104,6 +1452,26 @@ mod startup_path_tests {
     assert_eq!(
       strip_verbatim_prefix(Path::new("/opt/hermos/server.js")),
       PathBuf::from("/opt/hermos/server.js")
+    );
+  }
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn canonical_lower_agrees_across_case_and_short_aliases() {
+    // Same directory spelled in different cases must normalize identically —
+    // the own-exe exclusion and orphan-sweep scoping depend on it.
+    let dir = std::env::temp_dir();
+    let upper = dir.to_string_lossy().to_ascii_uppercase();
+    assert_eq!(canonical_lower(&dir), canonical_lower(Path::new(&upper)));
+    // Structural contract the callers rely on: either verbatim-canonical
+    // (short aliases resolved) or the lowercase literal fallback (safe-side
+    // miss) — never empty, never anything else.
+    let norm = canonical_lower(&dir);
+    let literal = dir.to_string_lossy().to_ascii_lowercase();
+    assert!(!norm.is_empty());
+    assert!(
+      norm == literal || norm.starts_with(r"\\?\"),
+      "canonical_lower must return verbatim-canonical or the literal: {norm}"
     );
   }
 }
