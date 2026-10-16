@@ -76,10 +76,11 @@
     Pop $0
     Pop $0
     System::Call 'kernel32::SetEnvironmentVariable(t "HERMOS_INSTDIR", p 0)'
-    ; Purge obsolete static JS/CSS chunks from previous versions so stale
-    ; hash bundles never linger side-by-side with the new build.
+    ; Purge Next.js distribution and runtime cache (.next-build) from previous versions
+    ; so stale server route caches, app components, and obsolete static chunks never
+    ; linger side-by-side with the newly extracted build.
     ${If} $INSTDIR != ""
-      RMDir /r "$INSTDIR\_up_\.next-build\standalone\.next-build\static\chunks"
+      RMDir /r "$INSTDIR\_up_\.next-build\standalone\.next-build"
     ${EndIf}
   Pop $2
   Pop $1
