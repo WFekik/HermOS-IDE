@@ -6,6 +6,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import {
   Tooltip,
   TooltipContent,
@@ -116,12 +117,21 @@ export function IdeShell() {
     setRightPanelOpen(!current);
   }, [setRightPanelOpen]);
 
-  // Panel-resize behavior is stock react-resizable-panels (v1.0.0 behavior):
-  // no per-drag React state, no attribute flips, no global CSS overrides —
-  // the library mutates panel flex styles directly on pointermove.
-  // (A data-resizing/onDragging/dblclick-reset layer was tried in v1.1.2 and
-  // reverted: the extra renders + full-subtree style invalidations per drag
-  // regressed fast-drag fluidity.)
+  // Panel-resize fluidity: while a divider drags, iframes (browser preview,
+  // artifacts) would swallow the pointer and stall the drag — the group opts
+  // out via data-resizing (see globals.css). Double-clicking a divider
+  // restores the default 25/52/23 layout (persisted by autoSaveId).
+  const [resizingPanels, setResizingPanels] = React.useState(false);
+  const panelGroupRef = React.useRef<ImperativePanelGroupHandle | null>(null);
+  const resetPanelLayout = React.useCallback(() => {
+    try {
+      const group = panelGroupRef.current;
+      // Only reset when all three panels are mounted (nothing collapsed to a rail).
+      if (group && group.getLayout().length === 3) group.setLayout([25, 52, 23]);
+    } catch {
+      /* non-fatal UI nicety */
+    }
+  }, []);
 
   // Global keyboard shortcut handler.
   React.useEffect(() => {
@@ -300,6 +310,8 @@ export function IdeShell() {
           <ResizablePanelGroup
             direction="horizontal"
             autoSaveId="hermos-layout"
+            ref={panelGroupRef}
+            data-resizing={resizingPanels}
           >
               {sidebarCollapsed ? (
                 /* Collapsed-left rail — 48px wide, just the logo +
@@ -325,7 +337,11 @@ export function IdeShell() {
                       />
                     </ErrorBoundary>
                   </ResizablePanel>
-                  <ResizableHandle withHandle />
+                  <ResizableHandle
+                    withHandle
+                    onDragging={setResizingPanels}
+                    onDoubleClick={resetPanelLayout}
+                  />
                 </>
               )}
               <ResizablePanel id="main" order={2} defaultSize={52} minSize={15} className="min-w-0">
@@ -346,7 +362,11 @@ export function IdeShell() {
                 />
               ) : (
                 <>
-                  <ResizableHandle withHandle />
+                  <ResizableHandle
+                    withHandle
+                    onDragging={setResizingPanels}
+                    onDoubleClick={resetPanelLayout}
+                  />
                   <ResizablePanel id="right-panel" order={3} defaultSize={23} minSize={18} maxSize={85} className="min-w-0 md:min-w-[280px]">
                     <ErrorBoundary fallbackTitle="Panel encountered an error">
                       <RightPanel />
