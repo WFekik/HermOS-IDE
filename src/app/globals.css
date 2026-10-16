@@ -331,13 +331,22 @@
   }
 }
 
-/* While dragging a panel divider: iframes (browser preview, artifact pages)
- * must not swallow the pointer mid-drag, text selection pauses, and the
- * cursor stays a resize arrow. Backdrop blur and transitions are also parked
- * for the duration — repainting blurred/transitional surfaces every frame is
- * what makes the drag feel laggy. Toggled via data-resizing on the panel group. */
-[data-resizing="true"] iframe {
+/* While dragging a panel divider: all pointer input is parked except on the
+ * divider itself (VS Code does the same on sash drags). This kills three
+ * per-frame costs at once: tooltips opening/repositioning as the pointer
+ * crosses controls, hover-state churn, and iframes (browser preview,
+ * artifact pages) swallowing the pointer mid-drag. Text selection pauses
+ * and the cursor stays a resize arrow. Backdrop blur and transitions are
+ * also parked for the duration — repainting blurred/transitional surfaces
+ * every frame is what makes the drag feel laggy. Toggled via data-resizing
+ * on the panel group (the handle keeps pointer events so the drag itself
+ * and its capture chain are unaffected). */
+[data-resizing="true"] * {
   pointer-events: none !important;
+}
+[data-resizing="true"] [data-slot="resizable-handle"],
+[data-resizing="true"] [data-slot="resizable-handle"] * {
+  pointer-events: auto !important;
 }
 [data-resizing="true"] {
   user-select: none;
