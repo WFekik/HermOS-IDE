@@ -331,38 +331,56 @@
   }
 }
 
-/* While dragging a panel divider: all pointer input is parked except on the
- * divider itself (VS Code does the same on sash drags). This kills three
- * per-frame costs at once: tooltips opening/repositioning as the pointer
- * crosses controls, hover-state churn, and iframes (browser preview,
- * artifact pages) swallowing the pointer mid-drag. Text selection pauses
- * and the cursor stays a resize arrow. Backdrop blur and transitions are
- * also parked for the duration — repainting blurred/transitional surfaces
- * every frame is what makes the drag feel laggy. Toggled via data-resizing
- * on the panel group (the handle keeps pointer events so the drag itself
- * and its capture chain are unaffected). */
-[data-resizing="true"] * {
+/* While dragging a panel divider:
+ * 1. Park pointer input on all panels and iframes so the divider keeps tracking
+ *    without hover-state churn, tooltip recalculations, or iframe mouse capture.
+ * 2. Keep the cursor as a resize arrow and pause text selection.
+ * 3. Completely eliminate transitions and animations during drag (transition: none !important).
+ *    This bypasses the CSS interpolation engine entirely on every resize frame.
+ * 4. Bypass expensive GPU backdrop-filter shaders while dragging.
+ * 5. Layout containment on panels isolates layout recalculations per panel.
+ */
+body[data-resizing="true"],
+[data-resizing="true"] {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: ew-resize !important;
+}
+
+body[data-resizing="true"] [data-slot="resizable-panel"],
+[data-resizing="true"] [data-slot="resizable-panel"] {
   pointer-events: none !important;
 }
-[data-resizing="true"] [data-slot="resizable-handle"],
-[data-resizing="true"] [data-slot="resizable-handle"] * {
+
+body[data-resizing="true"] iframe,
+[data-resizing="true"] iframe {
+  pointer-events: none !important;
+}
+
+body[data-resizing="true"] [data-slot="resizable-handle"],
+[data-resizing="true"] [data-slot="resizable-handle"] {
   pointer-events: auto !important;
+  transition: none !important;
 }
-[data-resizing="true"] {
-  user-select: none;
-  cursor: ew-resize;
-}
-[data-resizing="true"] .backdrop-blur,
-[data-resizing="true"] .backdrop-blur-sm,
-[data-resizing="true"] .backdrop-blur-md {
-  backdrop-filter: none !important;
-}
+
+body[data-resizing="true"] *,
+body[data-resizing="true"] *::before,
+body[data-resizing="true"] *::after,
 [data-resizing="true"] *,
 [data-resizing="true"] *::before,
 [data-resizing="true"] *::after {
-  transition-duration: 0.01ms !important;
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+body[data-resizing="true"] [class*="backdrop-blur"],
+[data-resizing="true"] [class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-slot="resizable-panel"] {
+  contain: layout;
 }
 
 /*

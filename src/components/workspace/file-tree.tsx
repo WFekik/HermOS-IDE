@@ -82,7 +82,7 @@ export interface FileTreeProps {
   gitStatus?: GitStatus | null;
 }
 
-export function FileTree(props: FileTreeProps) {
+export const FileTree = React.memo(function FileTree(props: FileTreeProps) {
   const { t } = useTranslation();
   const {
     tree,
@@ -279,7 +279,7 @@ export function FileTree(props: FileTreeProps) {
       </AlertDialog>
     </>
   );
-}
+});
 
 // TreeNode — recursive
 

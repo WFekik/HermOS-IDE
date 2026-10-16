@@ -102,7 +102,7 @@ export const RIGHT_PANEL_TABS: { value: RightPanelTab; label: string; icon: Reac
   { value: "problems", label: "Problems", icon: TriangleAlert },
 ];
 
-export function RightPanel() {
+export const RightPanel = React.memo(function RightPanel() {
   const { t } = useTranslation();
   const tab = useAppStore((s) => s.rightPanelTab);
   const setTab = useAppStore((s) => s.setRightPanelTab);
@@ -262,4 +262,4 @@ export function RightPanel() {
       </Tabs>
     </div>
   );
-}
+});

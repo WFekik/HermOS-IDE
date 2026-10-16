@@ -19,7 +19,7 @@ import type { UIMessage } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 import { conversationWidthClass } from "@/lib/color-theme";
 
-export function ChatView() {
+export const ChatView = React.memo(function ChatView() {
   const messages = useAppStore((s) => s.messages);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const conversationCount = useAppStore((s) => s.conversations.length);
@@ -46,6 +46,7 @@ export function ChatView() {
     overscan: 6,
     getItemKey: (index) => messages[index]?.id ?? index,
     useFlushSync: false,
+    useAnimationFrameWithResizeObserver: true,
   });
 
   const saveScrollPosition = useAppStore((s) => s.saveScrollPosition);
@@ -83,8 +84,12 @@ export function ChatView() {
   const [railScrollable, setRailScrollable] = React.useState(false);
   const measureRailScrollable = React.useCallback(() => {
     const el = scrollRef.current;
+    if (!el) return;
+    if (typeof document !== "undefined" && document.body.hasAttribute("data-resizing")) {
+      return;
+    }
     setRailScrollable((prev) => {
-      const next = el ? el.scrollHeight > el.clientHeight + 80 : false;
+      const next = el.scrollHeight > el.clientHeight + 80;
       return prev === next ? prev : next;
     });
   }, []);
@@ -96,9 +101,30 @@ export function ChatView() {
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => measureRailScrollable());
+    let rafId: number | null = null;
+    const ro = new ResizeObserver(() => {
+      if (typeof document !== "undefined" && document.body.hasAttribute("data-resizing")) {
+        return;
+      }
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        measureRailScrollable();
+      });
+    });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [measureRailScrollable]);
+
+  React.useEffect(() => {
+    const handlePointerUp = () => {
+      requestAnimationFrame(() => measureRailScrollable());
+    };
+    window.addEventListener("pointerup", handlePointerUp, { passive: true });
+    return () => window.removeEventListener("pointerup", handlePointerUp);
   }, [measureRailScrollable]);
 
   const jumpToMessage = React.useCallback(
@@ -694,7 +720,7 @@ export function ChatView() {
       <MemoComposer onSend={handleSend} onQueue={handleQueue} onStop={handleStop} />
     </div>
   );
-}
+});
 
 // Memoized composer: ChatView re-renders on every virtualizer measurement
 // (container resizes during panel drags), and without memo each of those

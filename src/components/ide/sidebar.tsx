@@ -43,7 +43,7 @@ interface SidebarProps {
   onOpenCommand?: () => void;
 }
 
-export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarProps) {
+export const Sidebar = React.memo(function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarProps) {
   const conversations = useAppStore((s) => s.conversations);
   const pendingConversations = useAppStore((s) => s.pendingConversations);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
@@ -489,7 +489,7 @@ export function Sidebar({ onNavigate, onOpenSettings, onOpenCommand }: SidebarPr
       </AlertDialog>
     </aside>
   );
-}
+});
 
 /**
  * A single conversation row in the sidebar. When `showProjectBadge` is true,

@@ -78,6 +78,7 @@ export function IdeShell() {
   const isTablet = useIsTablet();
   const isMobile = useIsMobile();
   const openSettings = React.useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
+  const openCommand = React.useCallback(() => setCommandOpen(true), [setCommandOpen]);
 
   // Warm the code-split settings chunks while the shell idles so the first
   // settings click opens instantly (dialog + providers tab module cache).
@@ -121,7 +122,6 @@ export function IdeShell() {
   // artifacts) would swallow the pointer and stall the drag — the group opts
   // out via data-resizing (see globals.css). Double-clicking a divider
   // restores the default 25/52/23 layout (persisted by autoSaveId).
-  const [resizingPanels, setResizingPanels] = React.useState(false);
   const panelGroupRef = React.useRef<ImperativePanelGroupHandle | null>(null);
   const resetPanelLayout = React.useCallback(() => {
     try {
@@ -311,7 +311,6 @@ export function IdeShell() {
             direction="horizontal"
             autoSaveId="hermos-layout"
             ref={panelGroupRef}
-            data-resizing={resizingPanels}
           >
               {sidebarCollapsed ? (
                 /* Collapsed-left rail — 48px wide, just the logo +
@@ -333,13 +332,12 @@ export function IdeShell() {
                     <ErrorBoundary fallbackTitle="Sidebar encountered an error">
                       <Sidebar
                         onOpenSettings={openSettings}
-                        onOpenCommand={() => setCommandOpen(true)}
+                        onOpenCommand={openCommand}
                       />
                     </ErrorBoundary>
                   </ResizablePanel>
                   <ResizableHandle
                     withHandle
-                    onDragging={setResizingPanels}
                     onDoubleClick={resetPanelLayout}
                   />
                 </>
@@ -364,7 +362,6 @@ export function IdeShell() {
                 <>
                   <ResizableHandle
                     withHandle
-                    onDragging={setResizingPanels}
                     onDoubleClick={resetPanelLayout}
                   />
                   <ResizablePanel id="right-panel" order={3} defaultSize={23} minSize={18} maxSize={85} className="min-w-0 md:min-w-[280px]">

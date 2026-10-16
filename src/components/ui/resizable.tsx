@@ -23,18 +23,57 @@ function ResizablePanelGroup({
 }
 
 function ResizablePanel({
+  className,
   ...props
 }: React.ComponentProps<typeof ResizablePrimitive.Panel>) {
-  return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />
+  return (
+    <ResizablePrimitive.Panel
+      data-slot="resizable-panel"
+      className={cn("min-w-0 contain-layout", className)}
+      {...props}
+    />
+  )
 }
 
 function ResizableHandle({
   withHandle,
   className,
+  onDragging,
   ...props
 }: React.ComponentProps<typeof ResizablePrimitive.PanelResizeHandle> & {
   withHandle?: boolean
 }) {
+  const handleDragging = React.useCallback(
+    (isDragging: boolean) => {
+      if (typeof document !== "undefined") {
+        if (isDragging) {
+          document.body.setAttribute("data-resizing", "true");
+        } else {
+          document.body.removeAttribute("data-resizing");
+        }
+      }
+      onDragging?.(isDragging);
+    },
+    [onDragging]
+  );
+
+  React.useEffect(() => {
+    const handleGlobalEnd = () => {
+      if (typeof document !== "undefined" && document.body.hasAttribute("data-resizing")) {
+        document.body.removeAttribute("data-resizing");
+      }
+    };
+    window.addEventListener("pointerup", handleGlobalEnd, { passive: true });
+    window.addEventListener("blur", handleGlobalEnd, { passive: true });
+    return () => {
+      window.removeEventListener("pointerup", handleGlobalEnd);
+      window.removeEventListener("blur", handleGlobalEnd);
+      if (typeof document !== "undefined") {
+        document.body.removeAttribute("data-resizing");
+      }
+    };
+  }, []);
+
   return (
     <ResizablePrimitive.PanelResizeHandle
       data-slot="resizable-handle"
@@ -43,6 +82,7 @@ function ResizableHandle({
         "pointer-coarse:w-1.5 pointer-coarse:bg-border/70",
         className
       )}
+      onDragging={handleDragging}
       {...props}
     >
       {withHandle && (
