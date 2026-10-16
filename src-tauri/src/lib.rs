@@ -523,6 +523,14 @@ fn write_pidfile(app_data_dir: &Path, pid: u32) {
 /// own exe in the lock-probe exclusion (false positive → every update
 /// aborted). The trailing separator keeps `...\HermOS IDE` from prefix-
 /// matching a sibling like `...\HermOS IDE-old`.
+///
+/// PLUS every other registered HermOS install location (see
+/// registered_install_dirs): two installs (e.g. %LocalAppData% default + a
+/// manual C:\Apps one) share one pidfile but have separate trees, so an
+/// orphan from install B is invisible to a sweep scoped to install A — while
+/// NSIS upgrades B's registry-recorded location and hits B's locks. Without
+/// the union, the probe passes on A, NSIS fails on B, and "quit and retry"
+/// guidance can never clear.
 #[cfg(target_os = "windows")]
 fn install_dir_prefixes(app: &tauri::AppHandle) -> Vec<String> {
   fn prefix(p: &Path) -> String {
@@ -541,7 +549,84 @@ fn install_dir_prefixes(app: &tauri::AppHandle) -> Vec<String> {
       roots.push(prefix(parent));
     }
   }
+  for dir in registered_install_dirs() {
+    let p = prefix(&dir);
+    if !roots.contains(&p) {
+      roots.push(p);
+    }
+  }
   roots
+}
+
+/// InstallLocation of every registered "HermOS IDE" install (per-user +
+/// machine uninstall hives). Parses `reg query` output with no new deps:
+/// blocks are `KEY_PATH` lines followed by `Name  Type  Value` rows; a block
+/// is kept when DisplayName matches (case-insensitive) with a non-empty
+/// InstallLocation (surrounding quotes stripped — reg records them, e.g.
+/// `"C:\Apps\HermOS IDE"`).
+///
+/// Best-effort: any failure yields an empty vec and the caller's own roots
+/// still apply. Output is lossy-decoded (reg prints in the system codepage,
+/// not UTF-8): non-ASCII install paths may miss and simply degrade to
+/// own-roots coverage — never a wrong kill, since matching stays
+/// prefix-scoped either way.
+#[cfg(target_os = "windows")]
+fn registered_install_dirs() -> Vec<PathBuf> {
+  fn query_hive(hive: &str) -> Vec<PathBuf> {
+    let mut cmd = Command::new("reg");
+    cmd.args(["query", hive, "/s"]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let out = match cmd.output() {
+      Ok(o) if o.status.success() => o,
+      _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut dirs = Vec::new();
+    let mut display: Option<String> = None;
+    let mut location: Option<String> = None;
+    // Flush the completed key block: keep its location only for our app.
+    let mut flush = |display: &mut Option<String>, location: &mut Option<String>| {
+      if display
+        .take()
+        .is_some_and(|d| d.trim().eq_ignore_ascii_case("hermos ide"))
+      {
+        if let Some(loc) = location.take() {
+          let loc = loc.trim().trim_matches('"').trim();
+          if !loc.is_empty() {
+            dirs.push(PathBuf::from(loc));
+          }
+        }
+      } else {
+        location.take();
+      }
+    };
+    for line in text.lines() {
+      if line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty() {
+        // `Name    Type    Value` row: correlate the two values we need
+        // within the current registry-key block.
+        let cells: Vec<&str> = line.split_whitespace().collect();
+        if cells.len() >= 3 {
+          if cells[0].eq_ignore_ascii_case("displayname") {
+            display = Some(cells[2..].join(" "));
+          } else if cells[0].eq_ignore_ascii_case("installlocation") {
+            location = Some(cells[2..].join(" "));
+          }
+        }
+        continue;
+      }
+      // New `HIVE\...\key` block: flush the previous one first.
+      flush(&mut display, &mut location);
+    }
+    flush(&mut display, &mut location);
+    dirs
+  }
+  let mut dirs = query_hive(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall");
+  for dir in query_hive(r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall") {
+    if !dirs.contains(&dir) {
+      dirs.push(dir);
+    }
+  }
+  dirs
 }
 
 /// Lowercased canonical form of a path for identity/prefix comparison.
@@ -788,6 +873,14 @@ fn check_install_locks(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     if let Ok(exe) = std::env::current_exe() {
       if let Some(parent) = exe.parent() {
         roots.push(parent.to_path_buf());
+      }
+    }
+    // All registered locations, not just ours: NSIS upgrades the
+    // registry-recorded location, which may be a different install than the
+    // one running this updater (see install_dir_prefixes).
+    for dir in registered_install_dirs() {
+      if !roots.contains(&dir) {
+        roots.push(dir);
       }
     }
     let own_exe = std::env::current_exe().ok();
@@ -1473,5 +1566,16 @@ mod startup_path_tests {
       norm == literal || norm.starts_with(r"\\?\"),
       "canonical_lower must return verbatim-canonical or the literal: {norm}"
     );
+  }
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn registered_install_dirs_never_panics_or_empties() {
+    // Machine-dependent content (this box has a C:\Apps entry), so only
+    // the structural contract is pinned: no panic, no empty entries.
+    // A failure here would break multi-install sweep/probe coverage.
+    for dir in registered_install_dirs() {
+      assert!(!dir.as_os_str().is_empty());
+    }
   }
 }

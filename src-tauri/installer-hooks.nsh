@@ -22,12 +22,12 @@
 ; (labels are Hermos-prefixed to avoid collisions with the template).
 ; Silent installs skip the prompt (IfSilent) and keep prior behavior.
 ;
-; Deliberately scoped to the main exe only (NOT node.exe): closing the app
-; also stops its managed Node sidecar via the Rust exit handler, which
-; releases node.exe + the *.node modules. Prompting on every node.exe would
-; nag developers with unrelated Node processes on every install; a crashed
-; parent's orphaned sidecar is rare and stays covered by the in-app
-; pre-install lock probe on the auto-update path.
+; Deliberately main-exe-first: closing the app also stops its managed Node
+; sidecar via the Rust exit handler, which releases node.exe + the *.node
+; modules. A leftover sidecar with no live UI (crash orphan, or a second
+; install location's node) is swept below, scoped to $INSTDIR only — a
+; user's own Node elsewhere is never touched. Prompting on every node.exe
+; would nag developers with unrelated Node processes on every install.
 ;
 ; NOTE: the image name below must track `productName` in tauri.conf.json
 ; ("HermOS IDE" -> "HermOS IDE.exe").
@@ -48,6 +48,14 @@
     Pop $0
     Abort "Installation cancelled: HermOS IDE was still running."
   HermosPreInstall_Clear:
+    ; No live UI remains past this point, so any node.exe under $INSTDIR is
+    ; a true orphan (crash leftover) holding .node modules NSIS must
+    ; replace — stop it scoped to this install dir. Best-effort: any
+    ; failure falls through to the previous behavior (NSIS copy errors).
+    ; ($\" = literal quote, $$_ = literal $_ — NSIS would expand both.)
+    nsExec::ExecToStack "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $\"Get-CimInstance Win32_Process -Filter 'Name = ''node.exe'' OR Name LIKE ''node-%''' | Where-Object { $$_.ExecutablePath -like $\"$INSTDIR*$\" } | ForEach-Object { try { Stop-Process -Id $$_.ProcessId -Force } catch { } }; Start-Sleep -Milliseconds 800$\""
+    Pop $0
+    Pop $0
   Pop $1
   Pop $0
 !macroend
@@ -67,6 +75,10 @@
     Pop $0
     Abort "Uninstallation cancelled: HermOS IDE was still running."
   HermosPreUninstall_Clear:
+    ; Same orphan sweep as install (scoped to $INSTDIR, best-effort).
+    nsExec::ExecToStack "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $\"Get-CimInstance Win32_Process -Filter 'Name = ''node.exe'' OR Name LIKE ''node-%''' | Where-Object { $$_.ExecutablePath -like $\"$INSTDIR*$\" } | ForEach-Object { try { Stop-Process -Id $$_.ProcessId -Force } catch { } }; Start-Sleep -Milliseconds 800$\""
+    Pop $0
+    Pop $0
   Pop $1
   Pop $0
 !macroend
