@@ -9,6 +9,8 @@ import path from "path";
  * `prisma migrate deploy` before any test imports @/lib/db.
  */
 export async function setup() {
+  (process.env as Record<string, string | undefined>).NODE_ENV = "test";
+  process.env.HOSTNAME = "127.0.0.1";
   // Create hermetic temp dir only when not already provided (allow CI override)
   let tmpDir = process.env.HERMOS_TEST_TMP_DIR || "";
   const needsCreate = !process.env.HERMOS_APP_DATA_DIR && !tmpDir;

@@ -1594,7 +1594,7 @@ export function waitForCommandCompletion(
 }
 
 /** Build a minimal sanitized environment for spawned child processes with temp/truncation dirs. */
-function buildEnv(isWin: boolean, cwd: string, tempDir?: string, truncationDir?: string): NodeJS.ProcessEnv {
+export function buildEnv(isWin: boolean, cwd: string, tempDir?: string, truncationDir?: string): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = isWin
     ? {
         PATH: process.env.PATH ?? "C:\\Windows\\System32;C:\\Windows",
@@ -1618,7 +1618,7 @@ function buildEnv(isWin: boolean, cwd: string, tempDir?: string, truncationDir?:
         LANG: "en_US.UTF-8",
         LC_ALL: "en_US.UTF-8",
         PYTHONIOENCODING: "utf-8",
-        NODE_ENV: process.env.NODE_ENV ?? "production",
+        NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development"),
         HERMOS_TEMP_DIR: tempDir ?? "",
         HERMOS_TRUNCATION_DIR: truncationDir ?? "",
       }
@@ -1629,7 +1629,7 @@ function buildEnv(isWin: boolean, cwd: string, tempDir?: string, truncationDir?:
         LANG: "en_US.UTF-8",
         LC_ALL: "en_US.UTF-8",
         TERM: "xterm-256color",
-        NODE_ENV: process.env.NODE_ENV ?? "production",
+        NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development"),
         HERMOS_TEMP_DIR: tempDir ?? "",
         HERMOS_TRUNCATION_DIR: truncationDir ?? "",
       };

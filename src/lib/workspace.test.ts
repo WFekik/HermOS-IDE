@@ -14,6 +14,7 @@ import {
   safePath,
   isSafeWsName,
   assertValidWsName,
+  buildEnv,
 } from "./workspace";
 
 describe("writeFileWs — script and executable extensions are writable", () => {
@@ -122,6 +123,33 @@ describe("globToRegex — brace expansion", () => {
     const re = globToRegex("src/**/*.ts");
     expect(re.test("src/foo/bar.ts")).toBe(true);
     expect(re.test("src/foo/bar.js")).toBe(false);
+  });
+});
+
+describe("buildEnv — environment isolation", () => {
+  it("defaults NODE_ENV to development when parent process is production", () => {
+    const orig = process.env.NODE_ENV;
+    try {
+      (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+      const envWin = buildEnv(true, "C:\\test");
+      expect(envWin.NODE_ENV).toBe("development");
+
+      const envPosix = buildEnv(false, "/test");
+      expect(envPosix.NODE_ENV).toBe("development");
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = orig;
+    }
+  });
+
+  it("preserves non-production NODE_ENV", () => {
+    const orig = process.env.NODE_ENV;
+    try {
+      (process.env as Record<string, string | undefined>).NODE_ENV = "test";
+      const env = buildEnv(true, "C:\\test");
+      expect(env.NODE_ENV).toBe("test");
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = orig;
+    }
   });
 });
 

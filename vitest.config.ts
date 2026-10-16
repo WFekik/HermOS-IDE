@@ -10,6 +10,10 @@ export default defineConfig({
     // Vitest to hang indefinitely when tests leave no open handles themselves
     // but the thread pool supervisor never shuts down.
     pool: "forks",
+    env: {
+      NODE_ENV: "test",
+      HOSTNAME: "127.0.0.1",
+    },
     // Prisma's SQLite connection blocks Node exit — teardown handles cleanup.
     globalSetup: ["./src/test/global-setup.ts"],
     testTimeout: 30000,

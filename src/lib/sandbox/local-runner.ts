@@ -94,15 +94,19 @@ export class LocalSandboxRunner implements ISandboxRunner {
 
       let child: ReturnType<typeof spawn>;
       try {
+        const spawnEnv = { ...(req.env || process.env) };
+        if (!req.env?.NODE_ENV && spawnEnv.NODE_ENV === "production") {
+          spawnEnv.NODE_ENV = "development";
+        }
         child = isWin
           ? spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", req.command], {
               cwd: req.cwd,
-              env: req.env || process.env,
+              env: spawnEnv,
               windowsHide: true,
             })
           : spawn(req.command, [], {
               cwd: req.cwd,
-              env: req.env || process.env,
+              env: spawnEnv,
               shell: "/bin/sh",
               windowsHide: true,
             });
