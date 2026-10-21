@@ -7,6 +7,8 @@ import {
   parseRetryHeader,
   getErrorStatusCode,
   isTransientStreamError,
+  retryAttemptLimit,
+  retryBackoffMs,
 } from "@/lib/ai/retry-utils";
 import { PROVIDERS, getProvider, requiresReasoningEcho, rememberReasoningEchoRequired } from "@/lib/ai/providers";
 import { type ProviderId } from "@/lib/types";
@@ -26,6 +28,8 @@ import {
   unregisterSessionAbort,
   streamSubagentPartial,
   clearSubagentPartial,
+  publishSubagentPermission,
+  type SubagentPendingPermission,
 } from "./subagent-session";
 import {
   enqueueSubagentReport,
@@ -34,13 +38,26 @@ import {
   drainSubagentMailbox,
 } from "./subagent-queue";
 import { runTool, resolveWs, PUBLIC_BUILTIN_TOOLS } from "@/lib/ai/tools";
+import { modeToolDenyReason } from "@/lib/ai/mode-policy";
 import type { ToolCtx } from "@/lib/ai/tool-registry";
+import type { AgentMode } from "@/lib/types";
 import {
   getCompletedCommand,
   acknowledgeCompletedCommand,
   stopRunningCommand,
+  resolveCommandSafety,
+  extractRunCommand,
+  ensureAgentTempDir,
 } from "@/lib/workspace";
-import { evaluateToolPermission, getPermissions, isReadOnlyTool, isWriteTool, type PermissionMode } from "@/lib/permissions";
+import { ensureHermosTempDir } from "@/lib/paths";
+import { evaluateToolPermission, getPermissions, applyAlwaysAllowToConfig, actionForTool, isReadOnlyTool, isWriteTool, type PermissionAction, type PermissionMode } from "@/lib/permissions";
+import {
+  createPendingApproval,
+  resolvePendingApproval,
+  type PermissionDecision,
+} from "@/lib/permissions-prompt";
+import { SUBAGENT_PERMISSION_APPROVAL_TTL_MS } from "@/lib/permissions-core";
+import { raceWithAbort } from "@/lib/question-prompt";
 import { isTrustedLoopbackBrowserOpen } from "@/lib/browser-trust";
 import { audit } from "@/app/api/_lib/helpers";
 import {
@@ -115,25 +132,27 @@ interface StreamChunk {
 
 export const DEFAULT_SUBAGENT_PROMPT = `You are an HermOS research subagent. Gather ground truth, report precisely.
 
-- READ-ONLY TOOLS ONLY: read_file, list_directory, glob, grep, web_search, http_fetch.
+- READ-ONLY: use only the read-only tools you were given (file reads, listing, search). Never try to write files or run commands.
 - GROUND TRUTH: report only observed facts. If a tool returned nothing, an error, or a denial, say exactly that — never invent paths.
 - GATHER 2-4 pieces of evidence before answering; do not stop after one call.
 - NO OVERTHINKING: read files <500 lines in one call; for larger files read by range. Never re-read identical ranges.
+- TREES: show directory structures only as fenced \`\`\`tree code blocks, one entry per line — never inline with | separators.
 - PROTECT SECRETS: never repeat credential content or API keys in your report.
 - REPORT ONLY: 1-sentence headline + 2-5 evidence bullets with exact paths. No preamble.`;
 
 export const DEFAULT_WORKER_SUBAGENT_PROMPT = `You are an HermOS worker subagent. Execute the task precisely, then verify.
 
 - GROUND TRUTH: base actions on observed tool outputs; never invent paths, code, or results.
-- NATIVE TOOL CALLS: Call function tools directly (e.g. command_stop, write_file). NEVER execute tool names like "command_stop" as shell command strings in PowerShell or bash.
+- NATIVE TOOL CALLS: call function tools directly. NEVER execute tool names as shell command strings in PowerShell or bash.
 - SEQUENTIAL EDITS: edits/commands one at a time, character-exact.
 - FAIL TO DIAGNOSE: ok:false → read the error, fix, retry — never silently continue.
 - VERIFY: after writing/editing, read the result back (or run a check) before reporting success.
 - MINIMAL: change only what the task requires; no stubs or TODOs.
+- TREES: show directory structures only as fenced \`\`\`tree code blocks, one entry per line — never inline with | separators.
 - PROTECT SECRETS: never print, echo, or write real keys, tokens, or secrets.
 - REPORT ONLY: 1-sentence summary, files changed, verification. No preamble.`;
 
-import { cleanContent, parseTextToolCalls, parseNonStreamingResponse, extractUpstreamError } from "@/lib/ai/tool-call-parser";
+import { cleanContent, parseTextToolCalls, parseNonStreamingResponse, extractUpstreamError, stripThinkingTags } from "@/lib/ai/tool-call-parser";
 
 /** Select subagent prompt based on tool access — workers that can write get the verification-focused prompt. */
 function selectSubagentPrompt(allowedTools?: string[]): string {
@@ -145,9 +164,74 @@ function selectSubagentPrompt(allowedTools?: string[]): string {
 
 /** Apply a terminal transition and queue the report for the main agent. */
 function finishSubagent(sessionId: string, patch: Partial<SubagentSession>): void {
-  updateSession(sessionId, patch);
+  // A terminal transition always drops any pending approval marker; the
+  // worker's approval wait resolves deny via its own error path.
+  updateSession(sessionId, { pendingPermission: undefined, ...patch });
   const live = internalGet(sessionId);
   if (live) enqueueSubagentReport(live.userId, live.parentConversationId, sessionId);
+}
+
+/** Tools a subagent must never hold — recursion and parent-only orchestration. */
+const SUBAGENT_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set([
+  "spawn_subagent",
+  "get_subagent",
+  "message_subagent",
+  "ask_question",
+]);
+
+/**
+ * Max worker iterations — configurable via HERMOS_MAX_SUBAGENT_ITERATIONS.
+ * Defaults to 300 to support complex autonomous multi-step tasks without early cutoff.
+ */
+export const MAX_SUBAGENT_ITERATIONS: number = (() => {
+  const raw = process.env.HERMOS_MAX_SUBAGENT_ITERATIONS;
+  if (!raw) return 300;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 300;
+})();
+
+const conversationToolLocks = new Map<string, Promise<void>>();
+const conversationToolResolvers = new Map<string, () => void>();
+
+/** Pauses tool execution for all workers in a conversation (e.g. during checkpoint restore). */
+export function pauseConversationToolExecution(conversationId: string): () => void {
+  let resolveLock!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolveLock = resolve;
+  });
+  conversationToolLocks.set(conversationId, promise);
+  conversationToolResolvers.set(conversationId, resolveLock);
+
+  return () => {
+    const resolver = conversationToolResolvers.get(conversationId);
+    if (resolver) {
+      resolver();
+      conversationToolResolvers.delete(conversationId);
+    }
+    conversationToolLocks.delete(conversationId);
+  };
+}
+
+async function waitForConversationToolLock(conversationId: string): Promise<void> {
+  const lock = conversationToolLocks.get(conversationId);
+  if (lock) await lock;
+}
+
+/**
+ * Resolve the subagent toolset. A subagent mirrors the main agent: every tool
+ * in Agent mode, read-only in Architect mode. An explicit `allowedTools` list
+ * narrows that set — it can never widen it.
+ */
+export function resolveSubagentAllowedTools(opts: {
+  allowedTools?: string[];
+  readOnly?: boolean;
+}): string[] {
+  const available = PUBLIC_BUILTIN_TOOLS.filter((t) => !SUBAGENT_FORBIDDEN_TOOLS.has(t.name));
+  const base = opts.readOnly ? available.filter((t) => isReadOnlyTool(t.name)) : available;
+  const requested = opts.allowedTools ?? [];
+  if (requested.length === 0) return base.map((t) => t.name);
+  const wanted = new Set(requested);
+  return base.filter((t) => wanted.has(t.name)).map((t) => t.name);
 }
 
 /** Public spawn — fire-and-forget; returns the freshly-created session. */
@@ -159,21 +243,25 @@ export function spawnSubagent(
     task: string;
     systemPrompt?: string;
     allowedTools?: string[];
+    readOnly?: boolean;
     provider?: string;
     model?: string;
     checkpointId?: string;
     thinkingLevel?: string;
+    agentMode?: AgentMode;
   },
 ): { subagentId: string; name: string; status: "running" } {
+  const allowedTools = resolveSubagentAllowedTools(opts);
   const session = createSession(userId, conversationId, {
     name: opts.name,
     task: opts.task,
-    systemPrompt: opts.systemPrompt || selectSubagentPrompt(opts.allowedTools),
-    allowedTools: opts.allowedTools ?? [],
+    systemPrompt: opts.systemPrompt || selectSubagentPrompt(allowedTools),
+    allowedTools,
     provider: opts.provider || "",
     model: opts.model || "",
     checkpointId: opts.checkpointId,
     thinkingLevel: opts.thinkingLevel,
+    agentMode: opts.agentMode,
   });
   // Fire-and-forget with error boundary to prevent awaitSubagents from hanging on early crash.
   runSubagentWorker(session.id).catch((err) => {
@@ -239,9 +327,9 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
     };
     let sawMeasured = false;
 
-    for (let iter = 0; iter < 100; iter++) {
+    for (let iter = 0; iter < MAX_SUBAGENT_ITERATIONS; iter++) {
       const live = internalGet(sessionId);
-      if (!live || sessionAbort.signal.aborted) return;
+      if (!live || sessionAbort.signal.aborted || live.rolledBack) return;
       const mailbox = drainSubagentMailbox(sessionId);
       if (mailbox.length > 0) {
         for (const m of mailbox) appendMessage(sessionId, { role: "user", content: `[Message from main agent]\n\n${m}` });
@@ -302,6 +390,14 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
       let echoUpgraded = false;
 
       for (let attempts = 0; ; attempts++) {
+        // Retry attempts must not inherit half-streamed state: stale tool calls
+        // from a failed attempt would otherwise be replayed/executed even though
+        // the retried stream never emitted them.
+        iterContent = "";
+        iterThinking = "";
+        toolCalls = [];
+        iterMeasured = undefined;
+        lastFinishReason = undefined;
         try {
           let maxTokens: number | undefined;
           let subagentContextWindow: number | undefined = (
@@ -520,10 +616,11 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           // Clean content: strip redundant tool-call blocks and <think> tags.
           const cleanedContent = cleanContent(iterContent);
 
-          // Text-fallback: parse text tool calls if no native tool calls were returned.
+          // Text-fallback: parse text tool calls if no native tool calls were
+          // returned. Reasoning tags are stripped first so tool syntax written
+          // inside a model's thinking channel is never executed.
           if (toolCalls.length === 0 && cleanedContent.length < iterContent.length) {
-            // The model likely wrote tool calls as text — try to parse them.
-            const textParsed = parseTextToolCalls(iterContent);
+            const textParsed = parseTextToolCalls(stripThinkingTags(iterContent));
             if (textParsed.length > 0) {
               toolCalls = textParsed;
               iterContent = cleanedContent;
@@ -557,11 +654,10 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           break; // success, exit retry loop
         } catch (err) {
           const msg = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-          const is429 = (err instanceof Error && "status" in err && (err as any).status === 429) ||
-                        /429|rate limit|too many requests/i.test(msg);
+          const errStatus = getErrorStatusCode(err) ?? 0;
+          const is429 = errStatus === 429 || /429|rate limit|too many requests/i.test(msg);
 
           // Retry with reasoning echo enabled if gateway returns 4xx when past thinking exists.
-          const errStatus = getErrorStatusCode(err) ?? 0;
 
           if (
             !echoReasoning &&
@@ -580,18 +676,23 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
 
           const isTransient = isTransientStreamError(err);
           if (isTransient) {
-            if (attempts < 2) {
+            // Mirror the main agent's retry ladder: 429s are expected under
+            // shared-key rate limits, so wait them out (15 attempts) instead
+            // of failing the subagent after three.
+            const maxAttempts = retryAttemptLimit(is429);
+            if (attempts < maxAttempts - 1) {
               const headerVal = (err as any)?.retryAfter || (err as any)?.headers?.get?.("retry-after") || (err as any)?.headers?.get?.("x-ratelimit-reset");
               const headerMs = (err as any)?.retryAfterMs || parseRetryHeader(headerVal);
-              let delayMs = 1000 * Math.pow(2, attempts) + Math.random() * 500;
-              if (headerMs !== null && headerMs > 0) {
-                delayMs = Math.min(headerMs, 10000);
-              }
+              const delayMs = retryBackoffMs(attempts, is429, headerMs);
 
               const delaySec = Math.max(1, Math.ceil(delayMs / 1000));
+              appendProgress(
+                sessionId,
+                `${is429 ? "Rate limited" : "Transient error"} — retrying in ${delaySec}s (attempt ${attempts + 2}/${maxAttempts})`,
+              );
               for (let sec = delaySec; sec > 0; sec--) {
                 const liveSession = internalGet(sessionId);
-                if (!liveSession) {
+                if (!liveSession || sessionAbort.signal.aborted) {
                   return; // Session deleted/cancelled
                 }
                 await sleep(1000);
@@ -654,45 +755,103 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
         tc: { id: string; name: string; arguments: string };
         content: string;
         rejected: boolean;
+        /** Set only on granted outside-workspace commands. */
+        userAllowedOutsideWorkspace?: boolean;
       }
       const ordered: PendingToolCall[] = [];
       // Load permission config once per batch of tool calls.
-      const subagentPermConfig = await getPermissions(session.userId);
+      let subagentPermConfig = await getPermissions(session.userId);
       for (const tc of toolCalls) {
         if (!availableTools.some((t) => t.function.name === tc.name)) {
           ordered.push({ tc, content: `Error: tool "${tc.name}" is not allowed for this subagent.`, rejected: true });
           continue;
         }
 
-        // Evaluate permissions for the subagent tool call
-        let permissionMode: PermissionMode = "allow";
-        try {
-          permissionMode = await evaluateToolPermission(session.userId, tc.name, "agent", subagentPermConfig);
-        } catch (e) {
-          permissionMode = "ask"; // fail-closed on errors
+        // Enforce the parent mode's tool wall inside the worker too: the
+        // spawn-time toolset clip is the first line, this gate is defense in
+        // depth against hallucinated or smuggled calls (architect = read-only,
+        // chat = no tools).
+        const modeDeny = modeToolDenyReason(session.agentMode, tc.name);
+        if (modeDeny) {
+          ordered.push({ tc, content: `Error: ${modeDeny}`, rejected: true });
+          try {
+            await audit(
+              session.userId,
+              "tool_denied",
+              JSON.stringify({
+                subagent: sessionId,
+                tool: tc.name,
+                reason: "mode_blocked",
+                mode: session.agentMode,
+              }),
+            );
+          } catch {
+            /* ignore audit failures */
+          }
+          continue;
         }
 
-        // Auto-elevate explicitly delegated tools to allow autonomous execution.
-        const isExplicitlyAllowedSubagentTool =
-          Array.isArray(session.allowedTools) &&
-          (session.allowedTools.includes(tc.name) ||
-            (tc.name === "command_stop" && session.allowedTools.includes("run_command")));
-        if (
-          permissionMode === "ask" &&
-          (isReadOnlyTool(tc.name) || tc.name === "command_stop") &&
-          (isExplicitlyAllowedSubagentTool || session.allowedTools.length === 0)
-        ) {
-          permissionMode = "allow";
+        // Mirror the main executor's outside-workspace classification: the
+        // prompt must say "OUTSIDE WORKSPACE" and an approval must grant the
+        // sandbox escape for the actual execution context. Fail closed (treat
+        // as outside) when no workspace root resolved.
+        let action = actionForTool(tc.name);
+        let isOutsideCommand = false;
+        // A nested shell's inner command cannot be validated at all: it always
+        // needs an explicit per-call confirmation, so a config rule can never
+        // unlock it.
+        let requiresPerCallApproval = false;
+        let outsideCommandPreview = "";
+        if (tc.name === "run_command") {
+          const parsedCommandArgs = parseArgs(tc.arguments);
+          outsideCommandPreview = extractRunCommand(parsedCommandArgs);
+          if (!subagentRootDir) {
+            isOutsideCommand = true;
+          } else {
+            const safety = resolveCommandSafety(outsideCommandPreview, subagentRootDir, [
+              ensureAgentTempDir(session.userId),
+              ensureHermosTempDir(),
+            ]);
+            if (!safety.ok && safety.isOutsideWorkspace) {
+              isOutsideCommand = true;
+              requiresPerCallApproval = safety.refusalKind === "nested-shell";
+            }
+          }
+          if (isOutsideCommand) action = "command.outside_workspace";
         }
+
+        // Evaluate permissions for the subagent tool call under the parent's
+        // mode: architect hard-denies mutations even if a tool slipped through,
+        // and the user's settings remain authoritative for agent mode. The
+        // pre-classified `action` is passed through so an outside-workspace
+        // command is judged by `command.outside_workspace`, exactly like the
+        // main executor.
+        let userDecision: PermissionMode = "allow";
+        try {
+          userDecision = await evaluateToolPermission(
+            session.userId,
+            tc.name,
+            session.agentMode,
+            subagentPermConfig,
+            action,
+          );
+        } catch {
+          userDecision = "ask"; // fail-closed on errors
+        }
+
+        let outcome = resolveSubagentToolPermission(userDecision);
+        // An unvalidatable nested shell always needs a per-call confirmation:
+        // a config-level "allow" must not silently authorize `bash -c "…"`.
+        if (requiresPerCallApproval && outcome === "allow") outcome = "ask";
 
         // Trusted-loopback exemption (mirrors the main executor gate): a
         // subagent opening the user's own dev server never needs user
         // approval — background "ask" would otherwise always reject it.
-        if (tc.name === "browser_open" && permissionMode === "ask") {
+        if (outcome === "ask" && tc.name === "browser_open") {
           try {
             const parsed: unknown = JSON.parse(tc.arguments || "{}");
             if (isTrustedLoopbackBrowserOpen(tc.name, parsed)) {
-              permissionMode = "allow";
+              outcome = "allow";
               try {
                 await audit(
                   session.userId,
@@ -713,30 +872,125 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           }
         }
 
-        if (permissionMode === "deny") {
+        if (outcome === "allow") {
+          // The main agent persists every tool call in `toolExecution`; a
+          // background worker has no such trail, so its executions are audited
+          // here — otherwise a subagent's writes leave no trace at all.
+          try {
+            await audit(
+              session.userId,
+              "tool_allowed",
+              JSON.stringify({
+                subagent: sessionId,
+                tool: tc.name,
+                action,
+                target: buildSubagentPermissionTarget(tc.name, action, parseArgs(tc.arguments)).slice(0, 500),
+              }),
+            );
+          } catch {
+            /* ignore audit failures */
+          }
+        }
+
+        if (outcome === "deny") {
           ordered.push({ tc, content: `Error: Permission denied for tool "${tc.name}".`, rejected: true });
+          try {
+            await audit(
+              session.userId,
+              "tool_denied",
+              JSON.stringify({
+                subagent: sessionId,
+                tool: tc.name,
+                action,
+                reason: "permission_denied",
+              }),
+            );
+          } catch {
+            /* ignore audit failures */
+          }
           continue;
         }
 
-        if (permissionMode === "ask") {
-          ordered.push({
+        if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) break;
+
+        if (outcome === "ask") {
+          const decision = await awaitSubagentApproval(
+            session,
+            sessionId,
             tc,
-            rejected: true,
-            content: `Error: Permission requires user approval ("ask" mode is denied for background subagents). Please grant "allow" permission for this action in settings to let subagents run it autonomously.`,
-          });
-          continue;
+            action,
+            sessionAbort.signal,
+          );
+          try {
+            await audit(
+              session.userId,
+              "tool_permission_decision",
+              JSON.stringify({
+                subagent: sessionId,
+                tool: tc.name,
+                action,
+                decision,
+              }),
+            );
+          } catch {
+            /* ignore audit failures */
+          }
+          if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) break;
+          if (decision === "always_allow") {
+            // Apply the decision to the batch snapshot right away: the
+            // pending-approval endpoint persists the rule asynchronously, so
+            // waiting for the database write would re-prompt for the next
+            // call of the same action.
+            subagentPermConfig = applyAlwaysAllowToConfig(subagentPermConfig, action);
+          }
+          if (decision === "deny") {
+            ordered.push({
+              tc,
+              rejected: true,
+              content: `Error: Tool "${tc.name}" requires permission approval, which was denied by the user.`,
+            });
+            continue;
+          }
         }
 
-        ordered.push({ tc, content: "", rejected: false });
+        if (isOutsideCommand) {
+          // Forensics: distinguish user-approved outside runs from in-workspace
+          // execution (mirrors the main executor's explicit audit).
+          try {
+            await audit(
+              session.userId,
+              "command_outside_workspace_allowed",
+              JSON.stringify({
+                subagent: sessionId,
+                tool: tc.name,
+                action,
+                commandPreview: outsideCommandPreview.slice(0, 500),
+                cwd: subagentRootDir,
+              }),
+            );
+          } catch {
+            /* ignore audit failures */
+          }
+        }
+        ordered.push({ tc, content: "", rejected: false, userAllowedOutsideWorkspace: isOutsideCommand });
       }
+      if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) return;
       const executed = ordered.filter((x) => !x.rejected);
       if (executed.length > 0) {
-        const runOne = async (tc: { id: string; name: string; arguments: string }) => {
+        const runOne = async (entry: PendingToolCall) => {
+          if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) return;
+          await waitForConversationToolLock(session.parentConversationId);
+          if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) return;
+
+          const tc = entry.tc;
           appendProgress(sessionId, `Tool: ${tc.name}`);
           let content: string;
           try {
             const parsedArgs = parseArgs(tc.arguments);
-            const result = await runTool(tc.name, parsedArgs, toolCtx);
+            const ctx = entry.userAllowedOutsideWorkspace
+              ? { ...toolCtx, userAllowedOutsideWorkspace: true }
+              : toolCtx;
+            const result = await runTool(tc.name, parsedArgs, ctx);
 
             // Duplicate Read Interceptor: detect and annotate repeated reads of identical ranges.
             if (tc.name === "read_file" && result.ok && typeof result.result === "object" && result.result !== null) {
@@ -763,24 +1017,25 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           } catch (toolErr) {
             content = `Tool error: ${toolErr instanceof Error ? toolErr.message : "unknown"}`;
           }
-          const record = executed.find((x) => x.tc.id === tc.id);
-          if (record) record.content = content;
+          entry.content = content;
         };
 
         // Strictly sequential tool execution in model-emitted order.
         for (const x of executed) {
-          await runOne(x.tc);
+          if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) break;
+          await runOne(x);
         }
       }
+      if (sessionAbort.signal.aborted || internalGet(sessionId)?.rolledBack) return;
       // Append all tool results (rejected and executed) in exact model-emitted order.
       for (const x of ordered) {
         appendMessage(sessionId, { role: "tool", content: x.content, toolCallId: x.tc.id });
       }
     }
 
-    // Abort finish if session was deleted or cancelled during preceding awaits.
+    // Abort finish if session was deleted, cancelled or rolled back during preceding awaits.
     const preFinish = internalGet(sessionId);
-    if (stoppedAfterAnswer && (!preFinish || sessionAbort.signal.aborted)) {
+    if (!preFinish || sessionAbort.signal.aborted || preFinish.rolledBack) {
       return;
     }
 
@@ -849,13 +1104,36 @@ export function reviveSubagent(
   userId: string,
   subagentId: string,
   message: string,
+  opts?: { agentMode?: AgentMode },
 ): { ok: boolean; status: "queued" | "resumed"; note: string; error?: string } {
   const session = getSession(userId, subagentId);
   if (!session) {
     return { ok: false, status: "queued", note: "", error: "Subagent not found (or does not belong to you)." };
   }
+  if (session.rolledBack) {
+    // The transcript this worker belonged to was rolled back — resuming it
+    // would redo discarded work.
+    return {
+      ok: false,
+      status: "queued",
+      note: "",
+      error: "This subagent was discarded by an undo and cannot be resumed.",
+    };
+  }
   if (session.status !== "completed" && session.status !== "failed") {
     // Live session — may not read it, that is accepted and documented in the note.
+    // Architect mode may not steer a running Agent-mode worker: the message
+    // would reach a session that still holds write tools and let it modify the
+    // workspace, bypassing the read-only wall.
+    if (opts?.agentMode === "architect" && session.agentMode !== "architect") {
+      return {
+        ok: false,
+        status: "queued",
+        note: "",
+        error:
+          "Cannot message a running Agent-mode subagent from Architect mode — it could modify the workspace. Wait for it to finish, or switch to Agent mode.",
+      };
+    }
     enqueueSubagentMessage(subagentId, message);
     return { ok: true, status: "queued", note: "Message queued — the subagent will see it on its next iteration." };
   }
@@ -864,12 +1142,23 @@ export function reviveSubagent(
     return { ok: false, status: "queued", note: "", error: "Subagent already exhausted its resume attempts (3). Spawn a fresh subagent to continue." };
   }
   unmarkSubagentReportDelivered(userId, session.parentConversationId, subagentId);
+  // A revived subagent re-runs with the parent's CURRENT mode: the mode wall
+  // must hold for the turn that revives it (architect may message a subagent,
+  // but the resumed worker still runs read-only).
+  const agentMode = opts?.agentMode ?? session.agentMode;
   updateSession(subagentId, {
     status: "pending",
     report: undefined,
     error: undefined,
     completedAt: undefined,
     partial: undefined,
+    pendingPermission: undefined,
+    agentMode,
+    lastRunStartedAt: Date.now(),
+    allowedTools: resolveSubagentAllowedTools({
+      allowedTools: session.allowedTools,
+      readOnly: agentMode === "architect",
+    }),
     revives: revives + 1,
   });
   appendMessage(subagentId, { role: "user", content: `[Continue instruction from main agent]\n\n${message}` });
@@ -885,6 +1174,123 @@ export function reviveSubagent(
     void enqueueSubagentReport(userId, session.parentConversationId, subagentId);
   });
   return { ok: true, status: "resumed", note: "Subagent resumed — its next report will be delivered to you." };
+}
+
+export type SubagentPermissionOutcome = PermissionMode;
+
+/**
+ * Resolve a subagent tool call against the user's permission configuration.
+ *
+ * The user's settings are the only authority: a settings "deny" blocks, an
+ * "ask" prompts the user, an "allow" runs. The subagent has no say in it —
+ * exactly like the main agent.
+ */
+export function resolveSubagentToolPermission(userDecision: PermissionMode): SubagentPermissionOutcome {
+  return userDecision;
+}
+
+/** Formats human-readable target summary for a subagent permission prompt. */
+function buildSubagentPermissionTarget(
+  toolName: string,
+  action: PermissionAction | null,
+  args: Record<string, unknown>,
+): string {
+  const getStr = (key: string): string => {
+    const v = args[key];
+    return typeof v === "string" ? v : "";
+  };
+  switch (toolName) {
+    case "run_command": {
+      const cmd = extractRunCommand(args);
+      if (action === "command.outside_workspace") return `run OUTSIDE WORKSPACE \`${cmd}\``;
+      return `run \`${cmd}\``;
+    }
+    case "edit_file":
+      return `edit \`${getStr("path")}\``;
+    case "write_file":
+      return `write \`${getStr("path")}\``;
+    case "read_file":
+      return `read \`${getStr("path")}\``;
+    case "list_directory":
+      return `list \`${getStr("path")}\``;
+    case "browser_open":
+      return `open \`${getStr("url")}\``;
+    case "browser_click":
+      return `click \`${getStr("ref")}\``;
+    case "browser_type":
+      return `type into \`${getStr("ref")}\``;
+    case "web_search":
+      return `search \`${getStr("query")}\``;
+    case "http_fetch":
+      return `fetch \`${getStr("url")}\``;
+    case "mcp_call":
+      return `mcp call \`${getStr("server")}/${getStr("tool")}\``;
+    default:
+      return action ?? toolName;
+  }
+}
+
+/**
+ * Block a subagent on a live user approval: registers a pending permission
+ * (visible to the parent conversation), flips the session to
+ * `awaiting_permission`, and waits for the decision, the approval TTL, or abort.
+ */
+export async function awaitSubagentApproval(
+  session: SubagentSession,
+  sessionId: string,
+  tc: { id: string; name: string; arguments: string },
+  action: PermissionAction | null,
+  signal: AbortSignal,
+): Promise<PermissionDecision> {
+  let parsedArgs: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(tc.arguments || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      parsedArgs = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* prompt still shows the tool name/target */
+  }
+  const target = buildSubagentPermissionTarget(tc.name, action, parsedArgs);
+
+  const { id: approvalId, promise } = createPendingApproval({
+    userId: session.userId,
+    conversationId: session.parentConversationId,
+    messageId: sessionId,
+    toolCallId: tc.id,
+    toolName: tc.name,
+    action,
+    target,
+    args: parsedArgs,
+    subagent: { id: sessionId, name: session.name },
+    ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+  });
+
+  const pending: SubagentPendingPermission = {
+    approvalId,
+    toolCallId: tc.id,
+    toolName: tc.name,
+    action,
+    target,
+    createdAt: Date.now(),
+    ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+  };
+  updateSession(sessionId, { status: "awaiting_permission", pendingPermission: pending });
+  appendProgress(sessionId, `Awaiting user approval: ${target}`);
+  publishSubagentPermission(session.userId, session.parentConversationId, sessionId);
+
+  try {
+    return await raceWithAbort(promise, signal);
+  } catch {
+    // Aborted while waiting — release the entry so the UI card disappears.
+    resolvePendingApproval(session.userId, approvalId, "deny");
+    return "deny";
+  } finally {
+    const live = internalGet(sessionId);
+    if (live && live.status === "awaiting_permission") {
+      updateSession(sessionId, { status: "tool_exec", pendingPermission: undefined });
+    }
+  }
 }
 
 async function resolveProvider(
@@ -941,16 +1347,10 @@ function pickTools(allowed: string[]): Array<{
   type: "function";
   function: { name: string; description: string; parameters: Record<string, unknown> };
 }> {
-  // Subagents cannot recursively spawn subagents, interact with parent orchestration, or prompt the user interactively
-  const subagentForbidden = new Set(["spawn_subagent", "get_subagent", "message_subagent", "ask_question"]);
-  const available = PUBLIC_BUILTIN_TOOLS.filter((t) => !subagentForbidden.has(t.name));
-
-  if (allowed.length === 0) {
-    return available.filter((t) => isReadOnlyTool(t.name)).map((t) => ({
-      type: "function",
-      function: { name: t.name, description: t.description, parameters: t.inputSchema },
-    }));
-  }
+  // The toolset is resolved once at spawn time (`resolveSubagentAllowedTools`),
+  // so it already matches the parent's mode — subagents cannot recursively
+  // spawn subagents, interact with parent orchestration, or prompt the user.
+  const available = PUBLIC_BUILTIN_TOOLS.filter((t) => !SUBAGENT_FORBIDDEN_TOOLS.has(t.name));
 
   // Expand allowed tools: if run_command is permitted, automatically grant command_stop
   const effectiveAllowed = new Set(allowed);

@@ -123,9 +123,11 @@ export function deferSubagentDelivery(
  * release the subscription.
  */
 function maybeDeliver(entry: DeliveryEntry): void {
+  if (pausedDeliveries.has(entry.conversationId)) return;
   if (entry.pending.size === 0) return;
 
   const terminal: string[] = [];
+  const rolledBack: string[] = [];
   for (const id of entry.pending) {
     const session = internalGet(id);
     if (!session) {
@@ -134,13 +136,23 @@ function maybeDeliver(entry: DeliveryEntry): void {
       terminal.push(id);
       continue;
     }
+    if (session.rolledBack) {
+      // A transcript rollback discarded this worker: its report is gone, so
+      // reporting it would make the agent redo the discarded work.
+      rolledBack.push(id);
+      continue;
+    }
     if (session.status === "completed" || session.status === "failed") {
       terminal.push(id);
     }
   }
-  if (terminal.length === 0) return;
+  if (terminal.length === 0 && rolledBack.length === 0) return;
 
-  const writes: Promise<void>[] = [];
+  const writes: Promise<boolean>[] = [];
+  for (const id of rolledBack) {
+    entry.pending.delete(id);
+    entry.delivered.delete(id);
+  }
   for (const id of terminal) {
     entry.pending.delete(id);
     entry.delivered.add(id);
@@ -160,16 +172,22 @@ function maybeDeliver(entry: DeliveryEntry): void {
     entry.unsub?.();
     entry.unsub = undefined;
     registry.delete(keyFor(entry.userId, entry.conversationId));
+    // Only rolled-back work settled — there is nothing to synthesize, and a
+    // wake would restart the agent on a transcript the user just discarded.
+    if (rolledBack.length > 0 && writes.length === 0) return;
     // Deliver (fire) the wake only after all report writes have committed,
     // so the autoWake run that the wake triggers reads the reports back. The
     // grant that authorizes the sentinel (and replays a missed wake on SSE
     // reconnect) is issued in the same settlement tick, so neither the live
     // event nor a replay can race ahead of the persisted reports.
-    void Promise.allSettled(writes).then(() => {
+    void Promise.allSettled(writes).then((results) => {
       // A live main-agent loop drains the report queue itself; skip the wake
       // so a concurrent autoWake sentinel can't duplicate the final answer.
       if (isRunActive(entry.userId, entry.conversationId)) return;
-      grantAndPublishWake(entry.userId, entry.conversationId);
+      const anyPersisted = results.some((r) => r.status === "fulfilled" && r.value === true);
+      if (anyPersisted) {
+        grantAndPublishWake(entry.userId, entry.conversationId);
+      }
     });
   }
 }
@@ -260,15 +278,36 @@ function sweepExpiredWakeGrants(): void {
   }
 }
 
+const pausedDeliveries = new Set<string>();
+
+/** Pauses report delivery into conversation messages (e.g. during transcript undo). */
+export function pauseConversationDelivery(conversationId: string): () => void {
+  pausedDeliveries.add(conversationId);
+  return () => {
+    pausedDeliveries.delete(conversationId);
+    for (const entry of registry.values()) {
+      if (entry.conversationId === conversationId) {
+        void maybeDeliver(entry);
+      }
+    }
+  };
+}
+
 /** Post a single subagent's report as a user-role message in the conversation. */
-async function postReport(entry: DeliveryEntry, subagentId: string): Promise<void> {
+async function postReport(entry: DeliveryEntry, subagentId: string): Promise<boolean> {
+  if (pausedDeliveries.has(entry.conversationId)) return false;
+  const session = internalGet(subagentId);
+  if (session?.rolledBack) {
+    // The transcript this report belonged to was rolled back — posting it
+    // would resurrect discarded work.
+    return false;
+  }
   // Claim BEFORE the awaited create — the main-run drain gates its posts on
   // this mark, so claiming first closes the double-post TOCTOU. Unmark on
   // failure so a later drain/watcher pass can retry.
   markSubagentReportDelivered(entry.userId, entry.conversationId, subagentId);
   try {
-    const session = internalGet(subagentId);
-    await db.message.create({
+    const created = await db.message.create({
       data: {
         conversationId: entry.conversationId,
         role: "user",
@@ -279,9 +318,18 @@ async function postReport(entry: DeliveryEntry, subagentId: string): Promise<voi
         ...(session?.completedAt ? { createdAt: new Date(session.completedAt) } : {}),
       },
     });
+    // Re-verify that rollback did not complete while the insert was in flight.
+    const liveSession = internalGet(subagentId);
+    if (liveSession?.rolledBack) {
+      await db.message.delete({ where: { id: created.id } }).catch(() => undefined);
+      unmarkSubagentReportDelivered(entry.userId, entry.conversationId, subagentId);
+      return false;
+    }
+    return true;
   } catch {
     unmarkSubagentReportDelivered(entry.userId, entry.conversationId, subagentId);
     /* best-effort — never crash the background watcher */
+    return false;
   }
 }
 

@@ -28,6 +28,9 @@ export const dynamic = "force-dynamic";
  *   event: wake       — all deferred subagents delivered; client should launch
  *                       the sentinel autoWake chat run to synthesize the answer
  *   : keepalive       — every 15s to prevent proxy timeouts
+ *
+ * Tool approvals are NOT served here: they are user-scoped and live on
+ * /api/agents/subagents/permissions/stream.
  */
 export async function GET(req: NextRequest): Promise<Response> {
   const blocked = enforceLoopbackRequest(req);

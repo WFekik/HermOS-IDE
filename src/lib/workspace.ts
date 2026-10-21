@@ -816,7 +816,16 @@ export async function readFileWs(
 ): Promise<{ path: string; content: string; size: number; isBinary?: boolean }> {
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
-  const stat = await fs.stat(/* turbopackIgnore: true */ abs).catch(() => null);
+  // Preserve ENOENT semantics for callers that distinguish "absent" (create)
+  // from "unreadable" (must surface). The friendly message stays identical.
+  const stat = await fs.stat(/* turbopackIgnore: true */ abs).catch((err: NodeJS.ErrnoException) => {
+    if (err?.code === "ENOENT") {
+      const missing = new Error("File not found.") as NodeJS.ErrnoException;
+      missing.code = "ENOENT";
+      throw missing;
+    }
+    return null;
+  });
   if (!stat || !stat.isFile()) throw new Error("File not found.");
   if (stat.size > maxBytes) {
     throw new Error(
@@ -1642,6 +1651,14 @@ export interface CommandSafetyResult {
   command?: string;
   cwd?: string;
   isOutsideWorkspace?: boolean;
+  /**
+   * Why the command was refused. "escape"/"bare" mean the command targets a
+   * directory outside the workspace root — the user's `command.outside_workspace`
+   * rule governs those. "nested-shell" means the inner command cannot be
+   * validated at all: it always needs an explicit per-call confirmation, a
+   * config rule must never unlock it.
+   */
+  refusalKind?: "escape" | "expansion" | "flag" | "bare" | "nested-shell";
 }
 
 /** Check if a cd target contains unverifiable shell expansions or wildcards. */
@@ -1824,6 +1841,24 @@ function realPathOrFallback(p: string): string {
 }
 
 /**
+ * Extract the command a `run_command` call will actually execute.
+ *
+ * The tool schema accepts four aliases for the command string; every caller
+ * that reasons about the command (permission classification, prompt labels)
+ * must read all of them — a classifier that only looks at `command` would miss
+ * a `cmd`/`Command` payload and mis-classify a workspace escape.
+ */
+export function extractRunCommand(args: unknown): string {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  const record = args as Record<string, unknown>;
+  for (const key of ["command", "CommandLine", "cmd", "Command"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
+}
+
+/**
  * Command safety validator checking leading cd directory changes, subshell executions,
  * and path confinement before running commands in the active workspace.
  */
@@ -1871,12 +1906,14 @@ export function resolveCommandSafety(
             ? `cd target contains unverifiable shell expansion characters: "${target}" (segment: "${segment}")`
             : `bare cd without a target would leave the workspace root (segment: "${segment}")`,
     isOutsideWorkspace: kind === "escape" || kind === "bare",
+    refusalKind: kind,
   });
 
   const refuseNestedShell = (segment: string): CommandSafetyResult => ({
     ok: false,
     reason: `nested shell with an execution flag (-c, -lc, -ic, -xc, -Command, -EncodedCommand, /c, /k) can escape the workspace root (segment: "${segment}")`,
     isOutsideWorkspace: true,
+    refusalKind: "nested-shell",
   });
 
   let remaining = command;

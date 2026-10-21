@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeContent,
+  sanitizeThinkingContent,
   sanitizeStreamingDelta,
   extractThinkingAndContent,
   stripEmojis,
@@ -182,6 +183,20 @@ describe("sanitizeContent", () => {
     expect(result).not.toContain("<think>");
     expect(result).not.toContain('{"tool"');
     expect(result).not.toContain('Tool "grep"');
+  });
+});
+
+describe("sanitizeThinkingContent", () => {
+  it("strips tool-call XML a model wrote in its reasoning channel", () => {
+    const input =
+      "I will inspect the entrypoint.\n</parameter></function></tool_call>" +
+      "<tool_call><function=read_file><parameter=path>src/App.tsx</parameter></function></tool_call>";
+    expect(sanitizeThinkingContent(input)).toBe("I will inspect the entrypoint.");
+  });
+
+  it("strips Qwen-style function blocks without a tool_call wrapper", () => {
+    const input = "Checking config.\n<function=read_file><parameter=path>src/main.tsx</parameter></function>";
+    expect(sanitizeThinkingContent(input)).toBe("Checking config.");
   });
 });
 

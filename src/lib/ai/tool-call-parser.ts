@@ -177,15 +177,24 @@ function extractFencedToolCallBlocks(content: string): Array<{ fullMatch: string
 }
 
 /**
- * Strip all think/reasoning tags and tool-call blocks from content.
- * Collapses excessive blank lines.
+ * Strip think/reasoning tags only (no tool-call blocks). Callers must strip
+ * these before parsing text tool calls so syntax written inside a model's
+ * reasoning channel is never executed.
  */
-export function cleanContent(content: string): string {
-  let out = content
+export function stripThinkingTags(content: string): string {
+  return content
     .replace(THINK_TAGS_RE, "")
     .replace(THINK_UNCLOSED_RE, "")
     .replace(THINK_MALFORMED_OPEN_RE, "")
     .replace(THINK_STANDALONE_CLOSE_RE, "");
+}
+
+/**
+ * Strip all think/reasoning tags and tool-call blocks from content.
+ * Collapses excessive blank lines.
+ */
+export function cleanContent(content: string): string {
+  let out = stripThinkingTags(content);
 
   // Strip fenced tool call blocks (including nested backticks)
   const fencedBlocks = extractFencedToolCallBlocks(out);

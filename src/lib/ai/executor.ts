@@ -17,11 +17,15 @@ import {
   PUBLIC_BUILTIN_TOOLS,
 } from "@/lib/ai/tools";
 import {
+  architectReadOnlyTools,
+  architectAllowedTools,
+  modeToolDenyReason,
+} from "@/lib/ai/mode-policy";
+import {
   evaluateToolPermission,
   getPermissions,
-  refreshPermissionsConfig,
+  applyAlwaysAllowToConfig,
   actionForTool,
-  isReadOnlyTool,
   isWriteTool,
   type PermissionAction,
   type PermissionMode,
@@ -31,11 +35,13 @@ import { isTrustedLoopbackBrowserOpen } from "@/lib/browser-trust";
 import {
   createPendingApproval,
   cancelPendingForConversation,
+  cancelPendingApproval,
   type PermissionDecision,
 } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation, raceWithAbort } from "@/lib/question-prompt";
 import { audit } from "@/app/api/_lib/helpers";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
+import { BASE_SYSTEM_RULES, composeSystemPrompt } from "@/lib/ai/system-prompt";
 import { parseMentions, parseCommands, type ParsedMention } from "@/lib/mentions";
 import {
   getActiveWorkspace,
@@ -44,6 +50,7 @@ import {
   getCompletedCommand,
   acknowledgeCompletedCommand,
   resolveCommandSafety,
+  extractRunCommand,
   ensureAgentTempDir,
 } from "@/lib/workspace";
 import { mergeReasoningCapability } from "@/lib/provider-models";
@@ -107,6 +114,8 @@ import {
   parseRetryHeader,
   getErrorStatusCode,
   isTransientStreamError,
+  retryAttemptLimit,
+  retryBackoffMs,
 } from "@/lib/ai/retry-utils";
 import {
   detectPromptLanguage,
@@ -218,25 +227,6 @@ function getAttachmentBuffer(a: ResolvedAttachment): Buffer | null {
   }
   return null;
 }
-
-/** Read-only tools allowed in Architect mode. */
-const ARCHITECT_READ_ONLY_TOOLS: ReadonlySet<string> = new Set(
-  PUBLIC_BUILTIN_TOOLS.filter((t) => isReadOnlyTool(t.name)).map((t) => t.name),
-);
-
-/** Subagent orchestration tools allowed in Architect mode (delegated to read-only toolsets). */
-const ARCHITECT_SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
-  "spawn_subagent",
-  "get_subagent",
-  "message_subagent",
-]);
-
-/** Everything architect mode may invoke: read-only tools + orchestration + artifacts. */
-const ARCHITECT_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
-  ...ARCHITECT_READ_ONLY_TOOLS,
-  ...ARCHITECT_SUBAGENT_TOOLS,
-  "create_artifact",
-]);
 
 /** Reasonable limit for inlined preview text extracted from text-like attachments. */
 const MAX_ATTACHMENT_PREVIEW_CHARS = 50000;
@@ -377,9 +367,10 @@ const sessionReadTracker = new Map<string, Set<string>>();
 export class ConvergenceDetector {
   private history: string[] = [];
   private toolSignatures: string[] = [];
+  private pollOnlyStreak = 0;
   public lastConsecutive = 0;
-  /** Which loop kind triggered the last break: 2/3/4-cycle, generic rotation, or prose repetition. */
-  public lastCycleKind: "two" | "three" | "four" | "rotation" | "prose" | null = null;
+  /** Which loop kind triggered the last break: 2/3/4-cycle, generic rotation, prose repetition, or subagent polling. */
+  public lastCycleKind: "two" | "three" | "four" | "rotation" | "prose" | "poll" | null = null;
 
   private normalize(text: string): string {
     return text.trim().toLowerCase().replace(/\s+/g, " ");
@@ -462,7 +453,13 @@ export class ConvergenceDetector {
 
   private toolSignature(toolCalls?: Array<{ name?: string; toolName?: string; args?: unknown }>): string {
     if (!toolCalls || toolCalls.length === 0) return "no_tools";
-    return toolCalls
+    // Status checks report on other work; they are not progress themselves.
+    // Excluding them keeps legitimate "wait for the subagent" polls from
+    // looking like an edit/poll rotation. Poll-only iterations are bounded
+    // separately (see record()).
+    const progressCalls = toolCalls.filter((t) => (t.name || t.toolName || "") !== "get_subagent");
+    if (progressCalls.length === 0) return "no_tools";
+    return progressCalls
       .map((t) => {
         const name = t.name || t.toolName || "";
         let a = t.args;
@@ -522,6 +519,24 @@ export class ConvergenceDetector {
     const toolSig = this.toolSignature(toolCalls);
 
     const hasTools = Boolean(toolCalls && toolCalls.length > 0);
+    const pollOnly =
+      hasTools &&
+      (toolCalls ?? []).every((t) => (t.name || t.toolName || "") === "get_subagent");
+
+    // A pure status-check turn is a wait, not a loop. Let the model wait a
+    // few iterations for a near-finished subagent, then end the turn cleanly
+    // — background reports wake the conversation when they land.
+    if (pollOnly) {
+      this.pollOnlyStreak++;
+      if (this.pollOnlyStreak >= 5) {
+        this.lastConsecutive = this.pollOnlyStreak;
+        this.lastCycleKind = "poll";
+        return "break";
+      }
+      return "ok";
+    }
+    this.pollOnlyStreak = 0;
+
     const lastToolSig = this.toolSignatures[this.toolSignatures.length - 1];
 
     this.toolSignatures.push(toolSig);
@@ -593,21 +608,18 @@ export class ConvergenceDetector {
   reset(): void {
     this.history = [];
     this.toolSignatures = [];
+    this.pollOnlyStreak = 0;
     this.lastConsecutive = 0;
     this.lastCycleKind = null;
   }
 }
-const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermOS full-stack IDE. Complete tasks end-to-end: investigate, implement, verify, report.
+/**
+ * The IDE's baseline rules live in `system-prompt.ts` (shared with the
+ * text-fallback variant and unit-tested there).
+ */
+const NATIVE_SYSTEM_PROMPT = `You are HermOS, an elite coding agent in the HermOS IDE. Complete tasks end-to-end: investigate, implement, verify, report.
 
-- GROUND TRUTH: Base claims only on tool output. Find files with grep/glob first; read targeted ranges (files <500 lines: whole; larger: by range). Never re-read identical ranges.
-- SURGICAL EDITS: Sequential, character-exact diffs. Match surrounding code style, types, and architecture. Never write placeholders, stubs, TODOs, or mocks.
-- PROVE IT: Always verify correctness (run build/typecheck/lint/tests) before finishing. On error/failure: read output, fix root cause, and retry — a failure is never "done".
-- SECRETS & BUDGET: Never print or commit real keys/secrets. Quote key log lines, not full walls.
-- TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
-- ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
-- CONCISE: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
-- PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
-- SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
+${BASE_SYSTEM_RULES}
 
 Use the tools exposed via the native function-calling API.`;
 
@@ -624,33 +636,18 @@ function buildTextFallbackSystemPrompt(enabledTools: string[], mode: AgentMode):
       : mode === "chat"
         ? "(tool usage is disabled in Chat mode)"
         : PUBLIC_BUILTIN_TOOLS.map((t) => t.name).join(", ");
-  return `You are HermOS, an elite coding agent in the HermOS full-stack IDE. Complete tasks end-to-end: investigate, implement, verify, report.
+  return `You are HermOS, an elite coding agent in the HermOS IDE. Complete tasks end-to-end: investigate, implement, verify, report.
 
-- GROUND TRUTH: Base claims only on tool output. Find files with grep/glob first; read targeted ranges (files <500 lines: whole; larger: by range). Never re-read identical ranges.
-- SURGICAL EDITS: Sequential, character-exact diffs. Match surrounding code style, types, and architecture. Never write placeholders, stubs, TODOs, or mocks.
-- PROVE IT: Always verify correctness (run build/typecheck/lint/tests) before finishing. On error/failure: read output, fix root cause, and retry — a failure is never "done".
-- SECRETS & BUDGET: Never print or commit real keys/secrets. Quote key log lines, not full walls.
-- TASK TRACKING: For complex, multi-step tasks or when planning work, invoke the todo_write tool to maintain and update structured todo items so progress is tracked live in the UI.
-- ASKING QUESTIONS: When requirements are genuinely ambiguous or involve significant architectural/design tradeoffs, call the ask_question tool with structured options. Never ask questions that can be answered by reading the codebase, and never ask trivial questions.
-- CONCISE: Always use relative workspace paths. Put extensive plans/docs into create_artifact; keep chat responses short.
-- PREVIEWS & DEV SERVERS: When previewing the user's web project, always open the project's actual dev server (e.g., http://localhost:3000 for Next.js, http://localhost:5173 for Vite, http://localhost:8000 for Django/FastAPI). NEVER open HermOS IDE's internal port (3001+). Both http:// and https:// URLs are supported.
-- SUBAGENTS: spawn_subagent runs asynchronously in background. Never poll or loop-wait — end turn; reports auto-deliver upon completion.
+${BASE_SYSTEM_RULES}
 
 To call a tool, output a JSON object on its own line:
 {"tool":"tool_name","args":{"key":"value"}}
 
 Available tools: ${availableList}.
 
-Examples:
-
-User: hi
-Assistant: Hello! How can I help you with your codebase today?
-
-User: what files are in this project?
-Assistant: {"tool":"list_directory","args":{"path":"."}}
-
-User: read src/math.ts
-Assistant: {"tool":"read_file","args":{"path":"src/math.ts"}}`;
+Example:
+User: which files are in this project?
+Assistant: {"tool":"list_directory","args":{"path":"."}}`;
 }
 
 // Default export kept for callers that don't pick a variant (e.g. agent-preset
@@ -2971,8 +2968,7 @@ function buildPermissionTarget(
     const v = args[key];
     return typeof v === "string" ? v : "";
   };
-  const firstCommand = (): string =>
-    getStr("command") || getStr("CommandLine") || getStr("cmd") || getStr("Command");
+  const firstCommand = (): string => extractRunCommand(args);
   switch (toolName) {
     case "run_command": {
       const cmd = firstCommand();
@@ -3134,8 +3130,10 @@ export async function buildMentionContext(
             cleanName.includes(p.name.toLowerCase()),
         );
         if (preset) {
+          // The preset's prompt goes into the SYSTEM prompt (as the user's
+          // instructions) — repeating it here would pay for it twice.
           systemPromptOverride = preset.systemPrompt;
-          parts.push(`[Agent preset activated: "${preset.name}" (${preset.description})]\n\nSystem Prompt Override:\n${preset.systemPrompt}`);
+          parts.push(`[Agent preset activated: "${preset.name}" (${preset.description})]`);
         } else {
           parts.push(`[Agent preset: "${m.id}" — not found. Available presets: ${allPresets.map((p) => p.name).join(", ")}]`);
         }
@@ -3650,6 +3648,9 @@ async function persistQueuedSubagentReports(
   for (const q of queued) {
     try {
       const sess = getSession(userId, q.subagentId);
+      // A rolled-back worker belongs to a discarded transcript — its report
+      // must never reappear in the kept conversation.
+      if (sess?.rolledBack) continue;
       if (sess && sess.status !== "completed" && sess.status !== "failed") continue;
       if (isSubagentReportDelivered(userId, conversationId, q.subagentId)) continue;
       // Claim BEFORE the awaited create: the watcher gates its posts on the
@@ -3874,12 +3875,13 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
     // so the client always finalizes the row it streamed into.
     emit({ type: "start", messageId: assistantMsg.id });
 
-    // 4. Build system prompt (mention override > request override > saved prompt > default).
-    let baseSystemPrompt =
-      systemPromptOverride ||
-      req.systemPrompt ||
-      conversation.systemPrompt ||
-      NATIVE_SYSTEM_PROMPT;
+    // 4. Build system prompt: the IDE baseline always applies; the user's own
+    //    instructions (agent preset, request override or the conversation's
+    //    saved prompt) are layered on top of it instead of replacing it —
+    //    otherwise a custom prompt silently drops every baseline rule.
+    const userSystemPrompt =
+      systemPromptOverride || req.systemPrompt || conversation.systemPrompt;
+    let baseSystemPrompt = NATIVE_SYSTEM_PROMPT;
 
     const mode: AgentMode = req.mode || (conversation.mode as AgentMode) || "agent";
 
@@ -3894,9 +3896,9 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
       const allTools = req.enabledTools && req.enabledTools.length > 0
         ? req.enabledTools
         : PUBLIC_BUILTIN_TOOLS.map((t) => t.name);
-      enabledTools = allTools.filter((t) => ARCHITECT_ALLOWED_TOOLS.has(t));
+      enabledTools = allTools.filter((t) => architectAllowedTools().has(t));
       toolSection =
-        "\n\n## Mode: Architect (Planning & Architecture)\nYou may read and analyze the codebase and workspace, but MUST NOT execute shell commands or modify existing workspace source files directly. Write plans, architecture documentation, and designs to artifacts via create_artifact. You can read and access artifacts, inspect sessions/temp files in com.hermos-ide, and spawn read-only research subagents (spawn_subagent) for parallel investigation.";
+        "\n\n## Mode: Architect (Planning & Architecture)\nYou may read and analyze the codebase and workspace, but MUST NOT execute shell commands or modify existing workspace source files directly. Write plans, architecture documentation, and designs to artifacts via create_artifact. You can read and access artifacts, inspect sessions/temp files in com.hermos-ide, spawn read-only research subagents (spawn_subagent) for parallel investigation, and continue a read-only subagent's work with message_subagent.";
     } else {
       enabledTools =
         req.enabledTools && req.enabledTools.length > 0
@@ -3946,7 +3948,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         const wsRoot = activeWs.rootDir;
         const runtimeMode = process.env.HERMOS_DESKTOP === "true" ? "Desktop App (Tauri Native)" : "Web Server / Dev";
         const appPort = process.env.PORT || (process.env.HERMOS_DESKTOP === "true" ? "3001+" : "3000");
-        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Temporary & Sessions Directory**: ${ensureHermosTempDir()} (all modes have access to sessions and temp storage under com.hermos-ide)\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.\n- **Dev Servers vs IDE Ports**: HermOS IDE itself runs on internal port ${appPort}. The user's project dev servers run on standard framework ports (e.g. 3000 for Next.js, 5173 for Vite, 8000, 8080). When opening web pages or browser tools (browser_open), always target the user's project dev server port, NEVER HermOS IDE's internal port (${appPort}).`;
+        envBlock = `\n\n## Build Environment\n- **Runtime Mode**: ${runtimeMode}\n- **Platform**: ${platform}\n- **Shell**: ${shell}\n- **Working directory**: ${cwd}\n- **Workspace root**: ${wsRoot}\n- **Temporary & Sessions Directory**: ${ensureHermosTempDir()} (all modes have access to sessions and temp storage under com.hermos-ide)\n- **Date**: ${new Date().toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" })}\n- **Path style**: Use workspace-relative paths (e.g., \`src/app/page.tsx\`). Never use absolute server paths like \`C:\\ROOT\\workspaces\\...\` or \`/home/user/workspaces/...\`.\n- **Dev servers**: HermOS IDE itself runs on internal port ${appPort}. The user's project dev server runs on the port its own tooling defines — read the project's scripts/config to find it. When opening web pages (browser_open), always target the project's dev server, NEVER HermOS IDE's internal port (${appPort}).`;
       }
     } catch {
       envBlock = "";
@@ -4001,7 +4003,24 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
       `\n\n## Response Rules\n- Always respond ENTIRELY in ${runLanguageName} unless the user explicitly asks for another language (code identifiers stay as-is). ` +
       `Show directory structures ONLY as fenced "tree" code blocks with one entry per line — never inline with | separators or backticks.`;
 
-    let systemPrompt = baseSystemPrompt + workspaceRulesBlock + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
+    /** Re-assemble the prompt with a different base (native → text fallback). */
+    const recompose = (base: string, minimal = false): string =>
+      composeSystemPrompt(
+        {
+          base,
+          userInstructions: userSystemPrompt ?? undefined,
+          workspaceRules: workspaceRulesBlock,
+          toolSection,
+          capabilities: capabilitiesBlock,
+          environment: envBlock,
+          discovery: discoveryBlock,
+          mission: missionBlock,
+          responseRules: languageBlock,
+        },
+        minimal,
+      );
+
+    let systemPrompt = recompose(baseSystemPrompt);
 
     let openaiTools = buildOpenAITools(enabledTools);
     let anthropicTools = buildAnthropicTools(enabledTools);
@@ -4357,7 +4376,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
           anthropicTools = [];
           if (baseSystemPrompt === NATIVE_SYSTEM_PROMPT) {
             baseSystemPrompt = buildTextFallbackSystemPrompt(enabledTools, mode);
-            systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
+            systemPrompt = recompose(baseSystemPrompt);
           }
         }
         // Real queuing: drain user turns queued while the loop was working
@@ -5254,18 +5273,15 @@ const thinkInstruction = thinkPlan.kind === "params"
 
             const is429 = status === 429 || /429|rate limit|too many requests/i.test(msg);
             const isTransient = isTransientStreamError(err);
-            const maxAttempts = is429 ? 15 : 3;
+            const maxAttempts = retryAttemptLimit(is429);
             if (!isTransient || streamAttempt >= maxAttempts - 1) {
               // Non-retryable, or retries exhausted — fall through to emit + break.
               streamSucceeded = false;
               break;
             }
             // Transient — wait and retry with exponential backoff + jitter or header reset
-            let delay = (is429 ? 2000 : 1000) * Math.pow(2, streamAttempt) + Math.random() * 500;
             const headerMs = (err as any)?.retryAfterMs || parseRetryHeader((err as any)?.retryAfter);
-            if (is429 && headerMs !== null && headerMs > 0) {
-              delay = Math.min(headerMs, 120000);
-            }
+            const delay = retryBackoffMs(streamAttempt, is429, headerMs);
 
             emit({
               type: "rate_limit_retry",
@@ -5429,7 +5445,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             // to output tool calls as JSON text rather than the native API.
             if (baseSystemPrompt === NATIVE_SYSTEM_PROMPT) {
               baseSystemPrompt = buildTextFallbackSystemPrompt(enabledTools, mode);
-              systemPrompt = baseSystemPrompt + toolSection + capabilitiesBlock + envBlock + discoveryBlock + missionBlock + languageBlock;
+              systemPrompt = recompose(baseSystemPrompt);
             }
           } else {
             // No tools were present — empty might be thinking-related.
@@ -5463,7 +5479,7 @@ const thinkInstruction = thinkPlan.kind === "params"
           if (!emptyBarePromptTried) {
             emptyBarePromptTried = true;
             baseSystemPrompt = buildTextFallbackSystemPrompt(enabledTools, mode);
-            systemPrompt = baseSystemPrompt + toolSection;
+            systemPrompt = recompose(baseSystemPrompt, true);
             forceDisableThinking = true;
             openaiTools = [];
             anthropicTools = [];
@@ -5598,6 +5614,19 @@ const thinkInstruction = thinkPlan.kind === "params"
             fullContent = fullContent.slice(0, -(cleaned.length)).replace(/\n\n$/, "");
           }
           const cycleKind = convergenceDetector.lastCycleKind;
+          if (cycleKind === "poll") {
+            // Waiting on background work is not a failure: end the turn and
+            // let the delivery watcher wake the conversation with reports.
+            const notice =
+              `\n\n---\n⏳ Waiting on background subagents — ending this turn. ` +
+              "Their reports will arrive automatically when they finish.";
+            emit({
+              type: "delta",
+              content: notice,
+            });
+            fullContent += notice;
+            break;
+          }
           const breakDetail =
             cycleKind && cycleKind !== "prose"
               ? `repeating tool cycle detected (${cycleKind} pattern over ${convergenceDetector.lastConsecutive} tool calls)`
@@ -5927,6 +5956,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             rootDir: toolRootDir,
             workspace: toolWs ?? undefined,
             userAllowedOutsideWorkspace: entry.userAllowedOutsideWorkspace,
+            agentMode: mode,
             onProgress: (text) => {
               emit({ type: "command_output", toolCallId: entry.toolCallId, text, running: true });
             },
@@ -5978,7 +6008,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             tc.args = {
               ...tc.args,
               allowedTools: requested.filter((t) =>
-                ARCHITECT_READ_ONLY_TOOLS.has(t as string),
+                architectReadOnlyTools().has(t as string),
               ),
             };
           }
@@ -5987,9 +6017,13 @@ const thinkInstruction = thinkPlan.kind === "params"
           let permissionMode: PermissionMode = "ask";
           let action = actionForTool(tc.toolName);
           let isOutsideCommand = false;
+          // A nested shell's inner command cannot be validated at all: it always
+          // needs an explicit per-call confirmation, so a config rule can never
+          // unlock it.
+          let requiresPerCallApproval = false;
 
           if (tc.toolName === "run_command") {
-            const rawCmd = String(tc.args?.command ?? tc.args?.CommandLine ?? "");
+            const rawCmd = extractRunCommand(tc.args);
             const tempDir = ensureAgentTempDir(user.id);
             const hermosTemp = ensureHermosTempDir();
             // Fail closed when no workspace resolved: treat as outside-workspace
@@ -6005,40 +6039,45 @@ const thinkInstruction = thinkPlan.kind === "params"
               if (!safety.ok && safety.isOutsideWorkspace) {
                 isOutsideCommand = true;
                 action = "command.outside_workspace";
+                requiresPerCallApproval = safety.refusalKind === "nested-shell";
               }
             }
           }
 
           try {
-            if (isOutsideCommand) {
-              // Architect mode MUST NOT execute shell commands (including outside-workspace
-              // ones). Check the architect deny BEFORE the per-permission-config evaluation
-              // so it cannot be bypassed by a permissive config entry.
-              if (mode === "architect") {
-                permissionMode = "deny";
-                try {
-                  await audit(
-                    user.id,
-                    "tool_denied",
-                    JSON.stringify({
-                      tool: tc.toolName,
-                      action: "command.outside_workspace",
-                      reason: "architect_mode_shell_blocked",
-                    }),
-                  );
-                } catch { /* ignore audit failures */ }
-              } else {
-                // Route through the full permission evaluator so user-configured
-                // rules and mode restrictions are applied consistently.
-                permissionMode = await evaluateToolPermission(
+            if (isOutsideCommand && mode === "architect") {
+              // Architect mode MUST NOT execute shell commands (including
+              // outside-workspace ones). Deny BEFORE the per-config evaluation
+              // so a permissive config entry cannot bypass the wall.
+              permissionMode = "deny";
+              try {
+                await audit(
                   user.id,
-                  "command.outside_workspace",
-                  mode,
-                  toolPermConfig,
+                  "tool_denied",
+                  JSON.stringify({
+                    tool: tc.toolName,
+                    action: "command.outside_workspace",
+                    reason: "architect_mode_shell_blocked",
+                  }),
                 );
-              }
+              } catch { /* ignore audit failures */ }
             } else {
-              permissionMode = await evaluateToolPermission(user.id, tc.toolName, mode, toolPermConfig);
+              // `action` carries the pre-classified permission action — for an
+              // outside-workspace command that is `command.outside_workspace`,
+              // which has its own rule instead of `command.run`.
+              permissionMode = await evaluateToolPermission(
+                user.id,
+                tc.toolName,
+                mode,
+                toolPermConfig,
+                action,
+              );
+              // An unvalidatable nested shell always needs a per-call
+              // confirmation: a config-level "allow" must not silently
+              // authorize `bash -c "…"`.
+              if (requiresPerCallApproval && permissionMode === "allow") {
+                permissionMode = "ask";
+              }
             }
           } catch (e) {
             console.error("[perms] evaluation failed, failing CLOSED (ask):", e);
@@ -6088,12 +6127,24 @@ const thinkInstruction = thinkPlan.kind === "params"
             thoughtSignature: tc.thoughtSignature,
           };
 
-          if (mode === "chat") {
+          const modeDeny = modeToolDenyReason(mode, tc.toolName);
+          if (modeDeny) {
             entry.allowed = false;
-            entry.denyReason = "Tool execution is disabled in Chat mode. Switch to Agent or Architect mode to use tools.";
-          } else if (mode === "architect" && !ARCHITECT_ALLOWED_TOOLS.has(tc.toolName)) {
-            entry.allowed = false;
-            entry.denyReason = `Tool '${tc.toolName}' is blocked in Architect mode (Architect mode is read-only for planning & architecture). Switch to Agent mode to modify files or execute commands.`;
+            entry.denyReason = modeDeny;
+            try {
+              await audit(
+                user.id,
+                "tool_denied",
+                JSON.stringify({
+                  tool: tc.toolName,
+                  action,
+                  reason: "mode_blocked",
+                  mode,
+                }),
+              );
+            } catch {
+              /* ignore audit failures */
+            }
           } else if (permissionMode === "deny") {
             entry.allowed = false;
             entry.denyReason = `Permission denied for ${action ?? tc.toolName}.`;
@@ -6129,13 +6180,18 @@ const thinkInstruction = thinkPlan.kind === "params"
               action: action ?? tc.toolName,
               target,
               approvalId,
+              // The client counts the approval down against the SERVER's
+              // start time — otherwise a delayed frame shows time left the
+              // server no longer has, and the user's "Allow" lands on an
+              // already-expired approval.
+              createdAt: Date.now(),
             });
             let decision: PermissionDecision;
             try {
               decision = await raceWithAbort(approvalPromise, signal);
             } catch {
-              // Stream aborted: cancel pending approvals for conversation and treat as denied.
-              cancelPendingForConversation(conversation.id);
+              // Stream aborted: cancel pending approval and treat as denied.
+              cancelPendingApproval(approvalId);
               decision = "deny";
             }
             try {
@@ -6147,18 +6203,20 @@ const thinkInstruction = thinkPlan.kind === "params"
                   action,
                   decision,
                   approvalId,
+                  // The target makes the record reconstructable: without it an
+                  // investigator only knows THAT something was approved.
+                  target: target.slice(0, 500),
                 }),
               );
             } catch {
               /* ignore audit failures */
             }
             if (decision === "always_allow") {
-              // Refresh permission snapshot after always_allow so subsequent tool calls skip prompting.
-              toolPermConfig = await refreshPermissionsConfig(
-                user.id,
-                decision,
-                toolPermConfig,
-              );
+              // Apply the decision to the run snapshot right away: the
+              // pending-approval endpoint persists the rule asynchronously, so
+              // waiting for the database write would re-prompt for the next
+              // call of the same action.
+              toolPermConfig = applyAlwaysAllowToConfig(toolPermConfig, action);
             }
             if (decision === "deny") {
               entry.allowed = false;
@@ -6563,7 +6621,7 @@ const thinkInstruction = thinkPlan.kind === "params"
       // (APPROVAL_TTL_MS) don't keep firing (and so the user's UI doesn't
       // show a stale prompt for a dead conversation).
       try {
-        cancelPendingForConversation(req.conversationId);
+        cancelPendingForConversation(req.conversationId, { excludeSubagents: true });
         cancelPendingQuestionsForConversation(req.conversationId);
       } catch {
         /* ignore */
@@ -6677,7 +6735,7 @@ const thinkInstruction = thinkPlan.kind === "params"
     const msg =
       err instanceof Error ? err.message : "Unknown error during chat.";
     try {
-      cancelPendingForConversation(req.conversationId);
+      cancelPendingForConversation(req.conversationId, { excludeSubagents: true });
       cancelPendingQuestionsForConversation(req.conversationId);
     } catch {
       /* ignore */

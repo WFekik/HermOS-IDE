@@ -13,9 +13,11 @@ import {
   Brain,
   Shield,
   ShieldAlert,
+  Bot,
   Check,
   Ban,
   ShieldCheck,
+  Clock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,6 +52,13 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/use-translation";
 import { getThinkingDesc, getThinkingLabel } from "@/lib/i18n";
 import { formatBytes } from "@/lib/tool-ui-shared";
+import { PERMISSION_APPROVAL_TTL_MS } from "@/lib/permissions-core";
+import {
+  evaluatePermission,
+  evaluateOutsideWorkspaceCommand,
+  type PermissionAction,
+  type PermissionsConfig,
+} from "@/lib/permissions-core";
 import { isMacPlatform } from "@/lib/platform";
 import { conversationWidthClass } from "@/lib/color-theme";
 
@@ -682,10 +691,27 @@ export function Composer({ onSend, onQueue, onStop, disabled }: ComposerProps) {
                 : "border-border/60 hover:border-border",
           )}
         >
-          {permissionPrompt && (!permissionPrompt.conversationId || permissionPrompt.conversationId === activeConversationId) ? (
+          {/*
+          A main-agent approval replaces the input (its turn is blocked and
+          nothing can be typed). A BACKGROUND WORKER's approval must not: the
+          chat is idle and the worker may wait up to 30 minutes, so the card
+          sits above the input and the user keeps working.
+        */}
+        {permissionPrompt &&
+        permissionPrompt.subagentId &&
+        permissionPrompt.conversationId === activeConversationId ? (
+          <PermissionPromptCard
+            prompt={permissionPrompt}
+            onResolve={(decision, opts) => resolvePermissionPrompt(permissionPrompt.id, decision, opts)}
+          />
+        ) : null}
+
+        {permissionPrompt &&
+        !permissionPrompt.subagentId &&
+        (!permissionPrompt.conversationId || permissionPrompt.conversationId === activeConversationId) ? (
             <PermissionPromptCard
               prompt={permissionPrompt}
-              onResolve={(decision) => resolvePermissionPrompt(permissionPrompt.id, decision)}
+              onResolve={(decision, opts) => resolvePermissionPrompt(permissionPrompt.id, decision, opts)}
             />
           ) : questionPrompt && (!questionPrompt.conversationId || questionPrompt.conversationId === activeConversationId) ? (
             <QuestionPromptCard
@@ -1130,7 +1156,7 @@ function PermissionsButton() {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   const [open, setOpen] = React.useState(false);
-  const [perms, setPerms] = React.useState<{ rules: Array<{ action: string; mode: string }> } | null>(null);
+  const [perms, setPerms] = React.useState<PermissionsConfig | null>(null);
 
   // Fetch live permissions from the API — refetched every time the popover
   // opens so the badges reflect rules edited in settings since the last open.
@@ -1154,8 +1180,13 @@ function PermissionsButton() {
 
   const getMode = (action: string): string => {
     if (!perms) return "ask";
-    const rule = perms.rules?.find((r) => r.action === action);
-    return rule?.mode ?? "ask";
+    // The EFFECTIVE mode — the same evaluation the Settings table and the
+    // engine use. Reading the raw rule would show "ask" for actions that are
+    // actually allowed (auto-allow switch, subagent defaults).
+    if (action === "command.outside_workspace") {
+      return evaluateOutsideWorkspaceCommand(perms);
+    }
+    return evaluatePermission(perms, action as PermissionAction);
   };
 
   const modeColor = (mode: string) => {
@@ -1227,40 +1258,51 @@ function PermissionsButton() {
 /* ------------------------------------------------------------------ *
  * PermissionPromptCard — inline card that replaces the composer input
  * when the agent requests a permission. Shows the action, target, and
- * Allow once / Always / Deny buttons. Auto-deny after 2 minutes
- * (mirrors APPROVAL_TTL_MS in permissions-prompt.ts).
+ * Allow once / Always / Deny buttons. Auto-denies at the shared
+ * server-side TTL, measured from the server's creation timestamp.
  * ------------------------------------------------------------------ */
-
-const PERM_AUTO_DENY_MS = 120_000;
 
 function PermissionPromptCard({
   prompt,
   onResolve,
 }: {
   prompt: NonNullable<ReturnType<typeof useAppStore.getState>["permissionPrompt"]>;
-  onResolve: (decision: "allow-once" | "always-allow" | "deny") => void;
+  onResolve: (decision: "allow-once" | "always-allow" | "deny", opts?: { silent?: boolean }) => void;
 }) {
   const { t } = useTranslation();
   const resolveRef = React.useRef(onResolve);
   React.useEffect(() => {
     resolveRef.current = onResolve;
   });
-  const [remaining, setRemaining] = React.useState(PERM_AUTO_DENY_MS);
+  // Subagent prompts carry a 30-minute server TTL; main-agent prompts use the
+  // default two-minute window.
+  const ttlMs = prompt.ttlMs ?? PERMISSION_APPROVAL_TTL_MS;
+  const [remaining, setRemaining] = React.useState(() =>
+    Math.max(
+      0,
+      ttlMs - (Date.now() - (Number.isFinite(prompt.createdAt) ? prompt.createdAt : Date.now())),
+    ),
+  );
 
   React.useEffect(() => {
-    setRemaining(PERM_AUTO_DENY_MS);
-    const start = Date.now();
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const left = Math.max(0, PERM_AUTO_DENY_MS - elapsed);
+    const createdAt = Number.isFinite(prompt.createdAt) ? prompt.createdAt : Date.now();
+    const tick = () => {
+      const left = Math.max(0, ttlMs - (Date.now() - createdAt));
       setRemaining(left);
-      if (left <= 0) {
+      return left;
+    };
+    if (tick() <= 0) {
+      resolveRef.current("deny", { silent: true });
+      return;
+    }
+    const interval = setInterval(() => {
+      if (tick() <= 0) {
         clearInterval(interval);
-        resolveRef.current("deny");
+        resolveRef.current("deny", { silent: true });
       }
     }, 200);
     return () => clearInterval(interval);
-  }, [prompt.id]);
+  }, [prompt.id, prompt.createdAt, ttlMs]);
 
   const secondsLeft = Math.ceil(remaining / 1000);
 
@@ -1269,75 +1311,87 @@ function PermissionPromptCard({
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
-      className="p-3"
       role="dialog"
       aria-live="assertive"
       aria-label={`${t("permissions")}: ${prompt.action}`}
     >
-      <div className="rounded-lg border border-amber-500/40 bg-card overflow-hidden">
-        <div className="flex items-start gap-2.5 p-3 pb-2">
-          <div className="mt-0.5 size-7 shrink-0 rounded-md bg-amber-500/10 flex items-center justify-center">
-            <ShieldAlert className="size-4 text-amber-600 dark:text-amber-500" />
+      <div className="relative overflow-hidden rounded-lg border border-brand/40 bg-card shadow-xs">
+        <div className="flex items-center gap-2 border-b border-border/50 bg-brand/5 px-2.5 py-1.5">
+          <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-brand/15 text-brand">
+            <ShieldAlert className="size-3" />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-medium text-foreground">
-              {t("wants_permission")}
-            </div>
-            <div className="mt-1 text-[13px] text-foreground/90 leading-snug">
-              <span className="text-muted-foreground">{t("action_label")} </span>
-              <code className="font-mono text-[11px] bg-muted/60 rounded px-1 py-0.5">
-                {prompt.action}
-              </code>
-            </div>
-            <div className="mt-1.5 text-[13px] text-foreground leading-snug">
-              <span className="text-muted-foreground">{prompt.toolName ?? "tool"} </span>
-              <span className="font-medium">{prompt.target}</span>
-            </div>
-          </div>
+          <span className="truncate text-xs font-semibold text-foreground">
+            {t("wants_permission")}
+          </span>
+          {prompt.subagentName ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-brand/25 bg-brand/10 px-1.5 py-px text-[10px] font-medium text-brand">
+              <Bot className="size-2.5" />
+              {prompt.subagentName}
+            </span>
+          ) : null}
+          <span
+            className="ms-auto flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground"
+            title={t("auto_deny_in", { seconds: secondsLeft })}
+          >
+            <Clock className="size-3 text-muted-foreground/70" />
+            {secondsLeft}s
+          </span>
         </div>
 
-        <div className="px-3">
-          <div className="h-0.5 w-full bg-muted overflow-hidden rounded-full">
-            <div
-              className="h-full bg-amber-500/60 transition-all duration-200 ease-linear"
-              style={{ width: `${(remaining / PERM_AUTO_DENY_MS) * 100}%` }}
-            />
-          </div>
+        <div
+          className="flex min-w-0 items-center gap-2 px-2.5 py-2"
+          aria-label={`${t("action_label")} ${prompt.action}`}
+        >
+          <span className="shrink-0 rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {prompt.action}
+          </span>
+          <code className="truncate font-mono text-[11px] text-foreground" title={prompt.target}>
+            {prompt.target || prompt.toolName || "action"}
+          </code>
         </div>
 
-        <div className="grid grid-cols-3 gap-1.5 p-3 pt-2">
+        <div className="flex items-center justify-end gap-1.5 border-t border-border/50 bg-muted/20 px-2.5 py-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onResolve("deny")}
+            className="h-7 gap-1 whitespace-nowrap px-2 text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            aria-label={t("deny")}
+          >
+            <Ban className="size-3" />
+            {t("deny")}
+          </Button>
+          {/* An outside-workspace approval is one-shot by design: a durable
+              rule would permanently disable the sandbox check, so the server
+              refuses to persist one. Offering "Always" here would be a lie. */}
+          {prompt.action !== "command.outside_workspace" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onResolve("always-allow")}
+              className="h-7 gap-1 whitespace-nowrap px-2 text-[11px]"
+              aria-label={t("always_allow")}
+            >
+              <ShieldCheck className="size-3" />
+              {t("always_allow")}
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={() => onResolve("allow-once")}
-            className="h-8 gap-1 bg-brand text-brand-foreground hover:bg-brand/90"
+            className="h-7 gap-1 whitespace-nowrap bg-brand px-2.5 text-[11px] text-brand-foreground hover:bg-brand/90"
             aria-label={t("allow_once")}
           >
-            <Check className="size-3.5" />
+            <Check className="size-3" />
             {t("allow_once")}
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => onResolve("always-allow")}
-            className="h-8 gap-1"
-            aria-label={t("always_allow")}
-          >
-            <ShieldCheck className="size-3.5" />
-            {t("always_allow")}
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => onResolve("deny")}
-            className="h-8 gap-1"
-            aria-label={t("deny")}
-          >
-            <Ban className="size-3.5" />
-            {t("deny")}
-          </Button>
         </div>
-        <div className="px-3 pb-2 -mt-1 text-[10px] text-muted-foreground/80 font-mono text-center">
-          {t("auto_deny_in", { seconds: secondsLeft })}
+
+        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-muted">
+          <div
+            className="h-full bg-brand transition-all duration-200 ease-linear"
+            style={{ width: `${(remaining / ttlMs) * 100}%` }}
+          />
         </div>
       </div>
     </motion.div>

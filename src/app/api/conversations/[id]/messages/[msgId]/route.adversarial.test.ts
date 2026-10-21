@@ -3,6 +3,10 @@ import { NextRequest } from "next/server";
 import { PATCH, DELETE } from "./route";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { cancelPendingForConversation } from "@/lib/permissions-prompt";
+import { clearSubagentsRolledBack } from "@/lib/ai/subagent-session";
+import { dropQueuedReports } from "@/lib/ai/subagent-queue";
+import { clearAllWakeGrants } from "@/lib/ai/subagent-delivery";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -36,7 +40,16 @@ vi.mock("@/lib/question-prompt", () => ({
 }));
 
 vi.mock("@/lib/ai/subagent-session", () => ({
-  clearConversationSubagents: vi.fn(),
+  clearSubagentsRolledBack: vi.fn(() => ({ rolledBack: [], surviving: [] })),
+}));
+
+vi.mock("@/lib/ai/subagent-queue", () => ({
+  dropQueuedReports: vi.fn(),
+}));
+
+vi.mock("@/lib/ai/subagent-delivery", () => ({
+  clearAllWakeGrants: vi.fn(),
+  pauseConversationDelivery: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/lib/ai/executor", () => ({
@@ -78,6 +91,10 @@ vi.mock("@/lib/db", () => {
 
 const mockRequireUser = vi.mocked(requireUser);
 const mockDb = vi.mocked(db);
+const mockCancelPendingForConversation = vi.mocked(cancelPendingForConversation);
+const mockClearSubagentsRolledBack = vi.mocked(clearSubagentsRolledBack);
+const mockDropQueuedReports = vi.mocked(dropQueuedReports);
+const mockClearAllWakeGrants = vi.mocked(clearAllWakeGrants);
 
 describe("Messages [msgId] Route Handler (Milestone 1)", () => {
   const localUser = {
@@ -251,6 +268,55 @@ describe("Messages [msgId] Route Handler (Milestone 1)", () => {
       expect(json.ok).toBe(true);
       expect(json.restoredFiles).toEqual(["src/app.tsx"]);
       expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("rolls back only the subagents of the discarded tail and blocks the re-synthesis", async () => {
+      const createdAt = new Date("2026-08-17T12:00:00Z");
+      mockDb.conversation.findUnique.mockResolvedValueOnce({
+        id: "conv-1",
+        userId: "desktop-user",
+      } as any);
+      mockDb.message.findUnique.mockResolvedValueOnce({
+        id: "msg-1",
+        conversationId: "conv-1",
+        role: "user",
+        createdAt,
+      } as any);
+      mockDb.message.findMany.mockResolvedValueOnce([{ id: "msg-1" }] as any);
+      mockDb.message.deleteMany.mockResolvedValueOnce({ count: 1 } as any);
+      mockDb.toolExecution.deleteMany.mockResolvedValueOnce({ count: 0 } as any);
+
+      mockClearSubagentsRolledBack.mockReturnValueOnce({
+        rolledBack: ["sa-discarded"],
+        surviving: ["sa-kept"],
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/conversations/conv-1/messages/msg-1", {
+        method: "DELETE",
+      });
+
+      const res = await DELETE(req, {
+        params: Promise.resolve({ id: "conv-1", msgId: "msg-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      // The rollback point is the undone message's timestamp.
+      expect(mockClearSubagentsRolledBack).toHaveBeenCalledWith(
+        "desktop-user",
+        "conv-1",
+        createdAt.getTime(),
+      );
+      // The discarded workers' queued reports are dropped.
+      expect(mockDropQueuedReports).toHaveBeenCalledWith("desktop-user", "conv-1", [
+        "sa-discarded",
+      ]);
+      // No synthesis may run for the rolled-back state.
+      expect(mockClearAllWakeGrants).toHaveBeenCalledWith("desktop-user", "conv-1");
+      // The surviving workers keep their pending approvals.
+      expect(mockCancelPendingForConversation).toHaveBeenCalledWith(
+        "conv-1",
+        new Set(["sa-kept"]),
+      );
     });
   });
 });

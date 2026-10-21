@@ -209,6 +209,13 @@ export type ChatStreamEvent =
       target: string;
       /** Pending-approval registry id the client uses to resolve. */
       approvalId: string;
+      /**
+       * Server timestamp of the approval request. The client counts down
+       * against it — anchoring on the receive time would show a window the
+       * server no longer has, and the user's "Allow" would land on an
+       * already-expired approval.
+       */
+      createdAt: number;
     }
   | {
       type: "tool_call_question";

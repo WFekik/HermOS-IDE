@@ -150,6 +150,16 @@ export const INTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 /** BUILTIN_TOOLS minus the internal-only tools — used for agent-facing tool catalogs. Declared after BUILTIN_TOOLS to avoid TDZ. */
 
+/**
+ * Shell guidance for the `run_command` description. The tool schema ships with
+ * every request, so it stays short and states only what the model cannot
+ * infer — the actual shell differs per platform.
+ */
+const RUN_COMMAND_SHELL_HINT =
+  process.platform === "win32"
+    ? "Commands run through PowerShell 5.1 (powershell.exe): use native PowerShell syntax (Test-Path, $env:VAR, Get-ChildItem) and chain statements with ';' — '&&' / '||' fail with a parse error (e.g. 'npm install; npm run build'). Pass shell:'cmd' for cmd.exe."
+    : "Commands run through the system shell (bash/zsh): '&&', '||' and ';' all work.";
+
 export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "read_file",
@@ -168,7 +178,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   {
     name: "write_file",
     description:
-      "Create or overwrite a file. Parent directories are created automatically. Overwrites without confirmation.",
+      "Create or overwrite a file. Parent directories are created automatically. Overwrites existing files.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string" }, content: { type: "string" } },
@@ -221,7 +231,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   },
   {
     name: "run_command",
-    description: `Run a shell command (cwd = workspace root). On Windows, commands execute via PowerShell (powershell.exe) with native PowerShell syntax (e.g. Test-Path, $env:VAR, Get-ChildItem). Chain statements with ';' — && / || are NOT supported in PowerShell 5.1 and fail with a parse error, so use ';' instead (e.g. 'npm install; npm run build'). Blocks until completion (default ${COMMAND_BLOCK_TIMEOUT_MS / 60000} min, max ${COMMAND_MAX_BLOCK_TIMEOUT_MS / 60000} min), streaming output. Returns stdout/stderr and exitCode (truncated to 50KB / 2000 lines). If the process outlives the window, returns status="running" and the full result is auto-delivered when it finishes — no further action needed. Pass WaitMsBeforeAsync: 0 for dev servers/watchers you intend to keep running so it returns immediately with status="running". command_stop kills a still-running background command. Run 'help' to list allowed commands. The env var HERMOS_TEMP_DIR (e.g. $env:HERMOS_TEMP_DIR on Windows) points at your per-user scratch dir for temp scripts; it is writable and you may cd into it using its literal path.`,
+    description: `Run a shell command (cwd = workspace root). ${RUN_COMMAND_SHELL_HINT} Blocks until completion (default ${COMMAND_BLOCK_TIMEOUT_MS / 60000} min, max ${COMMAND_MAX_BLOCK_TIMEOUT_MS / 60000} min), streaming output. Returns stdout/stderr and exitCode (truncated to 50KB / 2000 lines). If the process outlives the window it returns status="running" and the full result is auto-delivered when it finishes — no further action needed. Pass WaitMsBeforeAsync: 0 for dev servers/watchers you intend to keep running. command_stop kills a still-running background command. Run 'help' to list the allowed commands.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -939,7 +949,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
         name: { type: "string", description: "A short label for this subagent" },
         task: { type: "string", description: "The task to complete. Be specific about what files to examine, what to produce." },
         systemPrompt: { type: "string", description: "Optional system prompt override. Defaults to a focused worker personality." },
-        allowedTools: { type: "array", items: { type: "string" }, description: "Tools the subagent may use (e.g. ['read_file', 'glob', 'grep', 'run_command']). Defaults to all tools." },
+        allowedTools: { type: "array", items: { type: "string" }, description: "Tools the subagent may use (e.g. ['read_file', 'glob', 'grep', 'run_command']). Defaults to all tools (read-only in architect mode)." },
       },
       required: ["name", "task"],
     },
@@ -1390,7 +1400,7 @@ const generatePdfSchema = z.object({
 const readDocSchema = z.object({
   path: z.string().trim().min(1).max(100_000),
 });
-const spawnSubagentSchema = z.object({
+export const spawnSubagentSchema = z.object({
   name: z.string().trim().min(1).max(120),
   task: z.string().trim().min(1).max(32_000),
   systemPrompt: z.string().trim().max(16_000).optional(),
@@ -1640,6 +1650,8 @@ export type ToolCtx = {
   workspace?: WorkspaceInfo;
   /** Whether execution outside workspace is explicitly permitted. */
   userAllowedOutsideWorkspace?: boolean;
+  /** Mode of the invoking agent; architect mode keeps spawned subagents read-only. */
+  agentMode?: "agent" | "chat" | "architect";
 };
 // Canonical types live in ./tool-registry (imported as `import type` there);
 // this definition is kept in sync intentionally for backward-compat imports.
@@ -3272,10 +3284,12 @@ async function runToolImpl(
             task: parsed.data.task,
             systemPrompt: parsed.data.systemPrompt,
             allowedTools: parsed.data.allowedTools,
+            readOnly: ctx.agentMode === "architect",
             provider: ctx.provider,
             model: ctx.model,
             checkpointId: ctx.checkpointId,
             thinkingLevel: ctx.thinkingLevel,
+            agentMode: ctx.agentMode ?? "agent",
           });
           return {
             ok: true,
@@ -3338,7 +3352,9 @@ async function runToolImpl(
         if (!parsed.success) return { ok: false, result: { error: formatZodError(parsed.error) } };
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
         try {
-          const out = reviveSubagent(ctx.userId, parsed.data.id, parsed.data.message);
+          const out = reviveSubagent(ctx.userId, parsed.data.id, parsed.data.message, {
+            agentMode: ctx.agentMode,
+          });
           const name = getSubagent(ctx.userId, parsed.data.id)?.name ?? parsed.data.id;
           return out.ok
             ? { ok: true, result: { id: parsed.data.id, name, status: out.status, note: out.note } }

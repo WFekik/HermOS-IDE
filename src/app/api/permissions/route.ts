@@ -12,6 +12,7 @@ import {
 import {
   getPermissions,
   setPermissions,
+  PERMISSION_ACTIONS,
   KNOWN_PERMISSION_ACTIONS,
   type PermissionAction,
   type PermissionMode,
@@ -30,10 +31,26 @@ const ruleSchema = z.object({
   action: z.enum([...KNOWN_PERMISSION_ACTIONS] as [PermissionAction, ...PermissionAction[]]),
   mode: z.enum(MODES as [PermissionMode, ...PermissionMode[]]),
 });
-const configSchema = z.object({
-  rules: z.array(ruleSchema).max(50),
-  autoAllowReadonly: z.boolean(),
-});
+const configSchema = z
+  .object({
+    rules: z
+      .array(ruleSchema)
+      .max(PERMISSION_ACTIONS.length)
+      .superRefine((rules, ctx) => {
+        const seen = new Set<PermissionAction>();
+        for (const rule of rules) {
+          if (seen.has(rule.action)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Duplicate permission rule for "${rule.action}".`,
+            });
+          }
+          seen.add(rule.action);
+        }
+      }),
+    autoAllowReadonly: z.boolean(),
+  })
+  .strict();
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
   let user;

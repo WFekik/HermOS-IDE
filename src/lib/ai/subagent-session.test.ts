@@ -7,6 +7,11 @@ import {
   appendProgress,
   appendMessage,
   internalGet,
+  subscribeSubagentPermissions,
+  subscribeUserSubagentPermissions,
+  getPendingPermissionSessions,
+  clearSubagentsRolledBack,
+  publishSubagentPermission,
 } from "./subagent-session";
 import type { SubagentSession } from "./subagent-session";
 import { pruneOldToolOutputs, TOOL_OUTPUT_CLEARED } from "./context";
@@ -316,6 +321,226 @@ describe("Subagent Session", () => {
       // Delete
       expect(deleteSession(userId, session.id)).toBe(true);
       expect(getSession(userId, session.id)).toBeNull();
+    });
+  });
+
+  describe("permission channel", () => {
+    it("carries no model-chosen permission policy", () => {
+      const session = createTrackedSession({
+        name: "perm-default",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      // The worker is judged by the user's settings — the spawn carries no
+      // permission knob.
+      expect("permissionMode" in session).toBe(false);
+    });
+
+    it("defaults agentMode to agent and stores the parent mode at spawn", () => {
+      const session = createTrackedSession({
+        name: "mode-default",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      expect(session.agentMode).toBe("agent");
+
+      const architect = createSession(userId, conversationId, {
+        name: "mode-architect",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: ["read_file"],
+        provider: "openai",
+        model: "gpt-4",
+        agentMode: "architect",
+      });
+      createdSessions.push(architect.id);
+      expect(architect.agentMode).toBe("architect");
+    });
+
+    it("delivers permission publishes to the user-scoped channel of every conversation", () => {
+      const session = createTrackedSession({
+        name: "perm-user-scoped",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+
+      const seen: Array<{ sessionId: string; conversationId: string }> = [];
+      const unsubscribe = subscribeUserSubagentPermissions(userId, (sessionId, conversationId) => {
+        seen.push({ sessionId, conversationId });
+      });
+
+      publishSubagentPermission(userId, "background-conv", session.id);
+      expect(seen).toEqual([{ sessionId: session.id, conversationId: "background-conv" }]);
+
+      unsubscribe();
+      publishSubagentPermission(userId, "background-conv", session.id);
+      expect(seen).toHaveLength(1);
+    });
+
+    it("supports awaiting_permission status with a pending permission payload", () => {
+      const session = createTrackedSession({
+        name: "perm-await",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+
+      updateSession(session.id, {
+        status: "awaiting_permission",
+        pendingPermission: {
+          approvalId: "pa_test",
+          toolCallId: "tc1",
+          toolName: "run_command",
+          action: "command.run",
+          target: "run `npm test`",
+          createdAt: Date.now(),
+        },
+      });
+
+      const updated = getSession(userId, session.id);
+      expect(updated!.status).toBe("awaiting_permission");
+      expect(updated!.pendingPermission?.approvalId).toBe("pa_test");
+      expect(updated!.pendingPermission?.toolName).toBe("run_command");
+    });
+
+    it("does not leak permission publishes across users", () => {
+      const seen: string[] = [];
+      const unsubscribe = subscribeUserSubagentPermissions("other-user", (sessionId) => {
+        seen.push(sessionId);
+      });
+
+      publishSubagentPermission(userId, conversationId, "sa-other");
+      expect(seen).toEqual([]);
+
+      unsubscribe();
+    });
+
+    it("lists the sessions of a user that are blocked on a permission", () => {
+      const blocked = createTrackedSession({
+        name: "perm-blocked",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      createTrackedSession({
+        name: "perm-running",
+        task: "test",
+        systemPrompt: "be safe",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+
+      updateSession(blocked.id, {
+        status: "awaiting_permission",
+        pendingPermission: {
+          approvalId: "pa_blocked",
+          toolCallId: "tc1",
+          toolName: "run_command",
+          action: "command.run",
+          target: "run `npm test`",
+          createdAt: Date.now(),
+        },
+      });
+
+      const pending = getPendingPermissionSessions(userId);
+      expect(pending.map((s) => s.id)).toEqual([blocked.id]);
+      expect(getPendingPermissionSessions("other-user")).toEqual([]);
+    });
+
+    it("rolls back only the workers a transcript rollback discarded", () => {
+      const kept = createTrackedSession({
+        name: "kept",
+        task: "test",
+        systemPrompt: "sp",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      const discarded = createTrackedSession({
+        name: "discarded",
+        task: "test",
+        systemPrompt: "sp",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+
+      // The rollback point sits between the two workers.
+      const cutoff = kept.createdAt + 1;
+      updateSession(discarded.id, { createdAt: cutoff + 10 });
+
+      const { rolledBack, surviving } = clearSubagentsRolledBack(
+        userId,
+        conversationId,
+        cutoff,
+      );
+
+      expect(rolledBack).toEqual([discarded.id]);
+      expect(surviving).toEqual([kept.id]);
+      expect(getSession(userId, discarded.id)?.rolledBack).toBe(true);
+      expect(getSession(userId, kept.id)?.rolledBack).toBeUndefined();
+    });
+
+    it("rolls back a worker whose report the rollback deleted", () => {
+      const worker = createTrackedSession({
+        name: "late-report",
+        task: "test",
+        systemPrompt: "sp",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      // Started before the rollback, but its report landed after it — the
+      // report row was deleted, so the worker belongs to the discarded state.
+      updateSession(worker.id, { completedAt: worker.createdAt + 5_000 });
+
+      const cutoff = worker.createdAt + 1_000;
+      const { rolledBack, surviving } = clearSubagentsRolledBack(
+        userId,
+        conversationId,
+        cutoff,
+      );
+
+      expect(rolledBack).toEqual([worker.id]);
+      expect(surviving).toEqual([]);
+    });
+
+    it("rolls back a worker revived after the cutoff even if originally created before it", () => {
+      const worker = createTrackedSession({
+        name: "revived-worker",
+        task: "test",
+        systemPrompt: "sp",
+        allowedTools: [],
+        provider: "openai",
+        model: "gpt-4",
+      });
+      updateSession(worker.id, { createdAt: 1000, completedAt: 1500 });
+      const cutoff = 2000;
+      updateSession(worker.id, { completedAt: undefined, lastRunStartedAt: 2500 });
+
+      const { rolledBack, surviving } = clearSubagentsRolledBack(
+        userId,
+        conversationId,
+        cutoff,
+      );
+
+      expect(rolledBack).toEqual([worker.id]);
+      expect(surviving).toEqual([]);
+      expect(getSession(userId, worker.id)?.rolledBack).toBe(true);
     });
   });
 

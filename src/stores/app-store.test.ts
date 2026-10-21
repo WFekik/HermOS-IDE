@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useAppStore } from "@/stores/app-store";
+import { useAppStore, type LiveToolCall } from "@/stores/app-store";
 import { apiGet, apiPost, apiPatch, apiDelete, ApiRequestError } from "@/lib/api-client";
+import { toast } from "sonner";
+import {
+  PERMISSION_APPROVAL_TTL_MS,
+  SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+} from "@/lib/permissions-core";
 import type { ConversationDTO, MessageDTO } from "@/lib/types";
 
 vi.mock("@/lib/api-client", () => ({
@@ -72,7 +77,10 @@ describe("useAppStore Unit Test Suite", () => {
       activeWorkspace: null,
       selectedProjectId: null,
       permissionPrompt: null,
+      permissionPromptsByConversation: {},
+      permissionPromptQueue: {},
       questionPrompt: null,
+      questionPromptsByConversation: {},
       checkpoints: [],
       subagents: [],
       subagentsConversationId: null,
@@ -635,15 +643,13 @@ describe("useAppStore Unit Test Suite", () => {
 
   describe("Permission Prompt Resolution Targeting Prompt conversationId", () => {
     it("resolves permission prompt with allow-once", async () => {
-      const resolveMock = vi.fn();
       useAppStore.setState({
         permissionPrompt: {
           id: "perm-1",
           action: "run_command",
           target: "npm run test",
           toolCallId: "call-1",
-          createdAt: new Date().toISOString(),
-          resolve: resolveMock,
+          createdAt: Date.now(),
         },
       });
 
@@ -655,19 +661,16 @@ describe("useAppStore Unit Test Suite", () => {
         id: "perm-1",
         decision: "allow",
       });
-      expect(resolveMock).toHaveBeenCalledWith("allow-once");
       expect(useAppStore.getState().permissionPrompt).toBeNull();
     });
 
     it("resolves permission prompt with always-allow", async () => {
-      const resolveMock = vi.fn();
       useAppStore.setState({
         permissionPrompt: {
           id: "perm-2",
           action: "write_file",
           target: "src/app.ts",
-          createdAt: new Date().toISOString(),
-          resolve: resolveMock,
+          createdAt: Date.now(),
         },
       });
 
@@ -679,12 +682,10 @@ describe("useAppStore Unit Test Suite", () => {
         id: "perm-2",
         decision: "always_allow",
       });
-      expect(resolveMock).toHaveBeenCalledWith("always-allow");
       expect(useAppStore.getState().permissionPrompt).toBeNull();
     });
 
     it("resolves permission prompt with deny and updates live tool call error optimistically", async () => {
-      const resolveMock = vi.fn();
       const initialMessage: MessageDTO = {
         id: "msg-1",
         conversationId: "conv-1",
@@ -728,8 +729,7 @@ describe("useAppStore Unit Test Suite", () => {
           action: "run_command",
           target: "rm -rf /",
           toolCallId: "tool-call-deny-1",
-          createdAt: new Date().toISOString(),
-          resolve: resolveMock,
+          createdAt: Date.now(),
         },
       });
 
@@ -741,7 +741,6 @@ describe("useAppStore Unit Test Suite", () => {
         id: "perm-deny",
         decision: "deny",
       });
-      expect(resolveMock).toHaveBeenCalledWith("deny");
       expect(useAppStore.getState().permissionPrompt).toBeNull();
 
       // Tool call in active conversation should be updated to error
@@ -751,23 +750,95 @@ describe("useAppStore Unit Test Suite", () => {
       expect(toolCall?.result).toEqual({ error: "Permission denied by user." });
     });
 
+    it("submits only one POST when a double-click resolves the same prompt twice", async () => {
+      useAppStore.setState({
+        permissionPrompt: {
+          id: "perm-dup",
+          action: "run_command",
+          target: "npm test",
+          createdAt: Date.now(),
+        },
+      });
+
+      let resolvePost: ((value: unknown) => void) | undefined;
+      mockApiPost.mockImplementationOnce(
+        () => new Promise((resolve) => { resolvePost = resolve; }),
+      );
+
+      const store = useAppStore.getState();
+      const first = store.resolvePermissionPrompt("perm-dup", "allow-once");
+      const second = store.resolvePermissionPrompt("perm-dup", "allow-once");
+      resolvePost?.({ ok: true });
+      await Promise.all([first, second]);
+
+      expect(mockApiPost).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().permissionPrompt).toBeNull();
+    });
+
+    it("keeps the prompt when the server rejects the decision with a non-404 error", async () => {
+      useAppStore.setState({
+        permissionPrompt: {
+          id: "perm-retry",
+          action: "run_command",
+          target: "npm test",
+          createdAt: Date.now(),
+        },
+      });
+
+      mockApiPost.mockRejectedValueOnce(
+        new (class extends Error {
+          status = 500;
+        })("boom"),
+      );
+
+      await useAppStore.getState().resolvePermissionPrompt("perm-retry", "allow-once");
+
+      expect(useAppStore.getState().permissionPrompt?.id).toBe("perm-retry");
+    });
+
+    it("reports a failed decision with the active language", async () => {
+      const { loadLocale } = await import("@/lib/i18n");
+      await loadLocale("de");
+      useAppStore.setState({
+        language: "de",
+        permissionPrompt: {
+          id: "perm-i18n",
+          action: "run_command",
+          target: "npm test",
+          createdAt: Date.now(),
+        },
+      });
+
+      mockApiPost.mockRejectedValueOnce(
+        new (class extends Error {
+          status = 500;
+        })("boom"),
+      );
+
+      await useAppStore.getState().resolvePermissionPrompt("perm-i18n", "allow-once");
+
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        "Berechtigungsentscheidung konnte nicht gesendet werden. Bitte erneut versuchen.",
+      );
+    });
+
     it("recovers permission prompt targeting specific conversationId", async () => {
       mockApiGet.mockResolvedValueOnce({
         pending: [
           {
-            id: "perm-other",
+            id: "pa_1111111111111111",
             action: "read_file",
             target: "other.txt",
             conversationId: "conv-other",
-            createdAt: new Date().toISOString(),
+            createdAt: Date.now(),
           },
           {
-            id: "perm-target",
+            id: "pa_2222222222222222",
             action: "run_command",
             target: "git status",
             toolCallId: "tc-target",
             conversationId: "conv-target",
-            createdAt: new Date().toISOString(),
+            createdAt: Date.now(),
           },
         ],
       });
@@ -776,28 +847,55 @@ describe("useAppStore Unit Test Suite", () => {
 
       const prompt = useAppStore.getState().permissionPrompt;
       expect(prompt).not.toBeNull();
-      expect(prompt?.id).toBe("perm-target");
+      expect(prompt?.id).toBe("pa_2222222222222222");
       expect(prompt?.target).toBe("git status");
       expect(prompt?.toolCallId).toBe("tc-target");
 
-      // Verify the bound resolve function delegates to resolvePermissionPrompt
       mockApiPost.mockResolvedValueOnce({ ok: true });
-      prompt?.resolve("allow-once");
+      await useAppStore.getState().resolvePermissionPrompt("pa_2222222222222222", "allow-once");
 
-      await vi.waitFor(() => {
-        expect(useAppStore.getState().permissionPrompt).toBeNull();
-      });
+      expect(useAppStore.getState().permissionPrompt).toBeNull();
     });
 
-    it("does not overwrite existing permissionPrompt during recovery", async () => {
-      const existingResolve = vi.fn();
+    it("recovers all pending prompts for the conversation into a queue", async () => {
+      mockApiGet.mockResolvedValueOnce({
+        pending: [
+          {
+            id: "pa_3333333333333333",
+            action: "write_file",
+            target: "b.ts",
+            conversationId: "conv-target",
+            createdAt: Date.now(),
+          },
+          {
+            id: "pa_4444444444444444",
+            action: "read_file",
+            target: "a.ts",
+            conversationId: "conv-target",
+            createdAt: Date.now() - 1000,
+          },
+        ],
+      });
+
+      await useAppStore.getState().recoverPermissionPrompt("conv-target");
+
+      const state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-target"]?.id).toBe("pa_4444444444444444");
+      expect(state.permissionPromptQueue["conv-target"]?.map((p) => p.id)).toEqual([
+        "pa_3333333333333333",
+      ]);
+    });
+
+    it("does not overwrite an existing conversation prompt during recovery", async () => {
       useAppStore.setState({
-        permissionPrompt: {
-          id: "perm-existing",
-          action: "existing_action",
-          target: "existing_target",
-          createdAt: Date.now(),
-          resolve: existingResolve,
+        permissionPromptsByConversation: {
+          "conv-target": {
+            id: "perm-existing",
+            conversationId: "conv-target",
+            action: "existing_action",
+            target: "existing_target",
+            createdAt: Date.now(),
+          },
         },
       });
 
@@ -805,7 +903,51 @@ describe("useAppStore Unit Test Suite", () => {
 
       // Should remain untouched without calling API
       expect(mockApiGet).not.toHaveBeenCalled();
-      expect(useAppStore.getState().permissionPrompt?.id).toBe("perm-existing");
+      expect(
+        useAppStore.getState().permissionPromptsByConversation["conv-target"]?.id,
+      ).toBe("perm-existing");
+    });
+
+    it("recovers a conversation prompt even while another conversation has one", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-other",
+        permissionPrompt: {
+          id: "pa_1111111111111111",
+          conversationId: "conv-other",
+          action: "write_file",
+          target: "other.ts",
+          createdAt: Date.now(),
+        },
+        permissionPromptsByConversation: {
+          "conv-other": {
+            id: "pa_1111111111111111",
+            conversationId: "conv-other",
+            action: "write_file",
+            target: "other.ts",
+            createdAt: Date.now(),
+          },
+        },
+      });
+
+      mockApiGet.mockResolvedValueOnce({
+        pending: [
+          {
+            id: "pa_2222222222222222",
+            action: "run_command",
+            target: "git status",
+            conversationId: "conv-target",
+            createdAt: Date.now(),
+          },
+        ],
+      });
+
+      await useAppStore.getState().recoverPermissionPrompt("conv-target");
+
+      expect(
+        useAppStore.getState().permissionPromptsByConversation["conv-target"]?.id,
+      ).toBe("pa_2222222222222222");
+      // The other conversation's displayed prompt stays untouched.
+      expect(useAppStore.getState().permissionPrompt?.id).toBe("pa_1111111111111111");
     });
   });
 
@@ -920,7 +1062,6 @@ describe("useAppStore Unit Test Suite", () => {
           target: "src/file.ts",
           toolCallId: "tc-123",
           createdAt: Date.now(),
-          resolve: vi.fn(),
         },
       });
 
@@ -947,7 +1088,7 @@ describe("useAppStore Unit Test Suite", () => {
         checkpoints: [{ id: "cp-1", label: "Initial" } as any],
         subagents: [{ id: "sa-1", name: "Researcher" } as any],
         questionPrompt: { id: "qp-1", conversationId: "conv-active", toolCallId: "tc-1", questions: [] },
-        permissionPrompt: { id: "pp-1", action: "cmd", target: "ls", createdAt: Date.now(), resolve: vi.fn() },
+        permissionPrompt: { id: "pp-1", action: "cmd", target: "ls", createdAt: Date.now() },
       });
 
       await useAppStore.getState().deleteConversation("conv-active");
@@ -1012,7 +1153,6 @@ describe("useAppStore Unit Test Suite", () => {
           action: "execute_command",
           target: "npm test",
           createdAt: Date.now(),
-          resolve: vi.fn(),
         },
         "conv-2",
       );
@@ -1029,7 +1169,6 @@ describe("useAppStore Unit Test Suite", () => {
           action: "write_file",
           target: "index.ts",
           createdAt: Date.now(),
-          resolve: vi.fn(),
         },
         "conv-1",
       );
@@ -1038,6 +1177,163 @@ describe("useAppStore Unit Test Suite", () => {
       expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("perm-active");
       expect(state.permissionPromptsByConversation["conv-2"]?.id).toBe("perm-bg");
       expect(state.permissionPrompt?.id).toBe("perm-active");
+    });
+
+    it("queues concurrent prompts for one conversation and promotes on resolve", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: null,
+        permissionPromptsByConversation: {},
+        permissionPromptQueue: {},
+      });
+
+      const store = useAppStore.getState();
+      expect(
+        store.setPermissionPrompt(
+          { id: "perm-1", action: "read_file", target: "a.ts", createdAt: Date.now() },
+          "conv-1",
+        ),
+      ).toBe(true);
+      expect(
+        store.setPermissionPrompt(
+          { id: "perm-2", action: "write_file", target: "b.ts", createdAt: Date.now() },
+          "conv-1",
+        ),
+      ).toBe(true);
+      // Duplicate re-delivery is ignored.
+      expect(
+        store.setPermissionPrompt(
+          { id: "perm-2", action: "write_file", target: "b.ts", createdAt: Date.now() },
+          "conv-1",
+        ),
+      ).toBe(false);
+
+      let state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("perm-1");
+      expect(state.permissionPromptQueue["conv-1"]?.map((p) => p.id)).toEqual(["perm-2"]);
+
+      mockApiPost.mockResolvedValueOnce({ ok: true });
+      await useAppStore.getState().resolvePermissionPrompt("perm-1", "allow-once");
+
+      state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("perm-2");
+      expect(state.permissionPromptQueue["conv-1"]).toBeUndefined();
+      expect(state.permissionPrompt?.id).toBe("perm-2");
+    });
+
+    it("prunes expired queued prompts when a duplicate head prompt is redelivered", () => {
+      const now = Date.now();
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: null,
+        permissionPromptsByConversation: {
+          "conv-1": { id: "perm-head", conversationId: "conv-1", action: "read_file", target: "a.ts", createdAt: now },
+        },
+        permissionPromptQueue: {
+          "conv-1": [
+            {
+              id: "perm-stale",
+              conversationId: "conv-1",
+              action: "write_file",
+              target: "b.ts",
+              createdAt: now - PERMISSION_APPROVAL_TTL_MS - 5_000,
+            },
+          ],
+        },
+      });
+
+      const accepted = useAppStore.getState().setPermissionPrompt(
+        { id: "perm-head", action: "read_file", target: "a.ts", createdAt: now },
+        "conv-1",
+      );
+
+      expect(accepted).toBe(false);
+      expect(useAppStore.getState().permissionPromptQueue["conv-1"]).toBeUndefined();
+      expect(useAppStore.getState().permissionPromptsByConversation["conv-1"]?.id).toBe("perm-head");
+    });
+
+    it("honors the longer subagent TTL so parallel review windows survive the default expiry", () => {
+      const now = Date.now();
+      const aged = now - PERMISSION_APPROVAL_TTL_MS - 60_000;
+      useAppStore.setState({
+        activeConversationId: "conv-1",
+        permissionPrompt: null,
+        permissionPromptsByConversation: {
+          "conv-1": {
+            id: "perm-long",
+            conversationId: "conv-1",
+            action: "command.run",
+            target: "npm test",
+            createdAt: aged,
+            ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+          },
+        },
+        permissionPromptQueue: {
+          "conv-1": [
+            { id: "perm-stale", conversationId: "conv-1", action: "write_file", target: "b.ts", createdAt: aged },
+            {
+              id: "perm-long-queued",
+              conversationId: "conv-1",
+              action: "command.run",
+              target: "npm build",
+              createdAt: aged,
+              ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+            },
+          ],
+        },
+      });
+
+      const accepted = useAppStore.getState().setPermissionPrompt(
+        {
+          id: "perm-long",
+          action: "command.run",
+          target: "npm test",
+          createdAt: aged,
+          ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+        },
+        "conv-1",
+      );
+
+      expect(accepted).toBe(false);
+      const state = useAppStore.getState();
+      // The default-TTL entry expired; the subagent entry is still reviewable.
+      expect(state.permissionPromptQueue["conv-1"]?.map((p) => p.id)).toEqual([
+        "perm-long-queued",
+      ]);
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("perm-long");
+    });
+
+    it("preempts a subagent prompt head when a main-agent prompt arrives", () => {
+      const now = Date.now();
+      useAppStore.setState({ activeConversationId: "conv-1" });
+      useAppStore.getState().setPermissionPrompt(
+        {
+          id: "subagent-head",
+          conversationId: "conv-1",
+          subagentId: "sa-1",
+          action: "cmd",
+          target: "bg run",
+          createdAt: now,
+          ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+        },
+        "conv-1",
+      );
+
+      useAppStore.getState().setPermissionPrompt(
+        {
+          id: "main-urgent",
+          conversationId: "conv-1",
+          action: "cmd",
+          target: "main run",
+          createdAt: now,
+        },
+        "conv-1",
+      );
+
+      const state = useAppStore.getState();
+      expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("main-urgent");
+      expect(state.permissionPrompt?.id).toBe("main-urgent");
+      expect(state.permissionPromptQueue["conv-1"]?.map((p) => p.id)).toEqual(["subagent-head"]);
     });
 
     it("restores conversation-scoped permission and question prompts on selectConversation", async () => {
@@ -1050,7 +1346,6 @@ describe("useAppStore Unit Test Suite", () => {
             action: "cmd",
             target: "git status",
             createdAt: Date.now(),
-            resolve: vi.fn(),
           },
         },
         questionPromptsByConversation: {
@@ -1138,11 +1433,14 @@ describe("useAppStore Unit Test Suite", () => {
     it("clears prompts globally across all sessions when prompt is null without conversationId", () => {
       useAppStore.setState({
         activeConversationId: "conv-1",
-        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1 },
         questionPrompt: { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
         permissionPromptsByConversation: {
-          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
-          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2, resolve: vi.fn() },
+          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1 },
+          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2 },
+        },
+        permissionPromptQueue: {
+          "conv-3": [{ id: "p3", conversationId: "conv-3", action: "test3", createdAt: 3 }],
         },
         questionPromptsByConversation: {
           "conv-1": { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
@@ -1158,17 +1456,21 @@ describe("useAppStore Unit Test Suite", () => {
       expect(state.permissionPrompt).toBeNull();
       expect(state.questionPrompt).toBeNull();
       expect(state.permissionPromptsByConversation).toEqual({});
+      expect(state.permissionPromptQueue).toEqual({});
       expect(state.questionPromptsByConversation).toEqual({});
     });
 
     it("clears prompt for specific background session without disturbing active session", () => {
       useAppStore.setState({
         activeConversationId: "conv-1",
-        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
+        permissionPrompt: { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1 },
         questionPrompt: { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
         permissionPromptsByConversation: {
-          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1, resolve: vi.fn() },
-          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2, resolve: vi.fn() },
+          "conv-1": { id: "p1", conversationId: "conv-1", action: "test", createdAt: 1 },
+          "conv-2": { id: "p2", conversationId: "conv-2", action: "test2", createdAt: 2 },
+        },
+        permissionPromptQueue: {
+          "conv-2": [{ id: "p2b", conversationId: "conv-2", action: "test2b", createdAt: 2 }],
         },
         questionPromptsByConversation: {
           "conv-1": { id: "q1", conversationId: "conv-1", questions: [], createdAt: 1 },
@@ -1186,9 +1488,120 @@ describe("useAppStore Unit Test Suite", () => {
       expect(state.questionPrompt?.id).toBe("q1");
       expect(state.permissionPromptsByConversation["conv-1"]?.id).toBe("p1");
       expect(state.questionPromptsByConversation["conv-1"]?.id).toBe("q1");
-      // Background session conv-2 is cleared
+      // Background session conv-2 is cleared (head and queue)
       expect(state.permissionPromptsByConversation["conv-2"]).toBeUndefined();
+      expect(state.permissionPromptQueue["conv-2"]).toBeUndefined();
       expect(state.questionPromptsByConversation["conv-2"]).toBeUndefined();
+    });
+  });
+
+  describe("Conversation Refresh Merge Fidelity (parallel chats)", () => {
+    const toolCalls: LiveToolCall[] = [
+      {
+        id: "tc-1",
+        name: "read_file",
+        args: JSON.stringify({ path: "a.ts" }),
+        parsedArgs: { path: "a.ts" },
+        status: "done",
+        result: { path: "a.ts" },
+      },
+    ];
+
+    const localAssistant = {
+      id: "m-1",
+      role: "assistant" as const,
+      content: "done",
+      createdAt: new Date().toISOString(),
+      latencyMs: 4321,
+      liveToolCalls: toolCalls,
+    };
+
+    it("preserves measured latency and tool-call identity when the server row reports 0ms", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-bg",
+        messages: [localAssistant],
+        messagesByConversation: { "conv-bg": [localAssistant] },
+      });
+
+      mockApiGet.mockResolvedValueOnce({
+        conversation: {
+          id: "conv-bg",
+          isAgentRunning: false,
+          messages: [
+            {
+              id: "m-1",
+              role: "assistant",
+              content: "done",
+              createdAt: localAssistant.createdAt,
+              latencyMs: 0,
+              toolCalls: [
+                { id: "tc-1", name: "read_file", args: JSON.stringify({ path: "a.ts" }), status: "done", result: { path: "a.ts" } },
+              ],
+            },
+          ],
+        },
+      });
+
+      await useAppStore.getState().refreshMessages("conv-bg");
+
+      const merged = useAppStore.getState().messagesByConversation["conv-bg"]?.[0];
+      expect(merged?.latencyMs).toBe(4321);
+      // Same array reference — memoized rows skip re-rendering on refresh.
+      expect(merged?.liveToolCalls).toBe(toolCalls);
+    });
+
+    it("prefers the server latency when it was measured", async () => {
+      useAppStore.setState({
+        activeConversationId: "conv-bg",
+        messages: [localAssistant],
+        messagesByConversation: { "conv-bg": [localAssistant] },
+      });
+
+      mockApiGet.mockResolvedValueOnce({
+        conversation: {
+          id: "conv-bg",
+          isAgentRunning: false,
+          messages: [
+            {
+              id: "m-1",
+              role: "assistant",
+              content: "done",
+              createdAt: localAssistant.createdAt,
+              latencyMs: 9000,
+              toolCalls: [
+                { id: "tc-1", name: "read_file", args: JSON.stringify({ path: "a.ts" }), status: "done", result: { path: "a.ts" } },
+              ],
+            },
+          ],
+        },
+      });
+
+      await useAppStore.getState().refreshMessages("conv-bg");
+
+      const merged = useAppStore.getState().messagesByConversation["conv-bg"]?.[0];
+      expect(merged?.latencyMs).toBe(9000);
+      expect(merged?.liveToolCalls).toBe(toolCalls);
+    });
+
+    it("dedupes concurrent snapshot fetches for the same conversation", async () => {
+      let resolveGet: ((value: unknown) => void) | undefined;
+      mockApiGet.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveGet = resolve; }) as Promise<never>,
+      );
+
+      const first = useAppStore.getState().refreshMessages("conv-dedupe");
+      const second = useAppStore.getState().refreshMessages("conv-dedupe");
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+
+      resolveGet?.({ conversation: { id: "conv-dedupe", isAgentRunning: false, messages: [] } });
+      await Promise.all([first, second]);
+
+      // The in-flight entry clears once settled — later refreshes fetch again.
+      mockApiGet.mockResolvedValueOnce({
+        conversation: { id: "conv-dedupe", isAgentRunning: false, messages: [] },
+      });
+      await useAppStore.getState().refreshMessages("conv-dedupe");
+      expect(mockApiGet).toHaveBeenCalledTimes(2);
     });
   });
 

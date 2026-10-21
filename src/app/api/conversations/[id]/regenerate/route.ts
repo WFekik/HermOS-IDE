@@ -231,7 +231,7 @@ export async function POST(
         clearInterval(heartbeat);
         if (inactivityTimer) clearTimeout(inactivityTimer);
         unregisterAgentAbort(conversationId, abortController);
-        cancelPendingForConversation(conversationId);
+        cancelPendingForConversation(conversationId, { excludeSubagents: true });
         cancelPendingQuestionsForConversation(conversationId);
         try {
           controller.close();

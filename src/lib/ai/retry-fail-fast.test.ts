@@ -5,9 +5,37 @@ import {
   parseRetryHeader,
   stripHtml,
   withRetry,
+  retryAttemptLimit,
+  retryBackoffMs,
 } from "./retry-utils";
 
 describe("Retry & Fail-Fast — Latency Optimization & Retry Unification", () => {
+  describe("shared agent retry ladder", () => {
+    test("gives 429s 15 attempts and other transients 3", () => {
+      expect(retryAttemptLimit(true)).toBe(15);
+      expect(retryAttemptLimit(false)).toBe(3);
+    });
+
+    test("429 backoff honors Retry-After capped at two minutes", () => {
+      expect(retryBackoffMs(0, true, 5000)).toBe(5000);
+      expect(retryBackoffMs(0, true, 999_999)).toBe(120_000);
+    });
+
+    test("429 backoff without Retry-After header is capped at two minutes across late attempts", () => {
+      expect(retryBackoffMs(14, true, null)).toBe(120_000);
+      expect(retryBackoffMs(8, true, null)).toBe(120_000);
+    });
+
+    test("transient backoff grows exponentially with jitter", () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const base = 1000 * Math.pow(2, attempt);
+        const delay = retryBackoffMs(attempt, false, 5000);
+        expect(delay).toBeGreaterThanOrEqual(base);
+        expect(delay).toBeLessThan(base + 500);
+      }
+    });
+  });
+
   describe("stripHtml", () => {
     test("removes HTML tags and normalizes whitespace", () => {
       expect(stripHtml("<h1>Error 404</h1><p>Not  Found</p>")).toBe("Error 404 Not Found");

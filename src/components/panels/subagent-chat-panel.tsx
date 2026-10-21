@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowLeft, Bot, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, AlertTriangle, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -66,7 +66,10 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
   // runs while the subagent is active.
   React.useEffect(() => {
     if (!subagent) return;
-    const isRunning = subagent.status === "running" || subagent.status === "pending";
+    const isRunning =
+      subagent.status === "running" ||
+      subagent.status === "pending" ||
+      subagent.status === "awaiting_permission";
     if (!isRunning) return;
 
     const interval = setInterval(() => {
@@ -205,6 +208,15 @@ export function SubagentChatPanel({ subagentId, onBack }: SubagentChatPanelProps
         <StatusBadge status={status} />
       </div>
 
+      {status === "awaiting_permission" && subagent?.pendingPermission ? (
+        <div className="mx-4 mt-2 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="size-3 shrink-0" />
+          <span className="truncate">
+            {t("wants_permission")} · {subagent.pendingPermission.target}
+          </span>
+        </div>
+      ) : null}
+
       {/* Message Canvas */}
       <div 
         ref={scrollRef}
@@ -264,7 +276,7 @@ const SubagentMessageRow = React.memo(
       return (
         <div className="py-1 animate-slide-in">
           <div className="w-full rounded-xl border border-border/50 bg-background/60 px-3 py-2 text-start text-xs text-foreground shadow-2xs [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
-            <MessageRenderer message={message} />
+            <MessageRenderer message={message} variant="subagent" />
           </div>
         </div>
       );
@@ -273,7 +285,7 @@ const SubagentMessageRow = React.memo(
     return (
       <div className="py-1 animate-slide-in">
         <div className="prose-xs max-w-none text-xs text-zinc-800 dark:text-zinc-200">
-          <MessageRenderer message={message} />
+          <MessageRenderer message={message} variant="subagent" />
         </div>
       </div>
     );
@@ -422,11 +434,15 @@ function StatusBadge({ status }: { status: string }) {
         status === "failed" && "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
         status === "cancelled" && "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
         status === "running" && "bg-brand/10 text-brand border-brand/20",
+        status === "awaiting_permission" && "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
         status === "pending" && "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
       )}
     >
       {status === "running" && (
         <span className="me-1 size-1.5 rounded-full bg-brand animate-pulse shrink-0" />
+      )}
+      {status === "awaiting_permission" && (
+        <span className="me-1 size-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
       )}
       {label}
     </span>

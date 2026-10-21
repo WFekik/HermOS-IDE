@@ -199,3 +199,43 @@ describe("subagent report delivery after the main turn ended", () => {
     await vi.waitFor(() => expect(hasPendingWakeGrant(USER, CONV)).toBe(true));
   });
 });
+
+describe("transcript rollback — rolled-back subagents are never reported", () => {
+  it("posts no report and fires no wake for a rolled-back worker", async () => {
+    const s = makeSession("RolledBack");
+    deferSubagentDelivery(USER, CONV, [s.id]);
+
+    // The user undoes past this worker: its transcript is discarded.
+    updateSession(s.id, { rolledBack: true });
+    updateSession(s.id, {
+      status: "completed",
+      report: { summary: "discarded", findings: [], conclusion: "discarded" },
+      completedAt: Date.now(),
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(messageCreate).not.toHaveBeenCalled();
+    expect(hasPendingWakeGrant(USER, CONV)).toBe(false);
+  });
+
+  it("still delivers the workers the rollback kept", async () => {
+    const discarded = makeSession("Discarded");
+    const kept = makeSession("Kept");
+    deferSubagentDelivery(USER, CONV, [discarded.id, kept.id]);
+
+    updateSession(discarded.id, { rolledBack: true });
+    updateSession(discarded.id, { status: "completed", completedAt: Date.now() });
+    updateSession(kept.id, {
+      status: "completed",
+      report: { summary: "kept work", findings: [], conclusion: "kept work" },
+      completedAt: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(messageCreate).toHaveBeenCalledTimes(1);
+    });
+    const row = messageCreate.mock.calls[0][0] as { data: Record<string, string> };
+    expect(row.data.content).toContain("kept work");
+    await vi.waitFor(() => expect(hasPendingWakeGrant(USER, CONV)).toBe(true));
+  });
+});

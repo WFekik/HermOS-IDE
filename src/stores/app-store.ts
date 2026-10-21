@@ -22,7 +22,8 @@ import type {
   TerminalResponse,
 } from "@/lib/types";
 import type { PendingQuestionDTO } from "@/lib/question-prompt";
-import type { PendingApprovalDTO } from "@/lib/permissions-prompt";
+import { PERMISSION_APPROVAL_TTL_MS } from "@/lib/permissions-core";
+import { parsePendingApproval } from "@/lib/permission-prompt-events";
 import { isTauri, getWorkspaceRoot } from "@/lib/tauri";
 import { parsePartialJson } from "@/lib/utils";
 import { DEFAULT_CONTEXT_CONFIG, type ContextConfig } from "@/lib/ai/context";
@@ -44,6 +45,7 @@ import {
   DEFAULT_LANGUAGE,
   LANGUAGES,
   applyLanguageDocumentDir,
+  t,
 } from "@/lib/i18n";
 import {
   isValidFontSize,
@@ -399,9 +401,20 @@ export interface Checkpoint {
 export type SubagentStatus =
   | "pending"
   | "running"
+  | "awaiting_permission"
   | "completed"
   | "failed"
   | "cancelled";
+
+/** Pending tool-approval raised by a subagent. */
+export interface SubagentPendingPermission {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  action: string | null;
+  target: string;
+  createdAt: number;
+}
 
 export interface Subagent {
   id: string;
@@ -415,6 +428,7 @@ export interface Subagent {
   result?: string | null;
   error?: string | null;
   partial?: { content: string; thinking?: string } | null;
+  pendingPermission?: SubagentPendingPermission | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -443,10 +457,13 @@ export interface PermissionPromptState {
   toolCallId?: string;
   /** Optional tool name (e.g. "edit_file", "run_command"). */
   toolName?: string;
-  /** Resolver invoked with the user's permission decision. */
-  resolve: (decision: PermissionDecision) => void;
+  /** Set when the request comes from a background subagent. */
+  subagentId?: string;
+  subagentName?: string;
   /** Created timestamp — used by the UI to render a countdown. */
   createdAt: number;
+  /** Server-provided auto-deny window; absent means the standard main-agent TTL. */
+  ttlMs?: number;
 }
 
 export interface QuestionItemState {
@@ -715,9 +732,16 @@ interface AppState {
 
   /** Pending tool-call permission prompt requiring user decision. */
   permissionPrompt: PermissionPromptState | null;
+  /** Displayed (head) prompt per conversation. */
   permissionPromptsByConversation: Record<string, PermissionPromptState>;
-  setPermissionPrompt: (prompt: PermissionPromptState | null, conversationId?: string) => void;
-  resolvePermissionPrompt: (id: string, decision: PermissionDecision) => void;
+  /** Additional prompts queued behind the head, oldest first. */
+  permissionPromptQueue: Record<string, PermissionPromptState[]>;
+  /**
+   * Store a prompt. Returns true when it was newly accepted (displayed or
+   * queued) and false for duplicate deliveries that changed nothing.
+   */
+  setPermissionPrompt: (prompt: PermissionPromptState | null, conversationId?: string) => boolean;
+  resolvePermissionPrompt: (id: string, decision: PermissionDecision, opts?: { silent?: boolean }) => Promise<void>;
 
   /** Pending agent question prompt requiring user answer. */
   questionPrompt: QuestionPromptState | null;
@@ -1118,7 +1142,77 @@ function loadContextConfig(): ContextConfig {
 
 /** In-flight materializations of pending conversations (dedupes rapid double-sends). */
 const ensureRealConversationInFlight = new Map<string, Promise<string | null>>();
+/** Approval ids with a resolution POST in flight — blocks double-click duplicate submits. */
+const permissionResolutionsInFlight = new Set<string>();
 let securitySettingsSeq = 0;
+
+/** In-flight conversation snapshot GETs — dedupes rapid switches and parallel refreshes. */
+const conversationSnapshotInFlight = new Map<string, Promise<{ conversation: ConversationDTO }>>();
+
+function fetchConversationSnapshot(
+  conversationId: string,
+): Promise<{ conversation: ConversationDTO }> {
+  const existing = conversationSnapshotInFlight.get(conversationId);
+  if (existing) return existing;
+  const request = Promise.resolve(
+    apiGet<{ conversation: ConversationDTO }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+    ),
+  ).finally(() => {
+    if (conversationSnapshotInFlight.get(conversationId) === request) {
+      conversationSnapshotInFlight.delete(conversationId);
+    }
+  });
+  conversationSnapshotInFlight.set(conversationId, request);
+  return request;
+}
+
+/**
+ * Field-level equivalence for tool-call lists. Callers reuse the previous
+ * array when nothing changed so memoized message rows skip re-rendering.
+ */
+function toolCallsEquivalent(
+  a: LiveToolCall[] | undefined,
+  b: LiveToolCall[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.name !== y.name ||
+      x.args !== y.args ||
+      x.status !== y.status ||
+      x.parsedArgs !== y.parsedArgs ||
+      x.result !== y.result ||
+      x.ok !== y.ok ||
+      x.liveOutput !== y.liveOutput
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Drop prompts whose server-side approval already passed its TTL. */
+function pruneExpiredPrompts(
+  prompts: PermissionPromptState[],
+  now: number,
+): PermissionPromptState[] {
+  // Subagent prompts carry a much longer server TTL — honor it per entry.
+  return prompts.filter((p) => isPromptLive(p, now));
+}
+
+/** True while the server-side approval behind a prompt is still open. */
+function isPromptLive(
+  prompt: PermissionPromptState | undefined,
+  now: number,
+): prompt is PermissionPromptState {
+  if (!prompt) return false;
+  return now - prompt.createdAt < (prompt.ttlMs ?? PERMISSION_APPROVAL_TTL_MS);
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: DEFAULT_LOCAL_USER,
@@ -1180,6 +1274,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   editingMessageId: null,
   permissionPrompt: null,
   permissionPromptsByConversation: {},
+  permissionPromptQueue: {},
   questionPrompt: null,
   questionPromptsByConversation: {},
 
@@ -1386,7 +1481,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Settle any pending permission approvals server-side (deny) before
     // dropping the cards, so awaiting closures don't hang forever across a
     // re-login.
-    const pendingPrompts = Object.values(get().permissionPromptsByConversation);
+    const pendingPrompts = [
+      ...Object.values(get().permissionPromptsByConversation),
+      ...Object.values(get().permissionPromptQueue).flat(),
+    ];
     for (const p of pendingPrompts) {
       void get().resolvePermissionPrompt(p.id, "deny");
     }
@@ -1461,6 +1559,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Drop any pending permission/question prompts.
       permissionPrompt: null,
       permissionPromptsByConversation: {},
+      permissionPromptQueue: {},
       questionPrompt: null,
       questionPromptsByConversation: {},
       // Reset composer + message-edit state.
@@ -1769,9 +1868,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       // The backend returns the full conversation with messages embedded.
-      const data = await apiGet<{ conversation: ConversationDTO }>(
-        `/api/conversations/${encodeURIComponent(conversationId)}`,
-      );
+      const data = await fetchConversationSnapshot(conversationId);
       const isRunning = data?.conversation?.isAgentRunning ?? false;
       const curStreamingState = get().streamingStateByConversation[conversationId];
       if (isRunning && !curStreamingState?.isStreaming) {
@@ -1888,13 +1985,20 @@ export const useAppStore = create<AppState>((set, get) => ({
                 }
               }
             }
+            const mergedLive = mergedTc.length > 0 ? mergedTc : (local.liveToolCalls ?? m.liveToolCalls);
             merged.push({
               ...m,
               content: (m.content && m.content.trim().length > 0) ? m.content : (local.content || m.content),
               thinking: (m.thinking && m.thinking.trim().length > 0) ? m.thinking : (local.thinking ?? m.thinking),
               streaming: local.streaming ?? false,
               segments: (local.segments && local.segments.length > 0) ? local.segments : (m.segments ?? local.segments),
-              liveToolCalls: mergedTc.length > 0 ? mergedTc : (local.liveToolCalls ?? m.liveToolCalls),
+              // The DB default is 0 for rows written without a measured run
+              // time; keep the client-measured value instead of clobbering it
+              // (otherwise completed turns relabel to "Worked for 0ms").
+              latencyMs: (m.latencyMs ?? 0) > 0 ? m.latencyMs : local.latencyMs,
+              liveToolCalls: toolCallsEquivalent(mergedLive, local.liveToolCalls)
+                ? local.liveToolCalls
+                : mergedLive,
             });
           } else if (m.role === "user") {
             // Match local user message by content to preserve local state
@@ -2331,6 +2435,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       await apiDelete(`/api/conversations/${encodeURIComponent(id)}`);
+      // Drop the toasts that pointed at this conversation — their "Review"
+      // action would navigate to a conversation that no longer exists.
+      const targetPrompts = [
+        ...(get().permissionPromptsByConversation[id] ? [get().permissionPromptsByConversation[id]] : []),
+        ...(get().permissionPromptQueue[id] ?? []),
+      ];
+      for (const p of targetPrompts) {
+        if (typeof toast?.dismiss === "function") toast.dismiss(`perm-${p.id}`);
+      }
+      if (typeof toast?.dismiss === "function") {
+        toast.dismiss(`quest-${id}`);
+      }
       set((s) => {
         const { [id]: _m, ...restMessages } = s.messagesByConversation;
         const { [id]: _ss, ...restStreaming } = s.streamingStateByConversation;
@@ -2339,6 +2455,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { [id]: _sc, ...restScroll } = s.scrollPositions;
         const { [id]: _cd, ...restDrafts } = s.composerDrafts;
         const { [id]: _pp, ...restPerms } = s.permissionPromptsByConversation;
+        const { [id]: _pq, ...restPermQueue } = s.permissionPromptQueue;
         const { [id]: _qp, ...restQuests } = s.questionPromptsByConversation;
         const isActive = s.activeConversationId === id;
         return {
@@ -2350,6 +2467,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           questionPrompt: isActive ? null : s.questionPrompt,
           permissionPrompt: isActive ? null : s.permissionPrompt,
           permissionPromptsByConversation: restPerms,
+          permissionPromptQueue: restPermQueue,
           questionPromptsByConversation: restQuests,
           messagesByConversation: restMessages,
           streamingStateByConversation: restStreaming,
@@ -3648,39 +3766,121 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setPermissionPrompt: (prompt, conversationId?) => {
+    let accepted = false;
     set((s) => {
+      const nextQueue = { ...s.permissionPromptQueue };
       if (!prompt) {
         // When conversationId is omitted (undefined), clear ALL prompts globally across all sessions.
         if (conversationId === undefined) {
+          accepted =
+            Object.keys(s.permissionPromptsByConversation).length > 0 ||
+            Object.keys(s.permissionPromptQueue).length > 0;
           return {
             permissionPromptsByConversation: {},
+            permissionPromptQueue: {},
             permissionPrompt: null,
           };
         }
         // Specific conversation targeted
         const nextByConv = { ...s.permissionPromptsByConversation };
-        if (conversationId) delete nextByConv[conversationId];
+        delete nextByConv[conversationId];
+        delete nextQueue[conversationId];
+        accepted =
+          conversationId in s.permissionPromptsByConversation ||
+          (s.permissionPromptQueue[conversationId]?.length ?? 0) > 0;
         return {
           permissionPromptsByConversation: nextByConv,
-          permissionPrompt: conversationId === s.activeConversationId || !conversationId ? null : s.permissionPrompt,
+          permissionPromptQueue: nextQueue,
+          permissionPrompt: conversationId === s.activeConversationId ? null : s.permissionPrompt,
         };
       }
+
       const convId = conversationId ?? prompt.conversationId ?? s.activeConversationId;
+      if (!convId) return {};
+      const candidate: PermissionPromptState = { ...prompt, conversationId: convId };
+      const now = Date.now();
+      // An approval the server already auto-denied must not be shown again —
+      // the card would count down from zero and fire a pointless deny.
+      if (!isPromptLive(candidate, now)) return {};
       const nextByConv = { ...s.permissionPromptsByConversation };
-      if (convId) {
-        nextByConv[convId] = { ...prompt, conversationId: convId };
+      const storedHead = nextByConv[convId];
+      // An expired head must not keep blocking the queue: the server already
+      // auto-denied it, so the card is stale and the next request has to be
+      // shown instead.
+      const head = isPromptLive(storedHead, now) ? storedHead : undefined;
+      const storedQueue = nextQueue[convId] ?? [];
+      const queued = pruneExpiredPrompts(storedQueue, now);
+      if (queued.length) nextQueue[convId] = queued;
+      else delete nextQueue[convId];
+
+      if (storedHead?.id === candidate.id) {
+        // Duplicate delivery of the displayed prompt (SSE replay / recovery
+        // race). An expired head is dropped instead of shown again — the
+        // server already auto-denied it.
+        if (!head) {
+          delete nextByConv[convId];
+          accepted = false;
+          return {
+            permissionPromptsByConversation: nextByConv,
+            permissionPromptQueue: nextQueue,
+            permissionPrompt:
+              convId === s.activeConversationId ? null : s.permissionPrompt,
+          };
+        }
+        if (queued.length === storedQueue.length) return {};
+        return { permissionPromptQueue: nextQueue };
       }
+      if (queued.some((p) => p.id === candidate.id)) {
+        // Duplicate delivery of an already queued prompt.
+        if (queued.length === storedQueue.length) return {};
+        return { permissionPromptQueue: nextQueue };
+      }
+
+      accepted = true;
+      if (head) {
+        // If a main-agent prompt arrives while a subagent prompt is displayed as head,
+        // prioritize the main-agent prompt: main agent turns are blocking and have short
+        // review windows (e.g. 2 min), while subagents wait in the background (up to 30 min).
+        if (!candidate.subagentId && head.subagentId) {
+          nextByConv[convId] = candidate;
+          nextQueue[convId] = [head, ...queued];
+          return {
+            permissionPromptsByConversation: nextByConv,
+            permissionPromptQueue: nextQueue,
+            permissionPrompt:
+              convId === s.activeConversationId || !s.activeConversationId
+                ? candidate
+                : s.permissionPrompt,
+          };
+        }
+        // A prompt is already on screen — this one waits behind it.
+        nextQueue[convId] = [...queued, candidate];
+        return { permissionPromptQueue: nextQueue };
+      }
+      if (storedHead) delete nextByConv[convId];
+      nextByConv[convId] = candidate;
       return {
         permissionPromptsByConversation: nextByConv,
-        permissionPrompt: convId === s.activeConversationId || !s.activeConversationId ? prompt : s.permissionPrompt,
+        permissionPromptQueue: nextQueue,
+        permissionPrompt:
+          convId === s.activeConversationId || !s.activeConversationId
+            ? candidate
+            : s.permissionPrompt,
       };
     });
+    return accepted;
   },
 
-  resolvePermissionPrompt: async (id, decision) => {
-    const current = Object.values(get().permissionPromptsByConversation).find((p) => p.id === id) ?? get().permissionPrompt;
-    if (!current || current.id !== id) return;
-    const convId = current.conversationId ?? get().activeConversationId;
+  resolvePermissionPrompt: async (id, decision, opts) => {
+    if (permissionResolutionsInFlight.has(id)) return;
+    const snapshot = get();
+    const current =
+      Object.values(snapshot.permissionPromptsByConversation).find((p) => p.id === id) ??
+      Object.values(snapshot.permissionPromptQueue).flat().find((p) => p.id === id) ??
+      (snapshot.permissionPrompt?.id === id ? snapshot.permissionPrompt : undefined);
+    if (!current) return;
+    const convId = current.conversationId ?? snapshot.activeConversationId;
+
     // Map store decision strings to the API's PermissionDecision format.
     const apiDecision =
       decision === "allow-once"
@@ -3689,15 +3889,40 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? "always_allow"
           : "deny";
 
+    permissionResolutionsInFlight.add(id);
+    try {
+      await apiPost("/api/permissions/pending", { id, decision: apiDecision });
+    } catch (e) {
+      // 404 means the server already settled this approval (TTL/stop) — drop
+      // the local card too, but tell the user: their decision was not applied.
+      // Anything else keeps the card so the user can retry.
+      if (e instanceof ApiRequestError && e.status === 404) {
+        if (!opts?.silent) {
+          toast.error(t("permission_already_settled", get().language));
+        }
+      } else {
+        toast.error(t("permission_decision_failed", get().language));
+        return;
+      }
+    } finally {
+      permissionResolutionsInFlight.delete(id);
+    }
+
     if (current.toolCallId && apiDecision === "deny") {
       const toolCallId = current.toolCallId;
       set((s) => {
         const targetConv = convId ?? s.activeConversationId;
-        // Optimistic denial update for target conversation
         if (!targetConv) return {};
-        const msgs = s.messagesByConversation[targetConv] ?? (targetConv === s.activeConversationId ? s.messages : []);
+        const msgs =
+          s.messagesByConversation[targetConv] ??
+          (targetConv === s.activeConversationId ? s.messages : []);
+        let changed = false;
         const updated = msgs.map((m) => {
           if (!m.liveToolCalls) return m;
+          // Only the message that owns the denied call may change — rebuilding
+          // every message would invalidate the memoized rows for nothing.
+          if (!m.liveToolCalls.some((t) => t.id === toolCallId)) return m;
+          changed = true;
           const calls = m.liveToolCalls.map((t) =>
             t.id === toolCallId
               ? {
@@ -3709,37 +3934,55 @@ export const useAppStore = create<AppState>((set, get) => ({
           );
           return { ...m, liveToolCalls: calls };
         });
+        if (!changed) return {};
         return {
           messagesByConversation: { ...s.messagesByConversation, [targetConv]: updated },
-          // Keep active messages in sync with conversation cache only if targetConv is active
           ...(targetConv === s.activeConversationId ? { messages: updated } : {}),
         };
       });
     }
 
-    // Persist permission decision to server
-    try {
-      await apiPost("/api/permissions/pending", { id, decision: apiDecision });
-    } catch {
-      // Server-side approval resolution fallback
-    }
-    try {
-      // Resolve local UI promise
-      current.resolve(decision);
-    } catch {
-      // resolver should never throw, but never let UI crash
-    }
     set((s) => {
       const nextByConv = { ...s.permissionPromptsByConversation };
-      if (convId) delete nextByConv[convId];
-      for (const k of Object.keys(nextByConv)) {
-        if (nextByConv[k]?.id === id) delete nextByConv[k];
+      const nextQueue = { ...s.permissionPromptQueue };
+      let headRemoved = false;
+      for (const key of Object.keys(nextByConv)) {
+        if (nextByConv[key]?.id === id) {
+          delete nextByConv[key];
+          if (key === convId) headRemoved = true;
+        }
       }
+      for (const key of Object.keys(nextQueue)) {
+        const filtered = nextQueue[key].filter((p) => p.id !== id);
+        if (filtered.length) nextQueue[key] = filtered;
+        else delete nextQueue[key];
+      }
+
+      let promoted: PermissionPromptState | null = null;
+      if (headRemoved && convId) {
+        const queued = pruneExpiredPrompts(nextQueue[convId] ?? [], Date.now());
+        if (queued.length) {
+          // If any queued prompt is a main-agent prompt (!p.subagentId), promote it first.
+          const mainIdx = queued.findIndex((p) => !p.subagentId);
+          const promoteIdx = mainIdx !== -1 ? mainIdx : 0;
+          promoted = queued[promoteIdx];
+          nextByConv[convId] = promoted;
+          const remaining = queued.filter((_, i) => i !== promoteIdx);
+          if (remaining.length) nextQueue[convId] = remaining;
+          else delete nextQueue[convId];
+        } else {
+          delete nextQueue[convId];
+        }
+      }
+
       return {
         permissionPromptsByConversation: nextByConv,
-        permissionPrompt: s.permissionPrompt?.id === id ? null : s.permissionPrompt,
+        permissionPromptQueue: nextQueue,
+        permissionPrompt: s.permissionPrompt?.id === id ? promoted : s.permissionPrompt,
       };
     });
+    // The toast that pointed at this approval has served its purpose.
+    if (typeof toast?.dismiss === "function") toast.dismiss(`perm-${id}`);
   },
 
   setQuestionPrompt: (prompt, conversationId?) => {
@@ -3843,32 +4086,39 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   recoverPermissionPrompt: async (conversationId: string) => {
-    if (get().permissionPromptsByConversation[conversationId] || get().permissionPrompt) return;
+    const before = get();
+    // Only skip when THIS conversation already has a prompt; a prompt from
+    // another conversation must never block recovery (parallel sessions).
+    const now = Date.now();
+    const liveHead = isPromptLive(before.permissionPromptsByConversation[conversationId], now);
+    const liveQueue = pruneExpiredPrompts(before.permissionPromptQueue[conversationId] ?? [], now);
+    if (liveHead || liveQueue.length > 0) {
+      return;
+    }
     try {
-      const data = await apiGet<{ pending: PendingApprovalDTO[] }>(
-        "/api/permissions/pending",
-      );
-      const match = data?.pending?.find((p) => p.conversationId === conversationId);
-      if (match && !get().permissionPromptsByConversation[conversationId]) {
-        const pObj: PermissionPromptState = {
-          id: match.id,
-          conversationId: match.conversationId,
-          action: match.action || match.toolName || "action",
-          target: match.target,
-          toolCallId: match.toolCallId,
-          toolName: match.toolName,
-          createdAt: match.createdAt,
-          resolve: (decision) => {
-            void get().resolvePermissionPrompt(match.id, decision);
+      const data = await apiGet<{ pending: unknown[] }>("/api/permissions/pending");
+      // Oldest first so queued prompts resolve in request order.
+      const matches = (data?.pending ?? [])
+        .map((raw) => parsePendingApproval(raw))
+        .filter((p): p is NonNullable<typeof p> => p !== null)
+        .filter((p) => p.conversationId === conversationId)
+        .reverse();
+      for (const match of matches) {
+        get().setPermissionPrompt(
+          {
+            id: match.approvalId,
+            conversationId: match.conversationId,
+            action: match.action,
+            target: match.target,
+            toolCallId: match.toolCallId,
+            toolName: match.toolName,
+            subagentId: match.subagentId,
+            subagentName: match.subagentName,
+            createdAt: match.createdAt,
+            ttlMs: match.ttlMs,
           },
-        };
-        set((s) => ({
-          permissionPromptsByConversation: {
-            ...s.permissionPromptsByConversation,
-            [conversationId]: pObj,
-          },
-          permissionPrompt: conversationId === s.activeConversationId || !s.activeConversationId ? pObj : s.permissionPrompt,
-        }));
+          conversationId,
+        );
       }
     } catch (e) {
       console.warn("[HermOS] recoverPermissionPrompt failed for", conversationId, ":", e);
@@ -3976,6 +4226,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       // Clean up local conversation state and refresh
       const idSet = new Set(ids);
+      for (const id of ids) {
+        const targetPrompts = [
+          ...(get().permissionPromptsByConversation[id] ? [get().permissionPromptsByConversation[id]] : []),
+          ...(get().permissionPromptQueue[id] ?? []),
+        ];
+        for (const p of targetPrompts) {
+          if (typeof toast?.dismiss === "function") toast.dismiss(`perm-${p.id}`);
+        }
+        if (typeof toast?.dismiss === "function") {
+          toast.dismiss(`quest-${id}`);
+        }
+      }
       set((s) => {
         // Build cleaned versions of all per-conversation maps in one pass.
         const cleanMap = <V>(rec: Record<string, V>): Record<string, V> => {
@@ -4002,6 +4264,17 @@ export const useAppStore = create<AppState>((set, get) => ({
           activeTodosByConversation: cleanMap(s.activeTodosByConversation),
           thinkingExpanded: cleanMap(s.thinkingExpanded),
           scrollPositions: cleanMap(s.scrollPositions),
+          permissionPromptsByConversation: cleanMap(s.permissionPromptsByConversation),
+          permissionPromptQueue: cleanMap(s.permissionPromptQueue),
+          questionPromptsByConversation: cleanMap(s.questionPromptsByConversation),
+          permissionPrompt:
+            s.permissionPrompt?.conversationId && idSet.has(s.permissionPrompt.conversationId)
+              ? null
+              : s.permissionPrompt,
+          questionPrompt:
+            s.questionPrompt?.conversationId && idSet.has(s.questionPrompt.conversationId)
+              ? null
+              : s.questionPrompt,
         };
       });
 

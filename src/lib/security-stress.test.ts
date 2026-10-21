@@ -169,8 +169,8 @@ describe("Security Stress — Encryption, Rate Limit, Permissions & Subagents", 
     });
   });
 
-  describe("3. Permission schema v2 migration preserving custom user rules", () => {
-    it("migrates v1 config to v2 preserving custom user rules over defaults", async () => {
+  describe("3. Permission schema migration preserving custom user rules", () => {
+    it("migrates an old config preserving custom user rules over defaults", async () => {
       const { db } = await import("@/lib/db");
       const userId = "migrating-user-1";
 
@@ -205,7 +205,7 @@ describe("Security Stress — Encryption, Rate Limit, Permissions & Subagents", 
 
       const row = await db.plugin.findFirst({ where: { userId, name: PERMISSIONS_PLUGIN_NAME } });
       const parsed = JSON.parse(row!.config);
-      expect(parsed.v).toBe(2);
+      expect(parsed.v).toBe(3);
     });
   });
 

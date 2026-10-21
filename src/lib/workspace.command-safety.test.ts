@@ -356,6 +356,19 @@ describe("resolveCommandSafety — nested shell spawners with execution flags", 
     expect(r.reason).toMatch(/nested shell with an execution flag/);
   });
 
+  it("marks a nested shell as its own refusal class", () => {
+    // The executors need to tell "escapes the workspace" (the user's
+    // command.outside_workspace rule may cover it) from "the inner command
+    // cannot be validated at all" (a per-call confirmation is mandatory).
+    const nested = resolveCommandSafety('bash -c "cd ../outside && x"', base);
+    expect(nested.refusalKind).toBe("nested-shell");
+    expect(nested.isOutsideWorkspace).toBe(true);
+
+    const escape = resolveCommandSafety("cd ../outside", base);
+    expect(escape.refusalKind).toBe("escape");
+    expect(escape.refusalKind).not.toBe("nested-shell");
+  });
+
   it("refuses `powershell -Command \"Set-Location C:\\\"` (PS verbs are outside the cd grammar)", () => {
     const r = resolveCommandSafety('powershell -Command "Set-Location C:\\"', base);
     expect(r.ok).toBe(false);

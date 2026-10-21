@@ -18,11 +18,10 @@ import {
   type PermissionDecision,
 } from "@/lib/permissions-prompt";
 import {
-  getPermissions,
-  setPermissions,
+  upsertPermissionRule,
   KNOWN_PERMISSION_ACTIONS,
+  isDurableAlwaysAllowAction,
   type PermissionAction,
-  type PermissionRule,
 } from "@/lib/permissions";
 
 /**
@@ -39,10 +38,12 @@ export const dynamic = "force-dynamic";
 
 const PENDING_RATE = { capacity: 60, refillPerSec: 60 / 60 };
 
-const resolveSchema = z.object({
-  id: z.string().trim().min(1).max(128),
-  decision: z.enum(["allow", "deny", "always_allow"] as const),
-});
+const resolveSchema = z
+  .object({
+    id: z.string().trim().regex(/^pa_[0-9a-f]{16}$/),
+    decision: z.enum(["allow", "deny", "always_allow"] as const),
+  })
+  .strict();
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
   let user;
@@ -66,6 +67,8 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
       target: p.target,
       args: p.args,
       createdAt: p.createdAt,
+      ttlMs: p.ttlMs,
+      subagent: p.subagent,
     })),
   });
 });
@@ -116,14 +119,14 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   // any existing rule for the same action) so future calls of the same
   // action skip the prompt entirely. Only persist AFTER successful resolve
   // so a TTL race (404) never creates a durable rule for a denied prompt.
-  // If the action is null (shouldn't happen for "ask" mode —
-  // evaluateToolPermission returns "allow" for null actions — but we defend
-  // in depth), we fall back to treating the decision as a one-shot "allow".
+  // The awaiting executor applies the decision to its own snapshot right
+  // away, so the rule takes effect for the current run even though this
+  // write lands asynchronously.
   // SECURITY: command.outside_workspace is never persisted — an "always_allow"
   // there downgrades to a one-shot "allow" so a single approval cannot
   // permanently bypass sanitization for all future outside commands.
   if (decision === "always_allow" && pending.action) {
-    if (pending.action === "command.outside_workspace") {
+    if (!isDurableAlwaysAllowAction(pending.action)) {
       try {
         await audit(
           user.id,
@@ -136,15 +139,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       }
     } else if (KNOWN_PERMISSION_ACTIONS.has(pending.action)) {
       try {
-        const config = await getPermissions(user.id);
-        const rules: PermissionRule[] = config.rules.filter(
-          (r) => r.action !== pending.action,
-        );
-        rules.push({ action: pending.action, mode: "allow" });
-        await setPermissions(user.id, {
-          ...config,
-          rules,
-        });
+        await upsertPermissionRule(user.id, pending.action, "allow");
       } catch (e) {
         // Persistence failed — log and proceed with a one-shot allow so the
         // user's intent (allow this call) still takes effect.

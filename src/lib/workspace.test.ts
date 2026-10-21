@@ -9,6 +9,7 @@ import fs from "fs/promises";
 import {
   writeFileWs,
   createFileWs,
+  readFileWs,
   globToRegex,
   readTree,
   safePath,
@@ -45,6 +46,13 @@ describe("writeFileWs — script and executable extensions are writable", () => 
   it("createFileWs delegates to writeFileWs", async () => {
     const res = await createFileWs("u1", "ws1", "evil.bat", "x", root);
     expect(res.path).toBe("evil.bat");
+  });
+
+  it("tags missing-file reads with ENOENT so write_file distinguishes create from unreadable", async () => {
+    const err = await readFileWs("u1", "ws1", "missing.txt", undefined, root).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toBe("ENOENT");
+    expect((err as Error).message).toBe("File not found.");
   });
 });
 

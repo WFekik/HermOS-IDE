@@ -132,6 +132,22 @@ export function isTransientStreamError(err: unknown): boolean {
 }
 
 /**
+ * Shared retry ladder for agent stream loops: rate limits are expected under
+ * shared keys and deserve a long ladder, while other transient failures get
+ * the short one.
+ */
+export function retryAttemptLimit(is429: boolean): number {
+  return is429 ? 15 : 3;
+}
+
+/** Exponential backoff with jitter; 429 honors Retry-After up to two minutes. */
+export function retryBackoffMs(attempt: number, is429: boolean, headerMs: number | null): number {
+  if (is429 && headerMs !== null && headerMs > 0) return Math.min(headerMs, 120_000);
+  const delay = (is429 ? 2000 : 1000) * Math.pow(2, attempt) + Math.random() * 500;
+  return is429 ? Math.min(delay, 120_000) : delay;
+}
+
+/**
  * Retry a function with exponential backoff for transient network errors.
  * Retries on: ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, fetch TypeError,
  * and HTTP 429/500/502/503/504/529. Does NOT retry on 400/401/403/404/422.

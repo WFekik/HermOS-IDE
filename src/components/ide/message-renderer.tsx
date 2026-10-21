@@ -20,6 +20,7 @@ import {
   FilePlus2,
   HelpCircle,
   Check,
+  ShieldAlert,
 } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
 import { useTranslation } from "@/hooks/use-translation";
@@ -70,9 +71,15 @@ function cachedSanitizeThinking(content: string): string {
 
 interface MessageRendererProps {
   message: UIMessage;
+  /**
+   * "chat" (default) renders completed turns with the collapsible
+   * "Worked for Xs" trace; "subagent" renders the transcript flat — the
+   * turn block is a main-agent affordance only.
+   */
+  variant?: "chat" | "subagent";
 }
 
-export function MessageRenderer({ message }: MessageRendererProps) {
+export function MessageRenderer({ message, variant = "chat" }: MessageRendererProps) {
   const { t } = useTranslation();
   // Reconstruct segments dynamically for assistant messages when they are missing or empty,
   // to ensure they are rendered natively and cleanly in separate sequential blocks
@@ -102,7 +109,7 @@ export function MessageRenderer({ message }: MessageRendererProps) {
   // the agent built it up — like opencode. Otherwise fall back to the
   // legacy flat rendering for older messages or non-streaming context.
   if (segments && segments.length > 0) {
-    return <SegmentedMessageRenderer message={message} reconstructedSegments={segments} />;
+    return <SegmentedMessageRenderer message={message} reconstructedSegments={segments} variant={variant} />;
   }
   return <FlatMessageRenderer message={message} />;
 }
@@ -217,9 +224,11 @@ export function mergeSegments(
 function SegmentedMessageRenderer({
   message,
   reconstructedSegments,
+  variant = "chat",
 }: {
   message: UIMessage;
   reconstructedSegments?: any[];
+  variant?: "chat" | "subagent";
 }) {
   const { t } = useTranslation();
   const rawSegments = reconstructedSegments ?? message.segments ?? [];
@@ -261,7 +270,8 @@ function SegmentedMessageRenderer({
   // everything before it (thinking + tool calls + intermediate text) is the
   // working trace that collapses into "Worked for Xs" once the turn completes.
   // Streaming turns render inline (no block). No work or no answer → as today.
-  const isTurn = message.role === "assistant" && !streaming;
+  // Subagent transcripts render flat — the block is a main-agent affordance.
+  const isTurn = variant !== "subagent" && message.role === "assistant" && !streaming;
   let resultIdx = -1;
   if (isTurn) {
     for (let i = groupedItems.length - 1; i >= 0; i--) {
@@ -863,12 +873,13 @@ const markdownComponents: Components = {
  * Fenced code + inline code renderer. `streaming` disables the Prism
  * highlighter for still-growing fenced blocks (see CodeBlock).
  */
-function codeMarkdownRenderer(streaming: boolean) {
+export function codeMarkdownRenderer(streaming: boolean) {
   return (props: any) => {
     const { className, children, ...rest } = props;
-    const inline = !className;
     const text = String(children ?? "").replace(/\n$/, "");
-    if (inline) {
+    // Language-less fences (e.g. ``` trees) arrive with no className in
+    // react-markdown v10 — only truly single-line spans are inline.
+    if (!className && !text.includes("\n")) {
       return (
         <code
           className="rounded px-1.5 py-0.5 font-mono text-[12px] font-medium border border-border/60 bg-muted/80 text-foreground/90"
@@ -1787,13 +1798,17 @@ function AgentWorkBlock({
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const duration = formatWorkDuration(durationMs ?? 0);
+  // Rows persisted before latency was recorded (or aborted turns) carry 0 —
+  // render a bare "Worked" instead of a misleading "Worked for 0ms".
+  const hasDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0;
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded-sm py-0.5">
         <ChevronRight className={cn("size-3 shrink-0 transition-transform [[data-state=open]_&]:rotate-90")} />
         <span className="truncate">
-          {t("worked_for", { duration })}
+          {hasDuration
+            ? t("worked_for", { duration: formatWorkDuration(durationMs as number) })
+            : t("worked")}
           {stepCount > 0 ? ` · ${t("worked_steps", { count: stepCount })}` : ""}
         </span>
       </CollapsibleTrigger>
@@ -2239,6 +2254,7 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
       className={cn(
         "group relative overflow-hidden flex w-full items-center justify-between rounded-lg border border-border/60 bg-card/80 dark:bg-zinc-950/40 px-3 py-2 text-xs cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-accent/20 dark:hover:bg-zinc-900/50 transition-all duration-200 my-2 shadow-2xs hover:shadow-xs",
         status === "failed" && "border-rose-500/30 hover:border-rose-500/50",
+        status === "awaiting_permission" && "border-amber-500/40 hover:border-amber-500/60",
         status === "completed" && "border-brand/20 hover:border-brand/40"
       )}
     >
@@ -2256,6 +2272,11 @@ export function SubagentBlock({ tc }: SubagentBlockProps) {
       <div className="flex items-center gap-2 shrink-0 ms-3">
         {status === "running" ? (
           <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />
+        ) : status === "awaiting_permission" ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-600 dark:text-amber-400 font-medium">
+            <ShieldAlert className="size-3" />
+            {t("awaiting_permission")}
+          </span>
         ) : status === "completed" ? (
           <span className="text-[10px] font-mono text-brand font-medium">{t("completed")}</span>
         ) : status === "failed" ? (

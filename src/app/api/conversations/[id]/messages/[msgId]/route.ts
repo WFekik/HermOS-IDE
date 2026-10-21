@@ -14,7 +14,10 @@ import {
 import { abortAgentStream } from "@/lib/agent-abort";
 import { cancelPendingForConversation } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation } from "@/lib/question-prompt";
-import { clearConversationSubagents } from "@/lib/ai/subagent-session";
+import { clearSubagentsRolledBack } from "@/lib/ai/subagent-session";
+import { dropQueuedReports } from "@/lib/ai/subagent-queue";
+import { clearAllWakeGrants, pauseConversationDelivery } from "@/lib/ai/subagent-delivery";
+import { pauseConversationToolExecution } from "@/lib/ai/subagent-executor";
 import { clearConversationCache } from "@/lib/ai/executor";
 import { stopRunningCommand, clearCompletedCommand } from "@/lib/workspace";
 import {
@@ -140,7 +143,7 @@ export async function PATCH(
       }),
     ]);
     // Clean up in-memory state since we deleted messages after the edited one.
-    cleanupConversationState(user.id, conversationId);
+    cleanupConversationState(user.id, conversationId, msg.createdAt.getTime());
   } else {
     await db.message.update({
       where: { id: msgId },
@@ -284,71 +287,78 @@ export async function DELETE(
     }
   }
 
-  // Order matters: stop any in-flight command FIRST so a background process
-  // cannot write to a file the rollback is about to restore over.
-  cleanupConversationState(user.id, conversationId);
-
-  // Restore all checkpoints created at or after this message's timestamp in reverse chronological order
+  const resumeDelivery = pauseConversationDelivery(conversationId);
+  const releaseTools = pauseConversationToolExecution(conversationId);
   let restoredFiles: string[] = [];
   let failed: { id: string; error: string }[] = [];
   let attempted = 0;
-  if (revertFiles) {
-    const cpRes = await restoreCheckpointsSinceTimestamp(
-      user.id,
-      conversationId,
-      msg.createdAt.getTime(),
-      restoreOpts,
-    );
-    restoredFiles = cpRes.restoredFiles;
-    failed = cpRes.failed;
-    attempted = cpRes.attempted;
-    if (!cpRes.ok) {
-      // Do NOT delete transcript rows on a failed restore — disk and DB
-      // must never diverge behind a success response.
-      await audit(
+  try {
+    // Order matters: stop any in-flight command FIRST so a background process
+    // cannot write to a file the rollback is about to restore over.
+    cleanupConversationState(user.id, conversationId, msg.createdAt.getTime());
+
+    // Restore all checkpoints created at or after this message's timestamp in reverse chronological order
+    if (revertFiles) {
+      const cpRes = await restoreCheckpointsSinceTimestamp(
         user.id,
-        "message_delete_failed",
-        JSON.stringify({ conversationId, msgId, failed: cpRes.failed }),
-        getClientIp(req),
-      );
-      // Same `details`-nesting contract as the 409 above (client reads
-      // e.details.failed — top-level extras never reach it).
-      return apiError("Undo partially failed — files were left untouched and the transcript was kept.", 500, {
-        details: {
-          restoredFiles,
-          failed: cpRes.failed,
-          attempted: cpRes.attempted,
-        },
-      });
-    }
-  }
-
-  // Fetch all message IDs in deterministic order to avoid timestamp-collision
-  // over-deletion when two messages share the same createdAt.
-  const msgsInOrder = await db.message.findMany({
-    where: { conversationId },
-    select: { id: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-  const targetIdx = msgsInOrder.findIndex((m) => m.id === msgId);
-  if (targetIdx === -1) {
-    // Vanished between resolve and the post-restore fetch (concurrent
-    // deleter). slice(-1) would delete the LAST row — the wrong message.
-    return apiError("Message not found — it may already have been deleted.", 404);
-  }
-  const idsToDelete = msgsInOrder.slice(targetIdx).map((m) => m.id);
-
-  await db.$transaction([
-    db.message.deleteMany({
-      where: { id: { in: idsToDelete } },
-    }),
-    db.toolExecution.deleteMany({
-      where: {
         conversationId,
-        createdAt: { gte: msg.createdAt },
-      },
-    }),
-  ]);
+        msg.createdAt.getTime(),
+        restoreOpts,
+      );
+      restoredFiles = cpRes.restoredFiles;
+      failed = cpRes.failed;
+      attempted = cpRes.attempted;
+      if (!cpRes.ok) {
+        // Do NOT delete transcript rows on a failed restore — disk and DB
+        // must never diverge behind a success response.
+        await audit(
+          user.id,
+          "message_delete_failed",
+          JSON.stringify({ conversationId, msgId, failed: cpRes.failed }),
+          getClientIp(req),
+        );
+        // Same `details`-nesting contract as the 409 above (client reads
+        // e.details.failed — top-level extras never reach it).
+        return apiError("Undo partially failed — files were left untouched and the transcript was kept.", 500, {
+          details: {
+            restoredFiles,
+            failed: cpRes.failed,
+            attempted: cpRes.attempted,
+          },
+        });
+      }
+    }
+
+    // Fetch all message IDs in deterministic order to avoid timestamp-collision
+    // over-deletion when two messages share the same createdAt.
+    const msgsInOrder = await db.message.findMany({
+      where: { conversationId },
+      select: { id: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const targetIdx = msgsInOrder.findIndex((m) => m.id === msgId);
+    if (targetIdx === -1) {
+      // Vanished between resolve and the post-restore fetch (concurrent
+      // deleter). slice(-1) would delete the LAST row — the wrong message.
+      return apiError("Message not found — it may already have been deleted.", 404);
+    }
+    const idsToDelete = msgsInOrder.slice(targetIdx).map((m) => m.id);
+
+    await db.$transaction([
+      db.message.deleteMany({
+        where: { id: { in: idsToDelete } },
+      }),
+      db.toolExecution.deleteMany({
+        where: {
+          conversationId,
+          createdAt: { gte: msg.createdAt },
+        },
+      }),
+    ]);
+  } finally {
+    releaseTools();
+    resumeDelivery();
+  }
 
   await audit(
     user.id,
@@ -366,13 +376,38 @@ export async function DELETE(
  * Called after undo (message DELETE) or message edit that deletes subsequent
  * messages, ensuring subagents, running commands, pending permissions, and
  * agent caches don't leak across conversation rollbacks.
+ *
+ * `cutoffMs` is the rollback point (the undone message's timestamp): only the
+ * background work that belongs to the discarded tail is torn down — the
+ * subagents that ran before it keep their sessions, approvals and reports.
  */
-function cleanupConversationState(userId: string, conversationId: string): void {
+function cleanupConversationState(
+  userId: string,
+  conversationId: string,
+  cutoffMs: number,
+): void {
   abortAgentStream(conversationId);
-  cancelPendingForConversation(conversationId);
   cancelPendingQuestionsForConversation(conversationId);
-  clearConversationSubagents(userId, conversationId);
   clearConversationCache(conversationId);
   stopRunningCommand(userId, conversationId);
   clearCompletedCommand(userId, conversationId);
+
+  // Roll back the background work of the discarded tail. The surviving
+  // workers keep their pending approvals — only the rolled-back ones are
+  // cancelled.
+  const { rolledBack, surviving } = clearSubagentsRolledBack(
+    userId,
+    conversationId,
+    cutoffMs,
+  );
+  cancelPendingForConversation(conversationId, new Set(surviving));
+  if (rolledBack.length > 0) {
+    // Their reports must never reach the agent again: a stale report would
+    // make the next run redo the work the user just discarded.
+    dropQueuedReports(userId, conversationId, rolledBack);
+  }
+
+  // A pending synthesis belongs to the rolled-back state — the autoWake
+  // sentinel would restart the agent on a transcript the user just rewound.
+  clearAllWakeGrants(userId, conversationId);
 }

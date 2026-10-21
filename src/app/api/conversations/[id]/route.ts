@@ -5,6 +5,7 @@ import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { clearConversationCache } from "@/lib/ai/executor";
 import { clearConversationDelivery } from "@/lib/ai/subagent-delivery";
+import { clearConversationSubagents } from "@/lib/ai/subagent-session";
 import { abortAgentStream } from "@/lib/agent-abort";
 import { cancelPendingForConversation } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation } from "@/lib/question-prompt";
@@ -114,6 +115,11 @@ export const DELETE = withErrorHandler(
     } catch {}
     try {
       stopRunningCommand(user.id, id);
+    } catch {}
+    try {
+      // Kill the conversation's background subagents: they would keep burning
+      // tokens and could still raise an approval for a deleted conversation.
+      clearConversationSubagents(user.id, id);
     } catch {}
 
     const attachments = await db.attachment.findMany({

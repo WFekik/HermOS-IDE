@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Loader2,
   Compass,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -294,6 +295,7 @@ function SubagentCard({
       className={cn(
         "group relative overflow-hidden rounded-lg border border-border/60 bg-card/80 dark:bg-zinc-950/40 p-3 cursor-pointer transition-all duration-200 shadow-2xs hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-accent/20 dark:hover:bg-zinc-900/50 hover:shadow-xs",
         status === "failed" && "border-rose-500/30 hover:border-rose-500/50",
+        status === "awaiting_permission" && "border-amber-500/40 hover:border-amber-500/60",
         status === "completed" && "border-emerald-500/20 hover:border-emerald-500/40"
       )}
       onClick={onClick}
@@ -371,6 +373,17 @@ function SubagentCard({
         </div>
       )}
 
+      {/* Awaiting-approval notice for blocked subagents */}
+      {status === "awaiting_permission" && subagent.pendingPermission && (
+        <div
+          className="mt-2 flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400 font-mono truncate"
+          title={subagent.pendingPermission.target}
+        >
+          <ShieldAlert className="size-3 shrink-0" />
+          <span className="truncate">{subagent.pendingPermission.target}</span>
+        </div>
+      )}
+
       {/* Error message for failed subagents */}
       {status === "failed" && subagent.error && (
         <div className="mt-2 rounded border border-rose-500/20 bg-rose-500/5 px-2 py-1 text-[10px] text-rose-500 font-mono truncate" title={subagent.error}>
@@ -395,6 +408,14 @@ function StatusBadge({ status }: { status: SubagentStatus }) {
   const { t } = useTranslation();
   if (status === "running") {
     return <Loader2 className="size-3.5 text-brand animate-spin shrink-0" />;
+  }
+  if (status === "awaiting_permission") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-600 dark:text-amber-400 font-medium shrink-0">
+        <ShieldAlert className="size-3" />
+        {t("awaiting_permission")}
+      </span>
+    );
   }
   if (status === "completed") {
     return <span className="text-[10px] font-mono text-brand font-medium">{t("completed")}</span>;

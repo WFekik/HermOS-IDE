@@ -55,6 +55,22 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.3" || tag === "1.1.3") {
+    return `### HermOS IDE ${tag}
+
+Local-first desktop IDE with autonomous subagent execution and MCP support.
+
+#### Highlights
+- **Subagent Permissions**: Real-time permission event streaming, non-blocking prompts, and server-authoritative review windows for background workers.
+- **Transcript Undo & Rollback**: Safe synchronization between transcript undo and background workers, pausing file operations during restore and rolling back orphaned subagents.
+- **Worker Execution Limits**: Scaled iteration ceiling to 300 cycles for long-running refactoring and autonomous loops.
+- **Permission Write Serialization**: Concurrency-safe permission updates via per-user write queues and version validation.
+- **Prompt Defense**: Tool-call parsing isolates model reasoning blocks from executable tool invocations.
+- **Modernized About Tab**: Cleaned version metadata, removed hardcoded channel indicators, and streamlined external links.
+
+#### Downloads & Verification
+Verify installers against SHA256SUMS. Auto-update integrity is covered by minisign signatures.`;
+  }
   if (tag === "v1.1.2" || tag === "1.1.2") {
     return `### HermOS IDE ${tag} — Updates That Actually Apply & Fluid Panel Resizing
 

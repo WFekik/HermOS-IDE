@@ -287,14 +287,15 @@ export const ChatView = React.memo(function ChatView() {
     [runAutoWake],
   );
 
-  // Background subagent delivery → autoWake synthesis. When the executor
-  // hands pending subagents to the delivery watcher, the main turn ends
-  // immediately; once every report is posted as a user-role message in this
-  // conversation, the server publishes a `wake` event on the subagents SSE
-  // route. We listen here (independent of the SubagentsPanel — this must work
-  // even when that tab is closed) and launch the sentinel run that reads the
-  // delivered reports and synthesizes the final answer. The server re-emits
-  // the wake on (re)connect, so a missed event is replayed.
+  // Background subagent delivery → autoWake synthesis. When the executor hands
+  // pending subagents to the delivery watcher, the main turn ends immediately;
+  // once every report is posted as a user-role message in this conversation,
+  // the server publishes a `wake` event on the subagents SSE route. The server
+  // re-emits it on (re)connect, so a missed event is replayed.
+  //
+  // Subagent tool approvals do NOT arrive here: they are user-scoped (a
+  // worker may block in a background conversation) and are owned by
+  // `useSubagentPermissionStream`.
   React.useEffect(() => {
     if (!activeConversationId) return;
     // Pending conversations have no DB row yet — no subagent wake can exist.

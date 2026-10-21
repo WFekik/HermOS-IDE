@@ -54,6 +54,9 @@ export function enqueueSubagentReport(
   subagentId: string,
 ): void {
   if (isSubagentReportDelivered(userId, conversationId, subagentId)) return;
+  // A rolled-back worker belongs to a discarded transcript — reporting it
+  // would make the next agent run reason over (and redo) discarded work.
+  if (internalGet(subagentId)?.rolledBack) return;
   const key = queueKey(userId, conversationId);
   let queue = state.reportQueues.get(key);
   if (!queue) {
@@ -121,6 +124,34 @@ export function unmarkSubagentReportDelivered(
   subagentId: string,
 ): void {
   state.deliveredReports.get(queueKey(userId, conversationId))?.delete(subagentId);
+}
+
+/**
+ * Drop the queued reports of rolled-back subagents.
+ *
+ * A rollback removed their transcript; a queued report would otherwise be
+ * drained by the next agent run, which would then reason over — and redo —
+ * work the user just discarded.
+ */
+export function dropQueuedReports(
+  userId: string,
+  conversationId: string,
+  subagentIds: string[],
+): void {
+  if (subagentIds.length === 0) return;
+  const key = queueKey(userId, conversationId);
+  const dropped = new Set(subagentIds);
+  const queue = state.reportQueues.get(key);
+  if (queue) {
+    const kept = queue.filter((r) => !dropped.has(r.subagentId));
+    if (kept.length) state.reportQueues.set(key, kept);
+    else state.reportQueues.delete(key);
+  }
+  for (const id of subagentIds) {
+    unmarkSubagentReportDelivered(userId, conversationId, id);
+    state.mailboxes.delete(id);
+    state.mailboxOwners.delete(id);
+  }
 }
 
 export function enqueueSubagentMessage(subagentId: string, content: string): void {

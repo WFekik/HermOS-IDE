@@ -8,6 +8,7 @@ import {
   getSubagents,
   type Subagent,
 } from "@/lib/ai/subagents";
+import type { AgentMode } from "@/lib/types";
 import {
   withErrorHandler,
   parseJson,
@@ -39,12 +40,12 @@ const createSchema = z.object({
 async function verifyConversationOwnership(
   userId: string,
   conversationId: string,
-): Promise<boolean> {
+): Promise<{ id: string; mode: string } | null> {
   const conv = await db.conversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, mode: true },
   });
-  return !!conv && conv.userId === userId;
+  return conv && conv.userId === userId ? { id: conv.id, mode: conv.mode } : null;
 }
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
@@ -92,13 +93,16 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   }
   const d = parsed.data;
 
-  const owned = await verifyConversationOwnership(user.id, d.conversationId);
-  if (!owned) return apiError("Conversation not found.", 404);
+  const conv = await verifyConversationOwnership(user.id, d.conversationId);
+  if (!conv) return apiError("Conversation not found.", 404);
 
+  const agentMode = (conv.mode as AgentMode) || "agent";
   const sa = createSubagent(user.id, d.conversationId, {
     name: d.name,
     task: d.task,
     systemPrompt: d.systemPrompt,
+    agentMode,
+    readOnly: agentMode === "architect",
   });
 
   try {

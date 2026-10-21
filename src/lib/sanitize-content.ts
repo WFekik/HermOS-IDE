@@ -103,6 +103,14 @@ export function sanitizeThinkingContent(content: string): string {
     /^\s*<(?:think|thinking|thought|reasoning|cot|details)[a-zA-Z0-9_-]*>?\s*/gim,
     (match, offset: number) => (isInsideCodeFence(out, offset) ? match : ""),
   );
+  // Some models (notably Qwen/NIM) write their planned tool calls into the
+  // reasoning channel. They are never executed there, so showing the raw
+  // markup only confuses the transcript — drop it.
+  out = out
+    .replace(/```tool_call[\s\S]*?```/gi, "")
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+    .replace(/<function=[^>]*>[\s\S]*?<\/function>/gi, "")
+    .replace(/<\/?(?:tool_call|function|parameter)(?:=[^>]*)?>/gi, "");
   return out.trim();
 }
 

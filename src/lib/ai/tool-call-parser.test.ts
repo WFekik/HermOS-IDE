@@ -4,6 +4,7 @@ import {
   cleanContent,
   parseTextToolCalls,
   parseNonStreamingResponse,
+  stripThinkingTags,
   STREAM_TOOL_START_RE,
   STREAM_TOOL_COMPLETE_RE,
   THINK_TAGS_RE,
@@ -105,6 +106,60 @@ describe("cleanContent", () => {
     // tag boundary is lost and "still" survives. This is acceptable since
     // well-formatted model output does not nest think tags.
     expect(cleanContent("A <think>outer <think>inner</think> still</think> B")).toBe("A  still B");
+  });
+});
+
+describe("stripThinkingTags", () => {
+  it("strips think tags but preserves tool-call blocks", () => {
+    const input = '<think>use read_file</think>\n{"tool":"read_file","args":{"path":"x"}}';
+    const out = stripThinkingTags(input);
+    expect(out).not.toContain("<think>");
+    expect(out).toContain('"tool":"read_file"');
+  });
+
+  it("strips unclosed think tags and everything after", () => {
+    expect(stripThinkingTags("A <think>unclosed rest").trim()).toBe("A");
+  });
+
+  it("strips standalone close tags and malformed opens", () => {
+    expect(stripThinkingTags("A </think> B").trim()).toBe("A  B".trim());
+    expect(stripThinkingTags("A\n<thinkmalformed> \nB")).toBe("A\nB");
+  });
+
+  it("is idempotent", () => {
+    const input = "<think>x</think>\n<tool_call>{}</tool_call>";
+    expect(stripThinkingTags(stripThinkingTags(input))).toBe(stripThinkingTags(input));
+  });
+});
+
+describe("phase isolation — reasoning text never yields executable tool calls", () => {
+  // Subagent text-fallback parses `parseTextToolCalls(stripThinkingTags(x))`;
+  // main executor parses post-clean content. These tests pin that contract.
+  it("does not parse a tool call written inside a thinking block", () => {
+    const input = '<think>I should call {"tool":"run_command","args":{"command":"rm -rf /"}}</think>';
+    expect(parseTextToolCalls(stripThinkingTags(input))).toHaveLength(0);
+  });
+
+  it("does not parse a fenced tool call inside an unclosed thinking block", () => {
+    const input = '<think>plan:\n```tool_call\n{"tool":"write_file","args":{"path":"a.ts"}}\n```';
+    expect(parseTextToolCalls(stripThinkingTags(input))).toHaveLength(0);
+  });
+
+  it("parses only tool calls outside thinking blocks", () => {
+    const input = [
+      '<think>draft: {"tool":"run_command","args":{"command":"bad"}}</think>',
+      'Now doing it: {"tool":"read_file","args":{"path":"ok.ts"}}',
+    ].join("\n");
+    const parsed = parseTextToolCalls(stripThinkingTags(input));
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe("read_file");
+  });
+
+  it("strips every think-tag variant before parsing", () => {
+    for (const tag of ["thinking", "thought", "reasoning", "cot", "details"]) {
+      const input = `<${tag}>{"tool":"run_command","args":{"command":"bad"}}</${tag}>`;
+      expect(parseTextToolCalls(stripThinkingTags(input))).toHaveLength(0);
+    }
   });
 });
 

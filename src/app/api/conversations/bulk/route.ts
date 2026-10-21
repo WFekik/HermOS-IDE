@@ -3,8 +3,12 @@ import { requireUser } from "@/lib/session";
 import { withRateLimit, getClientIp } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { clearConversationCache } from "@/lib/ai/executor";
-import { invalidateResolvedWsCache } from "@/lib/workspace";
+import { invalidateResolvedWsCache, stopRunningCommand } from "@/lib/workspace";
 import { clearConversationDelivery } from "@/lib/ai/subagent-delivery";
+import { clearConversationSubagents } from "@/lib/ai/subagent-session";
+import { cancelPendingForConversation } from "@/lib/permissions-prompt";
+import { cancelPendingQuestionsForConversation } from "@/lib/question-prompt";
+import { abortAgentStream } from "@/lib/agent-abort";
 import { deleteAttachmentFiles } from "@/lib/provision-db";
 import { deleteConversationCheckpoints } from "@/lib/checkpoints";
 import {
@@ -103,6 +107,24 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
   deleteAttachmentFiles(attachmentPaths);
 
   for (const cid of uniqueIds) {
+    // Mirror the single-conversation teardown: a deleted conversation must not
+    // leave a running worker, agent stream, pending approval or background
+    // command behind.
+    try {
+      abortAgentStream(cid);
+    } catch {}
+    try {
+      cancelPendingForConversation(cid);
+    } catch {}
+    try {
+      cancelPendingQuestionsForConversation(cid);
+    } catch {}
+    try {
+      stopRunningCommand(user.id, cid);
+    } catch {}
+    try {
+      clearConversationSubagents(user.id, cid);
+    } catch {}
     clearConversationCache(cid);
     invalidateResolvedWsCache(user.id, cid);
     clearConversationDelivery(user.id, cid);

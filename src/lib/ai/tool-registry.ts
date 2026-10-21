@@ -33,6 +33,8 @@ export type ToolCtx = {
   workspace?: WorkspaceInfo;
   /** Whether execution outside workspace is explicitly permitted. */
   userAllowedOutsideWorkspace?: boolean;
+  /** Mode of the invoking agent; architect mode keeps spawned subagents read-only. */
+  agentMode?: "agent" | "chat" | "architect";
 };
 
 export type ToolResult = { ok: boolean; result: unknown };

@@ -22,7 +22,9 @@ import {
   Moon,
   Monitor,
   Globe,
+  Github,
 } from "lucide-react";
+import { HermOSLogo } from "@/components/brand/hermos-logo";
 import { LANGUAGES, type SupportedLanguage } from "@/lib/i18n";
 import { useTranslation } from "@/hooks/use-translation";
 import {
@@ -1297,70 +1299,87 @@ function AboutTab() {
 
   return (
     <div className="space-y-5 max-w-md">
-      <div>
-        <h3 className="text-base font-semibold">{t("about_hermos")}</h3>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {t("about_hermos_desc")}
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-md border p-2.5 space-y-1">
-          <div className="text-muted-foreground flex items-center justify-between">
-            <span>{t("version")}</span>
-            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1 py-0 h-4">
-              {displayChannel}
-            </Badge>
+      <div className="flex items-center gap-3.5 p-3.5 rounded-lg border bg-card/40">
+        <HermOSLogo size={36} className="rounded-lg shadow-xs" />
+        <div className="space-y-0.5 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold tracking-tight text-foreground">HermOS IDE</h3>
+            <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border">
+              v{displayVersion}
+            </span>
           </div>
-          <div className="font-mono font-medium text-sm">v{displayVersion}</div>
-          {displayHash !== "local" && (
-            <div className="text-[10px] text-muted-foreground font-mono">commit: {displayHash}</div>
+          <p className="text-xs text-muted-foreground truncate">
+            {t("about_hermos_desc")}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border p-2.5 space-y-1 bg-card/20">
+          <span className="text-[11px] text-muted-foreground">{t("version")}</span>
+          <div className="font-mono font-medium text-xs text-foreground">v{displayVersion}</div>
+          {displayHash !== "local" ? (
+            <div className="text-[10px] text-muted-foreground font-mono truncate">commit: {displayHash.slice(0, 7)}</div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground font-mono">local-build</div>
           )}
         </div>
-        <div className="rounded-md border p-2.5 space-y-1">
-          <div className="text-muted-foreground">{t("license")}</div>
-          <div className="font-mono font-medium text-sm">MIT</div>
+        <div className="rounded-lg border p-2.5 space-y-1 bg-card/20">
+          <span className="text-[11px] text-muted-foreground">{t("license")}</span>
+          <div className="font-mono font-medium text-xs text-foreground">MIT</div>
           <div className="text-[10px] text-muted-foreground">{t("open_source")}</div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          variant="outline"
-          className="h-8 gap-1.5 text-xs"
+          variant="secondary"
+          className="h-8 gap-1.5 text-xs font-normal"
           onClick={handleCheckUpdate}
           disabled={checkingUpdate}
         >
           <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
           {checkingUpdate ? t("checking_updates") : t("check_for_updates")}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs font-normal"
+          asChild
+        >
+          <a
+            href={repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Github className="size-3.5" />
+            <span>GitHub</span>
+          </a>
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs font-normal"
+          asChild
+        >
+          <a
+            href={`${repoUrl}/releases`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink className="size-3.5" />
+            <span>{t("release_notes")}</span>
+          </a>
+        </Button>
       </div>
 
-      <div className="flex flex-col gap-1.5 pt-1">
-        {/* External navigation handled by global link interceptor in providers.tsx.
-            Plain anchors preserve middle-click / Ctrl-click / context-menu. */}
-        <a
-          href={repoUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
-        >
-          <ExternalLink className="size-3.5" /> {t("source_on_github")}
-        </a>
-        <a
-          href={`${repoUrl}/releases`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-brand hover:underline inline-flex items-center gap-1.5 cursor-pointer"
-        >
-          <ExternalLink className="size-3.5" /> {t("release_notes")}
-        </a>
-      </div>
-
-      <div className="space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          {t("whats_new")}
-        </h4>
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("whats_new")}
+          </h4>
+        </div>
         {feed === null && !feedError && (
           <p className="text-xs text-muted-foreground">{t("loading_releases")}</p>
         )}
@@ -1371,18 +1390,20 @@ function AboutTab() {
         )}
         {feed !== null &&
           feed.map((r, i) => (
-            <div key={`${r.tag || r.name || "release"}-${i}`} className="rounded-md border p-2.5 space-y-1">
+            <div key={`${r.tag || r.name || "release"}-${i}`} className="rounded-lg border p-3 space-y-1.5 bg-card/30">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-xs font-medium">{r.tag || r.name}</span>
+                <span className="font-mono text-xs font-medium text-foreground">{r.tag || r.name}</span>
                 {r.publishedAt && (
                   <span className="text-[10px] text-muted-foreground">
                     {new Date(r.publishedAt).toLocaleDateString()}
                   </span>
                 )}
               </div>
-              <div className="text-xs font-medium">{r.name}</div>
+              {r.name && r.name !== r.tag && (
+                <div className="text-xs font-medium text-foreground">{r.name}</div>
+              )}
               {r.notes && (
-                <p className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-4">
+                <p className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-4 leading-relaxed">
                   {r.notes}
                 </p>
               )}
@@ -1391,7 +1412,7 @@ function AboutTab() {
                   href={r.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[11px] text-brand hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  className="text-[11px] text-brand hover:underline inline-flex items-center gap-1 cursor-pointer pt-0.5"
                 >
                   <ExternalLink className="size-3" /> {t("view_release")}
                 </a>
@@ -1400,9 +1421,10 @@ function AboutTab() {
           ))}
       </div>
       <Separator />
-      <p className="text-[11px] text-muted-foreground">
-        {t("about_built_with")}
-      </p>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>{t("about_built_with")}</span>
+        <span className="text-[10px] font-mono">100% Local-first</span>
+      </div>
     </div>
   );
 }

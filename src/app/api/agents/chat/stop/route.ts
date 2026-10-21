@@ -44,7 +44,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const aborted = abortAgentStream(conversationId);
 
   // Also cancel any pending permission prompts and question prompts so they don't dangle
-  cancelPendingForConversation(conversationId);
+  cancelPendingForConversation(conversationId, { excludeSubagents: true });
   cancelPendingQuestionsForConversation(conversationId);
 
   stopRunningCommand(user.id, conversationId);

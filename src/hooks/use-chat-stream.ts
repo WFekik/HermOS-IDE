@@ -6,6 +6,7 @@ import { apiStream, apiPost, ApiRequestError } from "@/lib/api-client";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n";
 import { sanitizeStreamingDelta } from "@/lib/sanitize-content";
+import { parsePermissionPromptEvent } from "@/lib/permission-prompt-events";
 import type { AttachmentDTO, ChatRequest, ChatStreamEvent, MessageDTO } from "@/lib/types";
 
 interface UseChatStreamReturn {
@@ -391,40 +392,43 @@ export function useChatStream(): UseChatStreamReturn {
       }
       case "tool_call_permission": {
         flushPending();
-        const approvalId = evt.approvalId;
-        const resolver = () => {
-          // No-op. The store's resolvePermissionPrompt action already sends
-          // the apiPost request to resolve the pending permission on the server.
-        };
-        store.setPermissionPrompt(
+        const parsed = parsePermissionPromptEvent(evt);
+        if (!parsed) break;
+        const approvalId = parsed.approvalId;
+        const accepted = store.setPermissionPrompt(
           {
             id: approvalId,
             conversationId: convId,
-            action: evt.action,
-            target: evt.target,
-            toolCallId: evt.toolCallId,
-            toolName: evt.toolName,
-            resolve: resolver,
-            createdAt: Date.now(),
+            action: parsed.action,
+            target: parsed.target,
+            toolCallId: parsed.toolCallId,
+            toolName: parsed.toolName,
+            createdAt: parsed.createdAt,
+            ttlMs: parsed.ttlMs,
           },
           convId,
         );
+        if (!accepted) break;
 
         if (convId !== store.activeConversationId) {
           const session =
             store.conversations.find((c) => c.id === convId) ||
             store.pendingConversations.find((p) => p.id === convId);
           const sessionTitle = session?.title ? `"${session.title}"` : "Background session";
-          const actionDesc = evt.action
-            ? `${evt.action}${evt.target ? ` (${evt.target})` : ""}`
-            : evt.toolName || "action";
+          const actionDesc = parsed.action
+            ? `${parsed.action}${parsed.target ? ` (${parsed.target})` : ""}`
+            : parsed.toolName || "action";
           // Live read: captured `store` goes stale on mid-run language switch.
           const lang = useAppStore.getState().language;
+          const remainingTtl = Math.max(
+            10_000,
+            (parsed.ttlMs ?? 120_000) - (Date.now() - parsed.createdAt),
+          );
 
           toast(t("permission_requested", lang), {
-            id: `perm-${approvalId}`,
+            id: `perm-${parsed.approvalId}`,
             description: `${sessionTitle} · ${actionDesc}`,
-            duration: 30000,
+            duration: remainingTtl,
             action: {
               label: t("review", lang),
               onClick: () => {

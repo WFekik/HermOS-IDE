@@ -14,14 +14,22 @@ import {
   type SubagentSession,
   type SubagentSessionMessage,
   type SubagentStatus as SessionStatus,
+  type SubagentPendingPermission,
 } from "./subagent-session";
 import {
   spawnSubagent as _spawnSubagent,
   awaitSubagents as _awaitSubagents,
 } from "./subagent-executor";
 import { formatSubagentReportText } from "./subagent-queue";
+import type { AgentMode } from "@/lib/types";
 
-export type SubagentStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type SubagentStatus =
+  | "pending"
+  | "running"
+  | "awaiting_permission"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface SubagentMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -42,6 +50,8 @@ export interface Subagent {
   result?: string | null;
   error?: string | null;
   partial?: { content: string; thinking?: string };
+  /** Non-null while the subagent is blocked on a user permission decision. */
+  pendingPermission?: SubagentPendingPermission;
   createdAt: number | string;
   updatedAt?: number | string;
   completedAt?: number;
@@ -52,11 +62,16 @@ export interface CreateSubagentOpts {
   task: string;
   systemPrompt?: string;
   allowedTools?: string[];
+  /** Architect-mode spawns stay read-only regardless of requested tools. */
+  readOnly?: boolean;
   provider?: string;
   model?: string;
   checkpointId?: string;
   thinkingLevel?: string;
+  /** Parent mode at spawn — the worker enforces the same tool wall. */
+  agentMode?: AgentMode;
 }
+
 
 /**
  * Public spawn — fire-and-forget; the worker runs in the background
@@ -121,13 +136,19 @@ export function deleteSubagent(userId: string, id: string): boolean {
 
 /** Public ACL-checked list per conversation. */
 export function getSubagents(userId: string, conversationId: string): Subagent[] {
-  return _getSessions(userId, conversationId).map(sessionToSubagent);
+  return _getSessions(userId, conversationId)
+    // Rolled-back workers belong to a discarded transcript — they must not
+    // reappear in the panel or be re-delivered to the agent.
+    .filter((session) => !session.rolledBack)
+    .map(sessionToSubagent);
 }
 
 /** Public ACL-checked single lookup. */
 export function getSubagent(userId: string, id: string): Subagent | null {
   const session = getSession(userId, id);
-  return session ? sessionToSubagent(session) : null;
+  // Rolled-back workers belong to a discarded transcript.
+  if (!session || session.rolledBack) return null;
+  return sessionToSubagent(session);
 }
 
 /**
@@ -179,6 +200,7 @@ function sessionToSubagent(session: SubagentSession): Subagent {
     result,
     error: session.error,
     partial: session.partial,
+    pendingPermission: session.pendingPermission,
     createdAt: session.createdAt,
     updatedAt: session.completedAt ?? session.createdAt,
     completedAt: session.completedAt,
@@ -230,6 +252,8 @@ function mapStatus(s: SessionStatus): SubagentStatus {
     case "tool_exec":
     case "completing":
       return "running";
+    case "awaiting_permission":
+      return "awaiting_permission";
     case "completed":
       return "completed";
     case "failed":

@@ -1,6 +1,19 @@
 "use client";
 
 import { apiGet, ApiRequestError } from "@/lib/api-client";
+import {
+  DEFAULT_PERMISSIONS,
+  PERMISSION_ACTIONS as CORE_PERMISSION_ACTIONS,
+  evaluatePermission,
+  evaluateOutsideWorkspaceCommand,
+  isReadOnlyAction,
+  type PermissionAction,
+  type PermissionMode,
+  type PermissionRule,
+  type PermissionsConfig,
+} from "@/lib/permissions-core";
+
+export type { PermissionAction, PermissionMode, PermissionRule, PermissionsConfig };
 
 /* ------------------------------------------------------------------ *
  * Permissions — shared types, query keys, and typed API helpers.
@@ -9,18 +22,6 @@ import { apiGet, ApiRequestError } from "@/lib/api-client";
  * at /api/permissions. The frontend renders a settings section that
  * loads the config on mount and saves via PUT.
  * ------------------------------------------------------------------ */
-
-export type PermissionMode = "allow" | "ask" | "deny";
-
-export interface PermissionRule {
-  action: string;
-  mode: PermissionMode;
-}
-
-export interface PermissionsConfig {
-  rules: PermissionRule[];
-  autoAllowReadonly: boolean;
-}
 
 export interface PermissionsResponse {
   config: PermissionsConfig;
@@ -32,106 +33,86 @@ export const permissionsKeys = {
 
 /* The canonical action catalog shown in the settings table. */
 export interface PermissionActionDef {
-  action: string;
+  action: PermissionAction;
   label: string;
   description: string;
   readonly?: boolean;
 }
 
-export const PERMISSION_ACTIONS: PermissionActionDef[] = [
-  {
-    action: "file.read",
+const ACTION_META: Record<PermissionAction, { label: string; description: string }> = {
+  "file.read": {
     label: "Read files",
     description: "Read file contents from the workspace.",
-    readonly: true,
   },
-  {
-    action: "file.write",
+  "file.write": {
     label: "Create or edit files",
     description: "Write, create, or modify files in the workspace.",
   },
-  {
-    action: "command.run",
+  "command.run": {
     label: "Run shell commands",
     description: "Execute allowlisted shell commands in the workspace.",
   },
-  {
-    action: "command.outside_workspace",
+  "command.outside_workspace": {
     label: "Run outside workspace commands",
-    description: "Execute commands targeting directories outside the workspace root (explicitly confirmed by user).",
+    description:
+      "Run commands that target directories outside the workspace root. In Ask mode every such command needs an explicit confirmation.",
   },
-  {
-    action: "browser.open",
+  "browser.open": {
     label: "Open URLs in the browser",
     description: "Open a URL in the integrated browser session.",
   },
-  {
-    action: "browser.click",
+  "browser.click": {
     label: "Click elements on web pages",
     description: "Click an element identified by its accessibility ref.",
   },
-  {
-    action: "browser.type",
+  "browser.type": {
     label: "Type into web forms",
     description: "Type text into form fields on a web page.",
   },
-  {
-    action: "web.fetch",
+  "web.fetch": {
     label: "Fetch web pages",
     description: "Agent-initiated HTTP fetch of a URL.",
-    readonly: false,
   },
-  {
-    action: "web.search",
+  "web.search": {
     label: "Search the web",
     description: "Agent-initiated web search.",
-    readonly: true,
   },
-  {
-    action: "mcp.call",
+  "mcp.call": {
     label: "Call MCP server tools",
     description: "Invoke tools exposed by connected MCP servers.",
   },
-  {
-    action: "subagent.spawn",
+  "subagent.spawn": {
     label: "Spawn subagents",
     description: "Launch background subagents to work on delegated tasks.",
   },
-  {
-    action: "subagent.get",
+  "subagent.get": {
     label: "Inspect subagents",
     description: "Query the status and details of running subagents.",
   },
-  {
-    action: "subagent.message",
+  "subagent.message": {
     label: "Message subagents",
     description: "Revive a terminal subagent with a new task (re-runs its full toolset).",
   },
-  {
-    action: "question.ask",
+  "question.ask": {
     label: "Ask clarifying questions",
     description: "Agent-initiated clarifying questions that pause execution for your answer.",
-    readonly: true,
   },
-];
+};
+
+export const PERMISSION_ACTIONS: PermissionActionDef[] = CORE_PERMISSION_ACTIONS.map(
+  (action) => ({
+    action,
+    ...ACTION_META[action],
+    readonly: isReadOnlyAction(action),
+  }),
+);
 
 export const DEFAULT_CONFIG: PermissionsConfig = {
-  rules: [
-    { action: "file.read", mode: "allow" },
-    { action: "file.write", mode: "allow" },
-    { action: "command.run", mode: "ask" },
-    { action: "command.outside_workspace", mode: "ask" },
-    { action: "browser.open", mode: "ask" },
-    { action: "browser.click", mode: "ask" },
-    { action: "browser.type", mode: "ask" },
-    { action: "web.fetch", mode: "ask" },
-    { action: "web.search", mode: "allow" },
-    { action: "mcp.call", mode: "ask" },
-    { action: "subagent.spawn", mode: "allow" },
-    { action: "question.ask", mode: "allow" },
-  ],
-  autoAllowReadonly: true,
+  ...DEFAULT_PERMISSIONS,
+  rules: DEFAULT_PERMISSIONS.rules.map((rule) => ({ ...rule })),
 };
+
+export { evaluatePermission, evaluateOutsideWorkspaceCommand };
 
 export async function fetchPermissions(): Promise<PermissionsResponse> {
   return apiGet<PermissionsResponse>("/api/permissions");

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { preprocessContent, isTreeLineContent, splitInlineTree } from "@/components/ide/message-renderer";
+import { preprocessContent, isTreeLineContent, splitInlineTree, codeMarkdownRenderer } from "@/components/ide/message-renderer";
+import { CodeBlock } from "@/components/ide/code-block";
 import fc from "fast-check";
 
 // preprocessContent — tables, trees, and requirements rendering
@@ -713,6 +714,43 @@ describe("CodeBlock tree detection regex", () => {
       }),
       { numRuns: 100 },
     );
+  });
+});
+
+describe("codeMarkdownRenderer fence routing", () => {
+  const render = codeMarkdownRenderer(false);
+
+  it("routes multi-line language-less fences to CodeBlock, preserving newlines", () => {
+    const tree = "src/\n├── main.tsx\n└── App.tsx";
+    const el = render({ className: undefined, children: tree });
+    expect(el.type).toBe(CodeBlock);
+    expect(el.props.value).toBe(tree);
+    expect(el.props.value).toContain("\n");
+  });
+
+  it("strips exactly one trailing newline from block content", () => {
+    const el = render({ className: undefined, children: "src/\n└── main.tsx\n" });
+    expect(el.type).toBe(CodeBlock);
+    expect(el.props.value).toBe("src/\n└── main.tsx");
+  });
+
+  it("extracts the language from tagged fences", () => {
+    const el = render({ className: "language-ts", children: "const x = 1;" });
+    expect(el.type).toBe(CodeBlock);
+    expect(el.props.language).toBe("ts");
+  });
+
+  it("renders single-line language-less spans as inline code", () => {
+    const el = render({ className: undefined, children: "npm install" });
+    expect(el.type).toBe("code");
+    expect(el.props.className).toContain("font-mono");
+  });
+
+  it("does not collapse a directory tree into a single flowing line", () => {
+    const tree = "src/\n├── src/\n│   ├── main.tsx\n│   └── App.tsx\n└── public/";
+    const el = render({ className: undefined, children: tree });
+    expect(el.type).toBe(CodeBlock);
+    expect(el.props.value.split("\n")).toHaveLength(5);
   });
 });
 

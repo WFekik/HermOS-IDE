@@ -10,7 +10,7 @@ const testRoot = mkdtempSync(path.join(os.tmpdir(), "hermos-agent-path-"));
 process.env.HERMOS_APP_DATA_DIR = testRoot;
 
 const { resolveCommandSafety, agentTempDir, ensureAgentTempDir, startBackgroundCommand, getCompletedCommand } = await import("@/lib/workspace");
-const { resolveAgentPath, truncationWriteGuard } = await import("@/lib/ai/tools");
+const { resolveAgentPath, truncationWriteGuard, runTool } = await import("@/lib/ai/tools");
 const { writeTruncation, TRUNCATION_DIR, truncationUserDir } = await import("@/lib/truncate");
 
 const USER = "user-test-1";
@@ -196,6 +196,51 @@ describe("com.hermos-ide and artifacts virtual path resolution", () => {
     const t = await resolveAgentPath(USER, WS, "c1", "artifacts/architecture.md");
     expect(t).not.toBeNull();
     expect(t?.isArtifact).toBe(true);
+  });
+});
+
+describe("write_file — creating a file that does not exist", () => {
+  it("creates nested new files instead of failing the overwrite pre-read", async () => {
+    const ctx = {
+      userId: USER,
+      conversationId: "c1",
+      workspace: { ...WS, id: "ws1", isActive: true },
+    };
+    const rel = path.join("features", "todos", "TodoApp.tsx");
+    const res = await runTool("write_file", { path: rel, content: "export const x = 1;\n" }, ctx);
+    expect(res.ok).toBe(true);
+    expect((res.result as { created?: boolean }).created).toBe(true);
+    expect(existsSync(path.join(WS.rootDir, rel))).toBe(true);
+  });
+});
+
+describe("ConvergenceDetector with subagent status polls", () => {
+  it("does not treat consecutive get_subagent polls as a tool cycle", async () => {
+    const { ConvergenceDetector } = await import("@/lib/ai/executor");
+    const detector = new ConvergenceDetector();
+
+    for (let i = 0; i < 4; i++) {
+      const status = detector.record("Checking on the subagent…", [
+        { name: "get_subagent", args: { id: "sa1" } },
+      ]);
+      expect(status).toBe("ok");
+    }
+    expect(detector.record("Still running…", [{ name: "get_subagent", args: { id: "sa2" } }])).toBe("break");
+    expect(detector.lastCycleKind).toBe("poll");
+  });
+
+  it("does not flag an edit/poll alternation as a rotation", async () => {
+    const { ConvergenceDetector } = await import("@/lib/ai/executor");
+    const detector = new ConvergenceDetector();
+
+    for (let i = 0; i < 5; i++) {
+      expect(
+        detector.record("", [{ name: "read_file", args: { path: "src/index.ts" } }]),
+      ).toBe("ok");
+      expect(
+        detector.record("", [{ name: "get_subagent", args: { id: "sa1" } }]),
+      ).toBe("ok");
+    }
   });
 });
 

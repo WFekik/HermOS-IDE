@@ -7,6 +7,7 @@
 import { randomBytes } from "crypto";
 
 import type { PermissionAction } from "@/lib/permissions";
+import { PERMISSION_APPROVAL_TTL_MS } from "@/lib/permissions-core";
 
 export type PermissionDecision = "allow" | "deny" | "always_allow";
 export type ApprovalStatus = "pending" | "resolved" | "expired" | "aborted";
@@ -24,9 +25,13 @@ export interface PendingApproval {
   args: Record<string, unknown>;
   createdAt: number;
   status: ApprovalStatus;
+  /** Set when the request originates from a background subagent. */
+  subagent?: { id: string; name: string };
+  /** Auto-deny window for this entry, from createdAt. */
+  ttlMs: number;
   /** Resolves the awaited promise in the executor. */
   resolve: (decision: PermissionDecision) => void;
-  /** 120s auto-deny timer (APPROVAL_TTL_MS). */
+  /** Auto-deny timer (entry `ttlMs`). */
   timeout: NodeJS.Timeout;
 }
 
@@ -43,6 +48,9 @@ export interface PendingApprovalDTO {
   args: Record<string, unknown>;
   createdAt: number;
   status?: ApprovalStatus;
+  /** Auto-deny window for this entry, from createdAt. */
+  ttlMs: number;
+  subagent?: { id: string; name: string };
 }
 
 export interface CreatePendingInput {
@@ -54,10 +62,19 @@ export interface CreatePendingInput {
   action: PermissionAction | null;
   target: string;
   args: Record<string, unknown>;
+  subagent?: { id: string; name: string };
+  /** Override the default auto-deny window (subagent prompts allow longer review). */
+  ttlMs?: number;
 }
 
 /** How long to wait for user decision before auto-denying (2 minutes / 120s). */
-export const APPROVAL_TTL_MS = 120_000;
+export const APPROVAL_TTL_MS = PERMISSION_APPROVAL_TTL_MS;
+
+const VALID_DECISIONS: ReadonlySet<PermissionDecision> = new Set([
+  "allow",
+  "deny",
+  "always_allow",
+]);
 
 const pendingById = new Map<string, PendingApproval>();
 
@@ -79,6 +96,8 @@ function toDTO(p: PendingApproval): PendingApprovalDTO {
     args: p.args,
     createdAt: p.createdAt,
     status: p.status,
+    ttlMs: p.ttlMs,
+    subagent: p.subagent,
   };
 }
 
@@ -98,7 +117,7 @@ function expireEntry(entry: PendingApproval, reason: "expired" | "aborted" = "ex
 /** Lazy cleanup: drop entries past their TTL before inserting new ones. */
 function purgeExpired(now: number): void {
   for (const entry of pendingById.values()) {
-    if (now - entry.createdAt > APPROVAL_TTL_MS) expireEntry(entry, "expired");
+    if (now - entry.createdAt > entry.ttlMs) expireEntry(entry, "expired");
   }
 }
 
@@ -108,17 +127,18 @@ export function createPendingApproval(
 ): { id: string; promise: Promise<PermissionDecision> } {
   purgeExpired(Date.now());
   const id = newId();
+  const ttlMs = input.ttlMs ?? APPROVAL_TTL_MS;
   let resolveFn!: (decision: PermissionDecision) => void;
   const promise = new Promise<PermissionDecision>((resolve) => {
     resolveFn = resolve;
   });
 
-  // Auto-deny after APPROVAL_TTL_MS so the executor never deadlocks.
+  // Auto-deny after ttlMs so the executor never deadlocks.
   const timeout = setTimeout(() => {
     const entry = pendingById.get(id);
     if (!entry) return;
     expireEntry(entry, "expired");
-  }, APPROVAL_TTL_MS);
+  }, ttlMs);
   // Don't let the timer keep the event loop alive on shutdown.
   if (typeof timeout.unref === "function") timeout.unref();
 
@@ -134,6 +154,8 @@ export function createPendingApproval(
     args: input.args,
     createdAt: Date.now(),
     status: "pending",
+    ttlMs,
+    subagent: input.subagent,
     resolve: resolveFn,
     timeout,
   };
@@ -147,6 +169,8 @@ export function resolvePendingApproval(
   id: string,
   decision: PermissionDecision,
 ): boolean {
+  if (!VALID_DECISIONS.has(decision)) return false;
+  purgeExpired(Date.now());
   const entry = pendingById.get(id);
   if (!entry || entry.status !== "pending") return false;
   if (entry.userId !== userId) return false;
@@ -166,6 +190,7 @@ export function peekPendingApproval(
   userId: string,
   id: string,
 ): PendingApprovalDTO | null {
+  purgeExpired(Date.now());
   const entry = pendingById.get(id);
   if (!entry) return null;
   if (entry.userId !== userId) return null;
@@ -174,6 +199,7 @@ export function peekPendingApproval(
 
 /** List all pending approvals for a user (read-only). */
 export function getPendingForUser(userId: string): PendingApprovalDTO[] {
+  purgeExpired(Date.now());
   const out: PendingApprovalDTO[] = [];
   for (const entry of pendingById.values()) {
     if (entry.userId === userId) out.push(toDTO(entry));
@@ -183,10 +209,29 @@ export function getPendingForUser(userId: string): PendingApprovalDTO[] {
   return out;
 }
 
-/** Deny all pending approvals for a conversation on SSE stream abort. */
-export function cancelPendingForConversation(conversationId: string): void {
+/** Cancel a single pending approval by its ID. */
+export function cancelPendingApproval(id: string): void {
+  const entry = pendingById.get(id);
+  if (entry) expireEntry(entry);
+}
+
+/**
+ * Deny pending approvals for a conversation on SSE stream abort.
+ *
+ * If `keepSubagentIds` is provided, those subagent workers keep their approvals.
+ * If `opts?.excludeSubagents` is true, all subagent approvals are preserved
+ * (used when only the main agent stream aborts).
+ */
+export function cancelPendingForConversation(
+  conversationId: string,
+  opts?: ReadonlySet<string> | { keepSubagentIds?: ReadonlySet<string>; excludeSubagents?: boolean },
+): void {
+  const keep = opts instanceof Set ? opts : (opts && "keepSubagentIds" in opts ? opts.keepSubagentIds : undefined);
+  const excludeSubagents = opts && !(opts instanceof Set) && "excludeSubagents" in opts ? opts.excludeSubagents : false;
   for (const entry of pendingById.values()) {
     if (entry.conversationId !== conversationId) continue;
+    if (excludeSubagents && entry.subagent) continue;
+    if (entry.subagent && keep?.has(entry.subagent.id)) continue;
     expireEntry(entry);
   }
 }

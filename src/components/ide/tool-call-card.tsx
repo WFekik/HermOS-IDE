@@ -118,7 +118,7 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
       >
         <ToolStatusIcon status={status} />
         <ToolIcon name={tc.name} className="size-3.5 text-brand shrink-0" />
-        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name, t)}</span>
+        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name, t, status)}</span>
         {isCreatedFile && (
           <Badge
             variant="outline"
@@ -1578,7 +1578,20 @@ function pickToolIcon(name: string): React.ElementType {
   return Wrench;
 }
 
-function formatToolDisplayName(name: string, t?: (key: string, params?: Record<string, string | number>) => string): string {
+function formatToolDisplayName(
+  name: string,
+  t?: (key: string, params?: Record<string, string | number>) => string,
+  status?: LiveToolCall["status"],
+): string {
+  // Failed calls must never read as "Executed" — an ambiguous label on a red
+  // card looks like a platform failure rather than a command that exited
+  // non-zero.
+  if (status === "error") {
+    if (name === "run_command" || name === "run_terminal") {
+      return t ? t("command_failed") : "Command failed";
+    }
+    return t ? t("tool_failed") : "Failed";
+  }
   if (name === "list_directory" || name === "list_dir") return t ? t("tool_analyzed") : "Analyzed";
   if (name === "read_file" || name === "view_file") return t ? t("tool_read") : "Read";
   if (name === "write_file" || name === "write_to_file") return t ? t("tool_created") : "Created";

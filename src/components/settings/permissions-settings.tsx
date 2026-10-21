@@ -28,8 +28,11 @@ import {
   permissionsKeys,
   PERMISSION_ACTIONS,
   DEFAULT_CONFIG,
+  evaluatePermission,
+  evaluateOutsideWorkspaceCommand,
   fetchPermissions,
   savePermissions,
+  type PermissionAction,
   type PermissionMode,
   type PermissionsConfig,
 } from "@/components/permissions/types";
@@ -81,7 +84,7 @@ function PermissionsSettingsInner() {
     },
   });
 
-  const setRuleMode = (action: string, mode: PermissionMode) => {
+  const setRuleMode = (action: PermissionAction, mode: PermissionMode) => {
     setDraft((cur) => {
       if (!cur) return cur;
       const others = cur.rules.filter((r) => r.action !== action);
@@ -155,8 +158,16 @@ function PermissionsSettingsInner() {
             </thead>
             <tbody>
               {PERMISSION_ACTIONS.map((def) => {
-                const rule = draft.rules.find((r) => r.action === def.action);
-                const mode = rule?.mode ?? "ask";
+                // Display the EFFECTIVE mode, not the raw rule: the engine
+                // resolves a missing rule through autoAllowReadonly and the
+                // subagent defaults, so showing `rule?.mode ?? "ask"` would
+                // display a mode the app does not actually apply. The
+                // outside-workspace row additionally follows the
+                // `command.run: deny` kill switch.
+                const mode =
+                  def.action === "command.outside_workspace"
+                    ? evaluateOutsideWorkspaceCommand(draft)
+                    : evaluatePermission(draft, def.action);
                 return (
                   <tr
                     key={def.action}

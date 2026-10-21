@@ -173,7 +173,7 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<Response>
         clearInterval(heartbeat);
         if (inactivityTimer) clearTimeout(inactivityTimer);
         unregisterAgentAbort(chatReq.conversationId, abortController);
-        cancelPendingForConversation(chatReq.conversationId);
+        cancelPendingForConversation(chatReq.conversationId, { excludeSubagents: true });
         cancelPendingQuestionsForConversation(chatReq.conversationId);
         try {
           controller.close();

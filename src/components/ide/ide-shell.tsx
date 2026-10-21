@@ -40,6 +40,7 @@ import { ErrorBoundary } from "@/components/ide/error-boundary";
 import { dispatchExportConversation } from "@/components/ide/chat-export-button";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
 import { useIsTablet, useIsMobile } from "@/hooks/use-mobile";
+import { useSubagentPermissionStream } from "@/hooks/use-subagent-permissions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { isMacPlatform } from "@/lib/platform";
@@ -61,6 +62,10 @@ export function IdeShell() {
   const { t } = useTranslation();
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(true);
   const [rightCollapsed, setRightCollapsed] = React.useState(true);
+
+  // Subagent tool approvals are user-scoped: a worker blocked on a decision
+  // in a background conversation must still reach the user.
+  useSubagentPermissionStream();
 
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
@@ -463,7 +468,13 @@ function SidebarRail({
 
 function SubagentRailBadge() {
   const runningCount = useAppStore(
-    (s) => s.subagents.filter((x) => x.status === "running" || x.status === "pending").length,
+    (s) =>
+      s.subagents.filter(
+        (x) =>
+          x.status === "running" ||
+          x.status === "pending" ||
+          x.status === "awaiting_permission",
+      ).length,
   );
   if (runningCount === 0) return null;
   return (

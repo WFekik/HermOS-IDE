@@ -2,7 +2,12 @@ import { db } from "@/lib/db";
 import { audit } from "@/app/api/_lib/helpers";
 import {
   DEFAULT_PERMISSIONS,
+  PERMISSION_ACTIONS,
+  ARCHITECT_DENIED_ACTIONS,
   evaluatePermission,
+  evaluateOutsideWorkspaceCommand,
+  isDurableAlwaysAllowAction,
+  isReadOnlyAction,
   actionForTool,
   type PermissionAction,
   type PermissionMode,
@@ -18,6 +23,9 @@ import {
 export * from "@/lib/permissions-core";
 
 export const PERMISSIONS_PLUGIN_NAME = "__permissions__";
+
+/** Persisted config version — bump when the rule set semantics change. */
+const CONFIG_VERSION = 3;
 
 function normalize(config: PermissionsConfig): PermissionsConfig {
   // Clamp rules to known actions/modes; dedupe by action (first wins).
@@ -39,22 +47,7 @@ function normalize(config: PermissionsConfig): PermissionsConfig {
   };
 }
 
-export const KNOWN_PERMISSION_ACTIONS: ReadonlySet<PermissionAction> = new Set<PermissionAction>([
-  "file.read",
-  "file.write",
-  "command.run",
-  "command.outside_workspace",
-  "browser.open",
-  "browser.click",
-  "browser.type",
-  "web.fetch",
-  "web.search",
-  "mcp.call",
-  "subagent.spawn",
-  "subagent.get",
-  "subagent.message",
-  "question.ask",
-]);
+export const KNOWN_PERMISSION_ACTIONS: ReadonlySet<PermissionAction> = new Set(PERMISSION_ACTIONS);
 
 export const KNOWN_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set<PermissionMode>([
   "allow",
@@ -63,9 +56,12 @@ export const KNOWN_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set<Permi
 ]);
 
 /**
- * Load user permissions config from DB with fallback to defaults and automatic v2 migration.
+ * Load user permissions config from DB with fallback to defaults and automatic v3 migration.
  */
-export async function getPermissions(userId: string): Promise<PermissionsConfig> {
+export async function getPermissions(
+  userId: string,
+  opts?: { skipMigrationPersist?: boolean },
+): Promise<PermissionsConfig> {
   try {
     const row = await db.plugin.findFirst({
       where: { userId, name: PERMISSIONS_PLUGIN_NAME },
@@ -73,23 +69,59 @@ export async function getPermissions(userId: string): Promise<PermissionsConfig>
     if (!row || !row.config) return { ...DEFAULT_PERMISSIONS };
     const parsed = JSON.parse(row.config) as Partial<PermissionsConfig> & { v?: number };
 
-    // Migration: configs without v=2 may have the old restrictive defaults.
-    // Preserve custom user rules by placing them before defaults (normalize keeps first occurrence).
-    if (parsed.v !== 2) {
-      const userRules = parsed.rules ?? [];
+    // Migration: configs older than v3 may carry the old restrictive defaults
+    // and — worse — read-only "allow" rules that shadow the auto-allow switch
+    // forever. Preserve custom user rules by placing them before the defaults
+    // (normalize keeps the first occurrence).
+    if (parsed.v !== CONFIG_VERSION) {
+      const autoAllowReadonly =
+        parsed.autoAllowReadonly ?? DEFAULT_PERMISSIONS.autoAllowReadonly;
+      const userRules = (parsed.rules ?? []).map((r) => {
+        // The outside-workspace rule was INERT before v3 (it was never
+        // consulted), so an "allow" stored back then never had any effect.
+        // Honoring it now would silently grant a far stronger privilege than
+        // the user ever exercised — downgrade it to "ask" so the choice is
+        // made again, consciously.
+        if (r.action === "command.outside_workspace" && r.mode === "allow") {
+          return { action: r.action, mode: "ask" as PermissionMode };
+        }
+        return r;
+      }).filter((r) => {
+        // A read-only "allow" rule is exactly what the auto-allow switch
+        // produces — keeping it would make the switch a no-op. Dropping it is
+        // lossless while the switch is on.
+        if (autoAllowReadonly && r.mode === "allow" && isReadOnlyAction(r.action)) return false;
+        return true;
+      });
       const mergedRules = [...userRules, ...DEFAULT_PERMISSIONS.rules];
       const normalized = normalize({
         rules: mergedRules,
-        autoAllowReadonly: parsed.autoAllowReadonly ?? DEFAULT_PERMISSIONS.autoAllowReadonly,
+        autoAllowReadonly,
       });
-      // Persist the migrated config (fire-and-forget).
-      try {
-        await db.plugin.update({
-          where: { id: row.id },
-          data: { config: JSON.stringify({ ...normalized, v: 2 }) },
-        });
-      } catch {
-        /* ignore persist errors */
+      // Persist the migrated config through the per-user write queue unless
+      // the caller is already inside a write task that will persist the config.
+      if (!opts?.skipMigrationPersist) {
+        try {
+          await enqueueUserWrite(userId, async () => {
+            const current = await db.plugin.findFirst({
+              where: { userId, name: PERMISSIONS_PLUGIN_NAME },
+            });
+            if (current?.config) {
+              try {
+                const cur = JSON.parse(current.config);
+                if (cur?.v === CONFIG_VERSION) return;
+              } catch {
+                /* parse failed, continue */
+              }
+            }
+            await db.plugin.update({
+              where: { id: row.id },
+              data: { config: JSON.stringify({ ...normalized, v: CONFIG_VERSION }) },
+            });
+          });
+        } catch {
+          /* ignore persist errors */
+        }
       }
       return normalized;
     }
@@ -103,13 +135,37 @@ export async function getPermissions(userId: string): Promise<PermissionsConfig>
   }
 }
 
+/**
+ * Serialize read-modify-write permission updates per user. Concurrent
+ * always_allow resolutions would otherwise race and drop each other's rules.
+ */
+const userWriteQueues = new Map<string, Promise<unknown>>();
+
+function enqueueUserWrite<T>(userId: string, task: () => Promise<T>): Promise<T> {
+  const previous = userWriteQueues.get(userId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  userWriteQueues.set(userId, next);
+  const cleanup = () => {
+    if (userWriteQueues.get(userId) === next) userWriteQueues.delete(userId);
+  };
+  void next.then(cleanup, cleanup);
+  return next;
+}
+
 /** Persist a user's permissions config. Never throws — returns normalized config. */
-export async function setPermissions(
+export function setPermissions(
+  userId: string,
+  config: PermissionsConfig,
+): Promise<PermissionsConfig> {
+  return enqueueUserWrite(userId, () => persistPermissions(userId, config));
+}
+
+async function persistPermissions(
   userId: string,
   config: PermissionsConfig,
 ): Promise<PermissionsConfig> {
   const normalized = normalize(config);
-  const json = JSON.stringify({ ...normalized, v: 2 });
+  const json = JSON.stringify({ ...normalized, v: CONFIG_VERSION });
   await db.plugin.upsert({
     where: { userId_name: { userId, name: PERMISSIONS_PLUGIN_NAME } },
     update: { config: json, type: "plugin" },
@@ -131,17 +187,36 @@ export async function setPermissions(
   return normalized;
 }
 
+/** Atomically add or replace a single rule (dedupe by action). */
+export function upsertPermissionRule(
+  userId: string,
+  action: PermissionAction,
+  mode: PermissionMode,
+): Promise<PermissionsConfig> {
+  return enqueueUserWrite(userId, async () => {
+    const config = await getPermissions(userId, { skipMigrationPersist: true });
+    const rules = config.rules.filter((r) => r.action !== action);
+    rules.push({ action, mode });
+    return persistPermissions(userId, { ...config, rules });
+  });
+}
+
 /**
  * Evaluate tool permission with optional mode override. Hard-denies mutation actions
  * in architect mode and supports pre-loaded configs for batch screening efficiency.
+ *
+ * `actionOverride` replaces the action derived from the tool name — used for
+ * actions that are not bound to a single tool (e.g. a `run_command` that
+ * escapes the workspace is classified as `command.outside_workspace`).
  */
 export async function evaluateToolPermission(
   userId: string,
   toolName: string,
   mode?: "agent" | "chat" | "architect",
   config?: PermissionsConfig,
+  actionOverride?: PermissionAction | null,
 ): Promise<PermissionMode> {
-  const action = actionForTool(toolName);
+  const action = actionOverride ?? actionForTool(toolName);
   if (!action) {
     if (mode === "architect") return "deny";
     return "ask";
@@ -152,36 +227,31 @@ export async function evaluateToolPermission(
       const resolved = config ?? (await getPermissions(userId));
       return evaluatePermission(resolved, "file.write");
     }
-    if (
-      action === "file.write" ||
-      action === "command.run" ||
-      action === "command.outside_workspace" ||
-      action === "browser.open" ||
-      action === "browser.click" ||
-      action === "browser.type" ||
-      action === "mcp.call" ||
-      // `subagent.message` re-arms a terminal subagent with its FULL original
-      // toolset — an architect-spawned research subagent is clipped to
-      // read-only, but a subagent from a prior agent-mode run may carry write
-      // tools, so architect reviving one would bypass the read-only wall.
-      action === "subagent.message"
-    ) {
+    if (ARCHITECT_DENIED_ACTIONS.has(action)) {
       return "deny";
     }
   }
 
   const resolved = config ?? (await getPermissions(userId));
+  if (action === "command.outside_workspace") {
+    return evaluateOutsideWorkspaceCommand(resolved);
+  }
   return evaluatePermission(resolved, action);
 }
 
 /**
- * Refresh batch permission snapshot after "always_allow" decisions to avoid redundant prompts.
+ * Apply an "always allow" decision to an in-memory permission snapshot.
+ *
+ * The executors use this so a later call of the same action skips the prompt
+ * without depending on the database write of the pending-approval endpoint
+ * having landed first.
  */
-export async function refreshPermissionsConfig(
-  userId: string,
-  decision: "allow" | "deny" | "always_allow",
+export function applyAlwaysAllowToConfig(
   config: PermissionsConfig,
-): Promise<PermissionsConfig> {
-  if (decision !== "always_allow") return config;
-  return getPermissions(userId);
+  action: PermissionAction | null,
+): PermissionsConfig {
+  if (!isDurableAlwaysAllowAction(action)) return config;
+  const rules = config.rules.filter((r) => r.action !== action);
+  rules.push({ action, mode: "allow" });
+  return { ...config, rules };
 }

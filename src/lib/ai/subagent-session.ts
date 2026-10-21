@@ -1,11 +1,26 @@
+import type { AgentMode } from "@/lib/types";
+
 export type SubagentStatus =
   | "pending"
   | "running"
   | "thinking"
   | "tool_exec"
+  | "awaiting_permission"
   | "completing"
   | "completed"
   | "failed";
+
+/** Live permission request raised by a subagent and shown to the user. */
+export interface SubagentPendingPermission {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  action: string | null;
+  target: string;
+  createdAt: number;
+  /** Auto-deny window (subagents get a far longer review window than the main agent). */
+  ttlMs: number;
+}
 
 export interface SubagentSessionMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -46,6 +61,20 @@ export interface SubagentSession {
   error?: string;
   revives: number;
   partial?: SubagentPartial;
+  /** Parent agent mode at spawn — the worker enforces the same mode gates (architect = read-only). */
+  agentMode: AgentMode;
+  /** Timestamp when the current execution run was kicked off (spawn or revive). */
+  lastRunStartedAt?: number;
+  /** Non-null while the worker is blocked on a user permission decision. */
+  pendingPermission?: SubagentPendingPermission;
+  /**
+   * Set when a transcript rollback discarded this session's work. The session
+   * is kept (so the delivery watcher can tell "rolled back" from "evicted")
+   * but it must never be reported again: its transcript is gone, and a
+   * "removed before completing" note would make the agent redo the work the
+   * user just discarded.
+   */
+  rolledBack?: boolean;
   /**
    * Provider-measured token totals accumulated across all iterations
    * (sum of per-message measuredUsage). Observable via session subscribers
@@ -77,6 +106,7 @@ const g = globalThis as typeof globalThis & {
   __subagentRegistry?: Map<string, SubagentSession>;
   __subagentEvictionCbs?: Set<(session: SubagentSession) => void>;
   __subagentDeletionCbs?: Set<(session: SubagentSession) => void>;
+  __userPermissionSubs?: Map<string, Set<(sessionId: string, conversationId: string) => void>>;
 };
 if (!g.__subagentRegistry) g.__subagentRegistry = new Map<string, SubagentSession>();
 const registry = g.__subagentRegistry;
@@ -132,6 +162,7 @@ export function createSession(
     model: string;
     checkpointId?: string;
     thinkingLevel?: string;
+    agentMode?: AgentMode;
   },
 ): SubagentSession {
   const existing = listSessionsByConversation(conversationId);
@@ -175,6 +206,7 @@ export function createSession(
     model: opts.model,
     checkpointId: opts.checkpointId,
     thinkingLevel: opts.thinkingLevel,
+    agentMode: opts.agentMode ?? "agent",
   };
   registry.set(session.id, session);
   return session;
@@ -362,6 +394,54 @@ export function clearSubagentPartial(id: string): void {
   publish(id, s.userId, s.parentConversationId);
 }
 
+/**
+ * Dedicated channel for permission requests: emitted the moment a subagent
+ * blocks on a user decision. The channel is user-scoped (not
+ * conversation-scoped) — a worker may run in a background conversation, and
+ * its approval must reach the user no matter which conversation is on screen.
+ */
+type UserPermissionSubscriber = (sessionId: string, conversationId: string) => void;
+const userPermissionSubs = g.__userPermissionSubs ?? (g.__userPermissionSubs = new Map<string, Set<UserPermissionSubscriber>>());
+
+/** Subscribe to permission requests across all of a user's conversations. */
+export function subscribeUserSubagentPermissions(
+  userId: string,
+  listener: UserPermissionSubscriber,
+): () => void {
+  if (!userPermissionSubs.has(userId)) userPermissionSubs.set(userId, new Set());
+  userPermissionSubs.get(userId)!.add(listener);
+  return () => {
+    const set = userPermissionSubs.get(userId);
+    if (set) {
+      set.delete(listener);
+      if (set.size === 0) userPermissionSubs.delete(userId);
+    }
+  };
+}
+
+export function publishSubagentPermission(
+  userId: string,
+  conversationId: string,
+  sessionId: string,
+): void {
+  const userSet = userPermissionSubs.get(userId);
+  if (!userSet) return;
+  for (const fn of userSet) {
+    try { fn(sessionId, conversationId); } catch { /* ignore subscriber errors */ }
+  }
+}
+
+/** Sessions of a user that are currently blocked on a permission decision. */
+export function getPendingPermissionSessions(userId: string): SubagentSession[] {
+  const out: SubagentSession[] = [];
+  for (const s of registry.values()) {
+    if (s.userId !== userId) continue;
+    if (!s.pendingPermission || s.status !== "awaiting_permission") continue;
+    out.push(s);
+  }
+  return out;
+}
+
 export function deleteSession(userId: string, id: string): boolean {
   const s = registry.get(id);
   if (!s || s.userId !== userId) return false;
@@ -410,6 +490,53 @@ export function clearConversationSubagents(userId: string, conversationId: strin
       registry.delete(id);
     }
   }
+}
+
+/**
+ * Roll back the background work a transcript rollback discarded.
+ *
+ * A subagent belongs to the discarded state when it was started at/after the
+ * rollback point, or when its report was posted at/after it (that report was
+ * deleted with the rest of the tail). Everything else survives: it was part
+ * of the state the user kept.
+ *
+ * Rolled-back sessions are flagged instead of deleted so the delivery watcher
+ * can tell them apart from an evicted worker — reporting them would make the
+ * agent redo the discarded work. Returns the rolled-back and surviving ids.
+ */
+export function clearSubagentsRolledBack(
+  userId: string,
+  conversationId: string,
+  cutoffMs: number,
+): { rolledBack: string[]; surviving: string[] } {
+  const rolledBack: string[] = [];
+  const surviving: string[] = [];
+  for (const [id, s] of [...registry]) {
+    if (s.userId !== userId || s.parentConversationId !== conversationId) continue;
+    const runStart = s.lastRunStartedAt ?? s.createdAt;
+    const startedAfter = runStart >= cutoffMs;
+    // A still-running worker has no report yet — it belongs to the state the
+    // user kept as long as it started before the rollback point.
+    const reportedAfter = s.completedAt !== undefined && s.completedAt >= cutoffMs;
+    if (!startedAfter && !reportedAfter) {
+      surviving.push(id);
+      continue;
+    }
+    s.rolledBack = true;
+    s.pendingPermission = undefined;
+    // Terminal state + timestamp: without it the session keeps its status
+    // ("running") and no completedAt, so the TTL sweep never reclaims it and
+    // the whole transcript stays in memory.
+    if (s.status !== "completed" && s.status !== "failed") {
+      s.status = "failed";
+      s.error = "Rolled back by transcript undo";
+    }
+    s.completedAt = s.completedAt ?? Date.now();
+    abortSession(id);
+    publish(id, s.userId, s.parentConversationId);
+    rolledBack.push(id);
+  }
+  return { rolledBack, surviving };
 }
 
 function listSessionsByConversation(conversationId: string): SubagentSession[] {
