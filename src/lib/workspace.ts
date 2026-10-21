@@ -734,14 +734,54 @@ export async function readTree(
   rootDir?: string,
 ): Promise<FileNode[]> {
   if (!isSafeWsName(wsName)) return [];
-  const clampedDepth = Math.max(1, Math.min(8, Math.floor(maxDepth) || 6));
+  const clampedDepth = Math.max(0, Math.min(8, Number.isFinite(maxDepth) ? Math.floor(maxDepth) : 6));
   const base = rootDir ?? path.join(userRoot(userId), wsName);
   if (!existsSync(base)) return [];
   const state = { count: 0 };
-  return readTreeRec(base, base, "", 0, clampedDepth, state);
+  return readTreeRec(base, base, "", 0, clampedDepth, state, false);
 }
 
 const MAX_TREE_NODES = 50_000;
+const MAX_HEAVY_DIR_CHILDREN = 500;
+
+export const HEAVY_TREE_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".svn",
+  ".hg",
+  ".checkpoints",
+  ".next",
+  ".next-build",
+  "dist",
+  "build",
+  "out",
+  ".output",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  "coverage",
+  ".coverage",
+  ".nyc_output",
+  ".eslintcache",
+  "vendor",
+  "target",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".venv",
+  "venv",
+  "env",
+  ".tox",
+  ".nox",
+  ".gradle",
+  ".m2",
+  "CMakeFiles",
+  "cmake-build-debug",
+  "cmake-build-release",
+  "tmp",
+  "temp",
+]);
 
 async function readTreeRec(
   base: string,
@@ -750,30 +790,45 @@ async function readTreeRec(
   depth: number,
   maxDepth: number,
   state: { count: number },
+  insideHeavy = false,
 ): Promise<FileNode[]> {
   if (depth > maxDepth || state.count >= MAX_TREE_NODES) return [];
   const entries = await fs.readdir(abs, { withFileTypes: true }).catch(() => []);
   const nodes: FileNode[] = [];
+  const pendingDirs: Array<{ name: string; abs: string; rel: string }> = [];
   const pendingFiles: Array<{ name: string; abs: string; rel: string }> = [];
+
+  const maxEntries = insideHeavy ? MAX_HEAVY_DIR_CHILDREN : MAX_TREE_NODES;
+
   for (const e of entries) {
+    if (state.count >= MAX_TREE_NODES) break;
+    if (nodes.length + pendingDirs.length + pendingFiles.length >= maxEntries) break;
+
+    state.count++;
     const childAbs = path.join(abs, e.name);
     const childRel = rel ? `${rel}/${e.name}` : e.name;
-    state.count++;
-    if (state.count >= MAX_TREE_NODES) break;
     if (e.isDirectory()) {
-      const node: FileNode = {
-        name: e.name,
-        path: childRel,
-        type: "dir",
-        children:
-          depth < maxDepth
-            ? await readTreeRec(base, childAbs, childRel, depth + 1, maxDepth, state)
-            : undefined,
-      };
-      nodes.push(node);
+      pendingDirs.push({ name: e.name, abs: childAbs, rel: childRel });
     } else if (e.isFile()) {
       pendingFiles.push({ name: e.name, abs: childAbs, rel: childRel });
     }
+  }
+
+  for (const d of pendingDirs) {
+    const isHeavy = HEAVY_TREE_DIRS.has(d.name);
+    // Recurse into directory only if within depth limit and not already inside a heavy directory.
+    // Heavy directories list immediate children but do not deep-recurse grandchildren.
+    const shouldRecurse = depth < maxDepth && !insideHeavy && state.count < MAX_TREE_NODES;
+    const children = shouldRecurse
+      ? await readTreeRec(base, d.abs, d.rel, depth + 1, maxDepth, state, isHeavy)
+      : undefined;
+
+    nodes.push({
+      name: d.name,
+      path: d.rel,
+      type: "dir",
+      children,
+    });
   }
 
   // True concurrency limiter: stat promises are created per chunk, so at most
@@ -1510,13 +1565,28 @@ export function getRunningCommand(
   };
 }
 
-interface CompletedCommand {
+export interface CompletedCommand {
   command: string;
   stdout: string;
   stderr: string;
   exitCode: number | null;
   completedAt: number;
   execId?: string;
+}
+
+export type BackgroundCommandListener = (
+  userId: string,
+  conversationId: string,
+  completed: CompletedCommand,
+) => void;
+
+const backgroundCommandListeners = new Set<BackgroundCommandListener>();
+
+export function onBackgroundCommandCompleted(listener: BackgroundCommandListener): () => void {
+  backgroundCommandListeners.add(listener);
+  return () => {
+    backgroundCommandListeners.delete(listener);
+  };
 }
 
 /**
@@ -2338,6 +2408,13 @@ export function startBackgroundCommand(
       if (ownsAlias) {
         completedCommands.set(`${userId}:${conversationId}`, completed);
       }
+      for (const listener of backgroundCommandListeners) {
+        try {
+          listener(userId, conversationId, completed);
+        } catch (err) {
+          console.error("Error in background command listener:", err);
+        }
+      }
     }
     resolveCommandWaiters(userId, conversationId, completed, execId);
     evictCompletedCommands();
@@ -2359,6 +2436,13 @@ export function startBackgroundCommand(
       completedCommands.set(commandId, completed);
       if (ownsAlias) {
         completedCommands.set(`${userId}:${conversationId}`, completed);
+      }
+      for (const listener of backgroundCommandListeners) {
+        try {
+          listener(userId, conversationId, completed);
+        } catch (err) {
+          console.error("Error in background command listener:", err);
+        }
       }
     }
     resolveCommandWaiters(userId, conversationId, completed, execId);
@@ -3057,6 +3141,7 @@ export async function grepWorkspace(
     for (const entry of entries) {
       if (matches.length >= maxResults) break;
       if (entry.isDirectory()) {
+        if (HEAVY_TREE_DIRS.has(entry.name)) continue;
         stack.push({
           abs: path.join(abs, entry.name),
           rel: rel ? `${rel}/${entry.name}` : entry.name,

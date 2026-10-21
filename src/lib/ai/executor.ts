@@ -5988,9 +5988,16 @@ const thinkInstruction = thinkPlan.kind === "params"
 
           entry.result = r;
           entry.durationMs = Date.now() - t0;
-          emit({ type: "command_output", toolCallId: entry.toolCallId, text: "", running: false });
+          const isRunning =
+            typeof r.result === "object" &&
+            r.result !== null &&
+            ((r.result as Record<string, unknown>).status === "running" ||
+              (r.result as Record<string, unknown>).running === true);
+          emit({ type: "command_output", toolCallId: entry.toolCallId, text: "", running: isRunning });
           emit({ type: "tool_call_result", toolCallId: entry.toolCallId, result: r.result, ok: r.ok });
-          emit({ type: "tool_call_end", toolCallId: entry.toolCallId });
+          if (!isRunning) {
+            emit({ type: "tool_call_end", toolCallId: entry.toolCallId });
+          }
         };
 
         // Evaluate permission → execute → emit for each tool strictly ONE BY ONE.
@@ -6278,11 +6285,16 @@ const thinkInstruction = thinkPlan.kind === "params"
             const result = entry.result;
             const durationMs = entry.durationMs ?? 0;
 
+            const isRunning =
+              typeof result.result === "object" &&
+              result.result !== null &&
+              ((result.result as Record<string, unknown>).status === "running" ||
+                (result.result as Record<string, unknown>).running === true);
             allToolCalls.push({
               id: toolCallId,
               name: toolName,
               args,
-              status: result.ok ? "done" : "error",
+              status: isRunning ? "running" : (result.ok ? "done" : "error"),
               result: result.result,
               thought_signature: entry.thought_signature,
               thoughtSignature: entry.thoughtSignature,

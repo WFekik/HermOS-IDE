@@ -98,6 +98,14 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
     tc.result !== null &&
     (tc.result as { created?: boolean }).created === true;
 
+  const isBackgroundRunning =
+    status === "running" ||
+    (tc.result !== undefined &&
+      typeof tc.result === "object" &&
+      tc.result !== null &&
+      ((tc.result as { status?: string }).status === "running" ||
+        (tc.result as { running?: boolean }).running === true));
+
   const compactArgs = React.useMemo(
     () => (args ? formatArgsCompact(tc.name, args) : ""),
     [tc.name, args]
@@ -116,9 +124,9 @@ export function ToolCallCard({ tc, defaultOpen }: ToolCallCardProps) {
         aria-expanded={open}
         className="flex w-full items-center gap-1.5 px-2 py-1 text-start text-xs transition-colors"
       >
-        <ToolStatusIcon status={status} />
+        <ToolStatusIcon status={status} isBackgroundRunning={isBackgroundRunning} />
         <ToolIcon name={tc.name} className="size-3.5 text-brand shrink-0" />
-        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name, t, status)}</span>
+        <span className="font-mono text-[11px] font-medium text-foreground shrink-0">{formatToolDisplayName(tc.name, t, status, isBackgroundRunning)}</span>
         {isCreatedFile && (
           <Badge
             variant="outline"
@@ -1542,8 +1550,14 @@ export function parseHttpFetchResult(result: unknown, args?: Record<string, unkn
 
 /* ------------------------------ helpers ------------------------------ */
 
-function ToolStatusIcon({ status }: { status: LiveToolCall["status"] }) {
-  if (status === "running") {
+function ToolStatusIcon({
+  status,
+  isBackgroundRunning,
+}: {
+  status: LiveToolCall["status"];
+  isBackgroundRunning?: boolean;
+}) {
+  if (status === "running" || isBackgroundRunning) {
     return <Loader2 className="size-3 animate-spin text-brand shrink-0" />;
   }
   if (status === "done") {
@@ -1582,6 +1596,7 @@ function formatToolDisplayName(
   name: string,
   t?: (key: string, params?: Record<string, string | number>) => string,
   status?: LiveToolCall["status"],
+  isBackgroundRunning?: boolean,
 ): string {
   // Failed calls must never read as "Executed" — an ambiguous label on a red
   // card looks like a platform failure rather than a command that exited
@@ -1591,6 +1606,11 @@ function formatToolDisplayName(
       return t ? t("command_failed") : "Command failed";
     }
     return t ? t("tool_failed") : "Failed";
+  }
+  if (status === "running" || isBackgroundRunning) {
+    if (name === "run_command" || name === "run_terminal") {
+      return t ? t("running_ellipsis") : "Running…";
+    }
   }
   if (name === "list_directory" || name === "list_dir") return t ? t("tool_analyzed") : "Analyzed";
   if (name === "read_file" || name === "view_file") return t ? t("tool_read") : "Read";

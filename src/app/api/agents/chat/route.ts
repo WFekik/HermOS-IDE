@@ -1,3 +1,5 @@
+import { initCommandDelivery } from "@/lib/ai/command-delivery";
+initCommandDelivery();
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/session";

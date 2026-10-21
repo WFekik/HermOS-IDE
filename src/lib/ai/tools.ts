@@ -2628,14 +2628,29 @@ async function runToolImpl(
             return { ok: false, result: { error: `Invalid path: ${dirPath}` } };
           }
           const absDir = path.resolve(target.rootDir, target.rel);
-          const tree = await readTree(ctx.userId, ws.name, 1, absDir);
+          // Flat listing of the target directory without recursing into subdirectories (depth 0)
+          const tree = await readTree(ctx.userId, ws.name, 0, absDir);
           let files = 0;
           let dirs = 0;
           for (const n of tree) {
             if (n.type === "dir") dirs++;
             else files++;
           }
-          const result = { path: dirPath, entries: tree, files, dirs };
+          const MAX_LIST_ENTRIES = 300;
+          const total = tree.length;
+          const entries = total > MAX_LIST_ENTRIES ? tree.slice(0, MAX_LIST_ENTRIES) : tree;
+          const result: Record<string, unknown> = {
+            path: dirPath,
+            entries,
+            files,
+            dirs,
+            total,
+          };
+          if (total > MAX_LIST_ENTRIES) {
+            result.truncated = true;
+            result.showing = MAX_LIST_ENTRIES;
+            result.remaining = total - MAX_LIST_ENTRIES;
+          }
           return { ok: true, result };
         } catch (e) {
           return { ok: false, result: { error: e instanceof Error ? e.message : "list failed" } };

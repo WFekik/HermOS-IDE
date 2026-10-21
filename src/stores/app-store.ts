@@ -2675,11 +2675,12 @@ export const useAppStore = create<AppState>((set, get) => ({
             detectedTodosCompleted =
               list.length > 0 && list.every((t) => t.status === "completed");
           }
+          const isRunning = r?.status === "running" || r?.running === true;
           return {
             ...t,
             result,
             ok,
-            status: ok ? ("done" as const) : ("error" as const),
+            status: isRunning ? ("running" as const) : (ok ? ("done" as const) : ("error" as const)),
             parsedArgs: parsed,
           };
         });

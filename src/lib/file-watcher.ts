@@ -36,10 +36,47 @@ const watchers = new Map<string, WatcherEntry>();
 const DEBOUNCE_MS = 150;
 
 // Directories ignored during file change events.
-const SKIP_DIRS = new Set(["node_modules", ".git", ".checkpoints", ".next", ".next-build", "dist", "build", ".turbo", ".cache", "coverage", ".eslintcache", ".gemini", "vendor", "out", "target", "tmp", "temp"]);
+export const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".svn",
+  ".hg",
+  ".checkpoints",
+  ".next",
+  ".next-build",
+  "dist",
+  "build",
+  "out",
+  ".output",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  "coverage",
+  ".coverage",
+  ".nyc_output",
+  ".eslintcache",
+  "vendor",
+  "target",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".venv",
+  "venv",
+  "env",
+  ".tox",
+  ".nox",
+  ".gradle",
+  ".m2",
+  "CMakeFiles",
+  "cmake-build-debug",
+  "cmake-build-release",
+  "tmp",
+  "temp",
+]);
 
 /** Converts absolute workspace path to posix relative path. Returns null if outside root. */
-function toRel(rootDir: string, abs: string): string | null {
+export function toRel(rootDir: string, abs: string): string | null {
   let rel = path.relative(rootDir, abs);
   if (rel === "" || rel === ".") return ".";
   // path.relative uses platform separators; normalize to posix for the wire.
@@ -49,7 +86,7 @@ function toRel(rootDir: string, abs: string): string | null {
 }
 
 /** Checks if a relative path falls within a skipped directory. */
-function isSkipped(rel: string): boolean {
+export function isSkipped(rel: string): boolean {
   if (rel === ".") return false;
   const segs = rel.split("/");
   for (const seg of segs) {

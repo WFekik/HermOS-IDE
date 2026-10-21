@@ -280,6 +280,11 @@ function sweepExpiredWakeGrants(): void {
 
 const pausedDeliveries = new Set<string>();
 
+/** True while transcript undo owns a conversation — delivery into it must be deferred. */
+export function isConversationDeliveryPaused(conversationId: string): boolean {
+  return pausedDeliveries.has(conversationId);
+}
+
 /** Pauses report delivery into conversation messages (e.g. during transcript undo). */
 export function pauseConversationDelivery(conversationId: string): () => void {
   pausedDeliveries.add(conversationId);

@@ -16,6 +16,8 @@ import {
   isSafeWsName,
   assertValidWsName,
   buildEnv,
+  HEAVY_TREE_DIRS,
+  grepWorkspace,
 } from "./workspace";
 
 describe("writeFileWs — script and executable extensions are writable", () => {
@@ -182,5 +184,58 @@ describe("safePath — leading-slash and system root path handling", () => {
     expect(safePath("u1", "ws1", "/tmp/other-user/file.txt", root)).toBeNull();
     expect(safePath("u1", "ws1", "/etc/passwd", root)).toBeNull();
     expect(safePath("u1", "ws1", "/home/other/file.txt", root)).toBeNull();
+  });
+});
+
+
+describe("HEAVY_TREE_DIRS & grepWorkspace filter rules", () => {
+  const root = path.join(os.tmpdir(), "hermos-heavy-filter-test");
+  beforeAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.mkdir(path.join(root, ".next-build"), { recursive: true });
+    await fs.mkdir(path.join(root, ".coverage"), { recursive: true });
+    await fs.mkdir(path.join(root, "coverage"), { recursive: true });
+    await fs.mkdir(path.join(root, "node_modules", "pkg"), { recursive: true });
+    await fs.mkdir(path.join(root, ".github", "workflows"), { recursive: true });
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+
+    await fs.writeFile(path.join(root, ".next-build", "trace.log"), "TARGET_STRING_IN_NEXT_BUILD", "utf8");
+    await fs.writeFile(path.join(root, ".coverage", "cov.txt"), "TARGET_STRING_IN_DOT_COVERAGE", "utf8");
+    await fs.writeFile(path.join(root, "coverage", "lcov.txt"), "TARGET_STRING_IN_COVERAGE", "utf8");
+    await fs.writeFile(path.join(root, "node_modules", "pkg", "index.js"), "TARGET_STRING_IN_NM", "utf8");
+    await fs.writeFile(path.join(root, ".github", "workflows", "ci.yml"), "TARGET_STRING_IN_GITHUB", "utf8");
+    await fs.writeFile(path.join(root, "src", "index.ts"), "TARGET_STRING_IN_SRC", "utf8");
+  });
+
+  afterAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("contains heavy build, cache, and coverage directories in HEAVY_TREE_DIRS", () => {
+    expect(HEAVY_TREE_DIRS.has(".next-build")).toBe(true);
+    expect(HEAVY_TREE_DIRS.has(".coverage")).toBe(true);
+    expect(HEAVY_TREE_DIRS.has("coverage")).toBe(true);
+    expect(HEAVY_TREE_DIRS.has("node_modules")).toBe(true);
+    expect(HEAVY_TREE_DIRS.has("target")).toBe(true);
+  });
+
+  it("strictly excludes .github and .gemini from HEAVY_TREE_DIRS", () => {
+    expect(HEAVY_TREE_DIRS.has(".github")).toBe(false);
+    expect(HEAVY_TREE_DIRS.has(".gemini")).toBe(false);
+  });
+
+  it("grepWorkspace skips heavy directories but traverses normal and .github folders", async () => {
+    const results = await grepWorkspace("u1", "ws1", "TARGET_STRING", { rootDir: root });
+    const paths = results.map((r) => r.path);
+
+    // .github and src must be matched
+    expect(paths.some((p) => p.includes(".github"))).toBe(true);
+    expect(paths.some((p) => p.includes("src"))).toBe(true);
+
+    // heavy directories must be skipped
+    expect(paths.some((p) => p.includes(".next-build"))).toBe(false);
+    expect(paths.some((p) => p.includes(".coverage"))).toBe(false);
+    expect(paths.some((p) => p.includes("coverage"))).toBe(false);
+    expect(paths.some((p) => p.includes("node_modules"))).toBe(false);
   });
 });

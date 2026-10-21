@@ -7,20 +7,22 @@ import type { LiveToolCall } from "@/stores/app-store";
 
 afterEach(cleanup);
 
-function shellTc(status: LiveToolCall["status"]): LiveToolCall {
+function shellTc(status: LiveToolCall["status"], resultOverride?: unknown): LiveToolCall {
   return {
     id: "t1",
     name: "run_command",
     args: JSON.stringify({ command: "Test-Path node_modules/jsdom" }),
     parsedArgs: { command: "Test-Path node_modules/jsdom" },
     status,
-    ...(status === "error"
-      ? { result: { exitCode: 1, stdout: "", stderr: "not found" } }
-      : { result: { exitCode: 0, stdout: "True", stderr: "" } }),
+    result: resultOverride !== undefined
+      ? resultOverride
+      : status === "error"
+      ? { exitCode: 1, stdout: "", stderr: "not found" }
+      : { exitCode: 0, stdout: "True", stderr: "" },
   };
 }
 
-describe("ToolCallCard — failed command label", () => {
+describe("ToolCallCard — command labels & background states", () => {
   it("labels a failed command as failed, never as executed", () => {
     render(<ToolCallCard tc={shellTc("error")} />);
 
@@ -33,6 +35,39 @@ describe("ToolCallCard — failed command label", () => {
 
     expect(screen.getByText("Executed")).toBeTruthy();
     expect(screen.queryByText("Command failed")).toBeNull();
+  });
+
+  it("labels a background running command as running, never as executed", () => {
+    render(
+      <ToolCallCard
+        tc={shellTc("running", {
+          status: "running",
+          running: true,
+          commandId: "c1:cmd_1",
+          command: "npm test",
+          note: "Command is running in background",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Running…")).toBeTruthy();
+    expect(screen.queryByText("Executed")).toBeNull();
+  });
+
+  it("labels a command with done status but running result payload as running, never as executed", () => {
+    render(
+      <ToolCallCard
+        tc={shellTc("done", {
+          status: "running",
+          running: true,
+          commandId: "c1:cmd_2",
+          command: "pytest",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Running…")).toBeTruthy();
+    expect(screen.queryByText("Executed")).toBeNull();
   });
 
   it("labels a failed non-shell tool as failed", () => {

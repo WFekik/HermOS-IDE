@@ -63,6 +63,9 @@ Local-first desktop IDE with autonomous subagent execution and MCP support.
 #### Highlights
 - **Subagent Permissions**: Real-time permission event streaming, non-blocking prompts, and server-authoritative review windows for background workers.
 - **Transcript Undo & Rollback**: Safe synchronization between transcript undo and background workers, pausing file operations during restore and rolling back orphaned subagents.
+- **Background Command Wake-Up**: Long-running agent commands keep executing in the background while the agent answers; when a command finishes, its output is posted to the conversation and the idle agent is woken automatically, with the running tool card stamped to its final state by command exec id.
+- **Honest Tool-Call Labels**: Background-running commands read as "Running…" with a live spinner, and failed commands can never be mislabeled as executed.
+- **Lean Directory Listing & Search**: \`list_directory\` returns a flat, 300-entry-capped listing with truncation metadata; heavy build/cache directories (\`.next-build\`, \`coverage\`, \`node_modules\`, \`target\`, …) are capped in workspace trees and skipped by workspace grep and the file watcher, keeping large workspaces responsive.
 - **Worker Execution Limits**: Scaled iteration ceiling to 300 cycles for long-running refactoring and autonomous loops.
 - **Permission Write Serialization**: Concurrency-safe permission updates via per-user write queues and version validation.
 - **Prompt Defense**: Tool-call parsing isolates model reasoning blocks from executable tool invocations.
