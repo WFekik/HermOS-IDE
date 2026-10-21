@@ -332,16 +332,16 @@ export function safePathFromRoot(rootDir: string, rel: string): string | null {
       return abs;
     }
     // Windows drive-letter paths (C:\...) or UNC paths (\\server\...) outside base must be rejected.
-    if (process.platform === "win32") {
-      if (WIN32_ABSOLUTE_OR_UNC_RE.test(rel)) {
-        return null;
-      }
-    } else {
-      // On POSIX, reject real system root paths outside workspace base.
-      const posixNorm = (rel || "").replace(ALL_BACKSLASH_RE, "/");
-      if (POSIX_SYSTEM_ROOTS_RE.test(posixNorm)) {
-        return null;
-      }
+    if (WIN32_ABSOLUTE_OR_UNC_RE.test(rel)) {
+      return null;
+    }
+    // Reject real system root paths outside workspace base (POSIX and Windows POSIX-style).
+    const posixNorm = (rel || "").replace(ALL_BACKSLASH_RE, "/");
+    if (POSIX_SYSTEM_ROOTS_RE.test(posixNorm)) {
+      return null;
+    }
+    if (existsSync(abs)) {
+      return null;
     }
     // Not a drive letter or system root — e.g. "/foo.ts" should be treated as "foo.ts" inside the workspace
     rel = rel.replace(/^\/+/, "").replace(/^\\+/, "");

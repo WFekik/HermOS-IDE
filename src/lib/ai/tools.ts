@@ -2156,8 +2156,7 @@ export async function resolveAgentPath(
     }
     // Also handle leading-slash relative path such as "/src/index.ts" targeting workspace root.
     // Route through safePath so the symlink/realpath defense applies here too.
-    const stripped = input.replace(/^[\\/]+/, "");
-    const wsValidated = safePath(userId, ws.name, stripped, ws.rootDir);
+    const wsValidated = safePath(userId, ws.name, input, ws.rootDir);
     if (wsValidated) {
       return { rootDir: ws.rootDir, rel: path.relative(ws.rootDir, wsValidated), isArtifact: false, isTemp: false, isTruncation: false };
     }

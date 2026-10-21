@@ -161,3 +161,26 @@ describe("buildEnv — environment isolation", () => {
   });
 });
 
+
+describe("safePath — leading-slash and system root path handling", () => {
+  const root = path.join(os.tmpdir(), "hermos-safepath-test");
+  beforeAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "src", "index.ts"), "export const a = 1;");
+  });
+  afterAll(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("resolves workspace root-relative paths starting with a leading slash", () => {
+    const resolved = safePath("u1", "ws1", "/src/index.ts", root);
+    expect(resolved).toBe(path.join(root, "src", "index.ts"));
+  });
+
+  it("rejects system root paths outside workspace base", () => {
+    expect(safePath("u1", "ws1", "/tmp/other-user/file.txt", root)).toBeNull();
+    expect(safePath("u1", "ws1", "/etc/passwd", root)).toBeNull();
+    expect(safePath("u1", "ws1", "/home/other/file.txt", root)).toBeNull();
+  });
+});
