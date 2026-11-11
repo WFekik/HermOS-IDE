@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Plug,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -327,20 +328,107 @@ export function ProvidersTab() {
   );
 }
 
-function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?: ProviderKeyDTO }) {
+/**
+ * Shared connect-state controls for a provider card: reachability test and
+ * disconnect. Used by the Puter, keyed and keyless branches so all three
+ * behave identically.
+ */
+function ProviderActions({
+  provider,
+  connected,
+  removeSuccessMessage,
+  showTest = true,
+}: {
+  provider: ProviderInfo;
+  connected: boolean;
+  removeSuccessMessage: string;
+  showTest?: boolean;
+}) {
   const { t } = useTranslation();
-  const save = useAppStore((s) => s.saveProviderKey);
   const remove = useAppStore((s) => s.removeProviderKey);
   const test = useAppStore((s) => s.testProviderKey);
-
-  const [apiKey, setApiKey] = React.useState("");
-  const [baseUrl, setBaseUrl] = React.useState(keyInfo?.baseUrl ?? provider.baseUrl ?? "");
-  const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
   const [removing, setRemoving] = React.useState(false);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; latencyMs?: number; error?: string } | null>(null);
 
-  const featured = provider.id === "openrouter" || provider.id === "nvidia" || provider.id === "zen";
+  const testKey = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await test(provider.id);
+      setTestResult(r);
+      if (r.ok) {
+        toast.success(t("provider_reachable", { name: provider.name, latency: r.latencyMs ?? "?" }));
+      } else {
+        toast.error(t("provider_test_failed", { error: r.error ?? t("unknown_error") }));
+      }
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const removeKey = async () => {
+    if (removing) return;
+    setRemoving(true);
+    try {
+      await remove(provider.id);
+      toast.success(removeSuccessMessage);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("provider_key_remove_failed"));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {connected && (
+        <Badge variant="outline" className="text-[11px] gap-1.5">
+          <CheckCircle2 className="size-3" /> {t("filter_connected")}
+        </Badge>
+      )}
+      {showTest && (
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={testKey} disabled={testing || !connected}>
+          {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          {t("test_connection")}
+        </Button>
+      )}
+      {connected && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs hover:text-destructive"
+          disabled={removing}
+          onClick={removeKey}
+        >
+          {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+          {t("remove_key")}
+        </Button>
+      )}
+      {testResult && (
+        <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
+          {testResult.ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
+          {testResult.ok
+            ? t("provider_test_ok", { latency: testResult.latencyMs ?? "?" })
+            : t("provider_test_failed_short")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?: ProviderKeyDTO }) {
+  const { t } = useTranslation();
+  const save = useAppStore((s) => s.saveProviderKey);
+
+  const [apiKey, setApiKey] = React.useState("");
+  // Empty means "use the provider's registry endpoint"; only an explicit
+  // override is persisted, so endpoint migrations reach existing installs.
+  const [baseUrl, setBaseUrl] = React.useState(keyInfo?.baseUrl ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  const featured =
+    provider.id === "openrouter" || provider.id === "nvidia" || provider.id === "zen" || provider.id === "zen-go";
 
   const saveKey = async () => {
     if (!apiKey.trim()) {
@@ -367,22 +455,20 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
     }
   };
 
-  const testKey = async () => {
-    setTesting(true);
-    setTestResult(null);
+  // Local model servers take no credential: connecting stores an empty key
+  // (plus an optional endpoint override) and pulls the model list.
+  const connectLocal = async () => {
+    setSaving(true);
     try {
-      const r = await test(provider.id);
-      setTestResult(r);
-      if (r.ok) {
-        toast.success(t("provider_reachable", { name: provider.name, latency: r.latencyMs ?? "?" }));
-      } else {
-        toast.error(t("provider_test_failed", { error: r.error ?? t("unknown_error") }));
-      }
+      await save({ provider: provider.id, apiKey: "", baseUrl: baseUrl.trim() || undefined });
+      toast.success(t("provider_key_saved", { name: provider.name }));
+      await fetchAndPersistModels(provider.id, provider.name, t);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("provider_key_save_failed"));
     } finally {
-      setTesting(false);
+      setSaving(false);
     }
   };
-
 
   return (
     <div className={cn("rounded-xl border p-3.5", featured && "border-brand/30 bg-brand/[0.03]")}>
@@ -429,44 +515,11 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
       {provider.id === "puter" ? (
         <div className="mt-3 grid gap-2">
           {keyInfo?.hasKey ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="text-[11px] gap-1.5">
-                <CheckCircle2 className="size-3" /> {t("filter_connected")}
-              </Badge>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={testKey} disabled={testing}>
-                {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                {t("test_connection")}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs hover:text-destructive"
-                disabled={removing}
-                onClick={async () => {
-                  if (removing) return;
-                  setRemoving(true);
-                  try {
-                    await remove(provider.id);
-                    toast.success(t("puter_disconnected"));
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : t("provider_key_remove_failed"));
-                  } finally {
-                    setRemoving(false);
-                  }
-                }}
-              >
-                {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                {t("remove_key")}
-              </Button>
-              {testResult && (
-                <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
-                  {testResult.ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
-                  {testResult.ok
-                    ? t("provider_test_ok", { latency: testResult.latencyMs ?? "?" })
-                    : t("provider_test_failed_short")}
-                </span>
-              )}
-            </div>
+            <ProviderActions
+              provider={provider}
+              connected
+              removeSuccessMessage={t("puter_disconnected")}
+            />
           ) : (
             <div className="grid gap-2">
               <p className="text-[11px] text-muted-foreground">
@@ -496,11 +549,42 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
           )}
           <ProviderModels provider={provider.id} keyInfo={keyInfo} />
         </div>
-      ) : provider.requiresKey && (
+      ) : !provider.requiresKey ? (
+        <div className="mt-3 grid gap-2">
+          <div className="flex items-end gap-1.5">
+            <div className="grid gap-1 flex-1">
+              <Label htmlFor={`base-${provider.id}`} className="text-[11px]">
+                {t("base_url")}
+              </Label>
+              <Input
+                id={`base-${provider.id}`}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={provider.baseUrl ?? "http://localhost:11434/v1"}
+                className="h-8 text-xs font-mono"
+              />
+            </div>
+            <Button size="sm" className="h-8 bg-brand text-white hover:bg-brand/90" onClick={connectLocal} disabled={saving}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : keyInfo?.hasKey ? <Save className="size-3.5" /> : <Plug className="size-3.5" />}
+              {keyInfo?.hasKey ? t("save") : t("connect")}
+            </Button>
+          </div>
+          {keyInfo?.hasKey && (
+            <>
+              <ProviderActions
+                provider={provider}
+                connected
+                removeSuccessMessage={t("provider_key_removed", { name: provider.name })}
+              />
+              <ProviderModels provider={provider.id} keyInfo={keyInfo} />
+            </>
+          )}
+        </div>
+      ) : (
         <div className="mt-3 grid gap-2">
           <div className="grid gap-1">
             <Label htmlFor={`key-${provider.id}`} className="text-[11px]">
-              {provider.requiresKey ? t("api_key_required") : t("api_key_optional")}
+              {t("api_key_required")}
             </Label>
             <div className="flex gap-1.5">
               <Input
@@ -532,47 +616,11 @@ function ProviderCard({ provider, keyInfo }: { provider: ProviderInfo; keyInfo?:
             </div>
           )}
           <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={testKey}
-              disabled={testing || !keyInfo?.hasKey}
-            >
-              {testing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              {t("test_connection")}
-            </Button>
-            {keyInfo?.hasKey && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs hover:text-destructive"
-                disabled={removing}
-                  onClick={async () => {
-                    if (removing) return;
-                    setRemoving(true);
-                    try {
-                      await remove(provider.id);
-                      toast.success(t("provider_key_removed", { name: provider.name }));
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : t("provider_key_remove_failed"));
-                    } finally {
-                      setRemoving(false);
-                    }
-                  }}
-              >
-                {removing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                {t("remove_key")}
-              </Button>
-            )}
-            {testResult && (
-              <span className={cn("text-[11px] inline-flex items-center gap-1", testResult.ok ? "text-brand" : "text-destructive")}>
-                {testResult.ok ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}
-                {testResult.ok
-                  ? t("provider_test_ok", { latency: testResult.latencyMs ?? "?" })
-                  : t("provider_test_failed_short")}
-              </span>
-            )}
+            <ProviderActions
+              provider={provider}
+              connected={!!keyInfo?.hasKey}
+              removeSuccessMessage={t("provider_key_removed", { name: provider.name })}
+            />
           </div>
           <ProviderModels provider={provider.id} keyInfo={keyInfo} />
         </div>

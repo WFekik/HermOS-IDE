@@ -19,6 +19,7 @@ import {
   clearResponsesRequired,
   buildResponsesRequestBody,
   resolveProviderUrls,
+  resolveProviderBaseUrl,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   INLINE_EDIT_MAX_OUTPUT_TOKENS,
 } from "@/lib/ai/provider-payloads";
@@ -104,6 +105,7 @@ async function performAiInlineEdit(
     "together",
     "puter",
     "zen",
+    "zen-go",
     "custom",
   ];
 
@@ -123,7 +125,7 @@ async function performAiInlineEdit(
 
   const providerId = row.provider as ProviderId;
   const info = getProvider(providerId) ?? PROVIDERS[providerId];
-  const baseUrl = row.baseUrl || info?.baseUrl || "";
+  const baseUrl = resolveProviderBaseUrl(providerId, row.baseUrl);
   if (!baseUrl && providerId !== "anthropic") return null;
 
   const parsedModels = parseModelsColumn(row.models);

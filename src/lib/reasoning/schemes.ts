@@ -237,6 +237,7 @@ export function resolveSchemeId(providerId: string, caps?: ModelReasoningCapabil
     // OpenAI-compatible gateways routed through custom effort scheme.
     case "nvidia":
     case "zen":
+    case "zen-go":
     case "custom":
       return "custom_effort";
     default:

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { decrypt } from "@/lib/encryption";
+import { decrypt, encrypt } from "@/lib/encryption";
 import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
 import { lookupContextWindow } from "@/lib/model-context-windows";
@@ -8,7 +8,7 @@ import type { ProviderId } from "@/lib/types";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import { normalizeThinkingLevel, parseModelReasoningCapabilities } from "@/lib/reasoning";
 import type { ModelReasoningCapabilities } from "@/lib/reasoning";
-import { buildProviderHeaders, resolveModelsUrl } from "@/lib/ai/provider-payloads";
+import { buildProviderHeaders, resolveProviderModelsUrl, resolveProviderBaseUrl } from "@/lib/ai/provider-payloads";
 
 interface ModelCapabilities {
   id: string;
@@ -88,23 +88,28 @@ export async function refreshProviderModels(
   const row = await db.providerKey.findUnique({
     where: { userId_provider: { userId, provider } },
   });
-  if (!row || !row.isActive) return null;
+  // Local model servers need no key: they are reachable straight from the
+  // registry endpoint, with or without a saved row.
+  const keyless = info.requiresKey === false;
+  if ((!row || !row.isActive) && !keyless) return null;
 
-  let apiKey: string;
-  try {
-    apiKey = decrypt(row.encryptedKey);
-  } catch {
-    return null;
+  let apiKey = "";
+  if (row?.isActive && !keyless) {
+    try {
+      apiKey = decrypt(row.encryptedKey);
+    } catch {
+      return null;
+    }
   }
 
-  const baseUrl = row.baseUrl || info.baseUrl || "";
+  const baseUrl = resolveProviderBaseUrl(provider, row?.baseUrl);
   if (!baseUrl) return null;
 
   try {
     const isAnthropic = provider === "anthropic";
     const url = isAnthropic
       ? baseUrl.replace(/\/$/, "") + "/models"
-      : resolveModelsUrl(baseUrl);
+      : resolveProviderModelsUrl(provider, baseUrl);
     if (!url) return null;
     // SSRF: the provider base URL is user-editable and this auto-refresh runs
     // from the server. fetchWithSsrf validates every redirect hop (manual
@@ -133,7 +138,7 @@ export async function refreshProviderModels(
     const ids = list.map((m) => m?.id).filter((id): id is string => typeof id === "string");
     const deduped = [...new Set(ids)];
 
-    const existing = parseModelsColumn(row.models);
+    const existing = parseModelsColumn(row?.models);
     // Same never-wipe rule as the models API route: an empty listing means
     // "endpoint silent", not "user has no models". Persisting [] would
     // destroy hand-curated config on every transient empty response —
@@ -166,10 +171,32 @@ export async function refreshProviderModels(
       }),
     );
 
-    await db.providerKey.update({
-      where: { id: row.id },
-      data: { models: JSON.stringify(merged) },
-    });
+    if (row) {
+      await db.providerKey.update({
+        where: { id: row.id },
+        data: { models: JSON.stringify(merged) },
+      });
+    } else {
+      // Keyless provider fetched before it was connected: store the list on
+      // a credential-less row so the models can be picked. Best-effort — a
+      // concurrent connect may have created the row first, and that race must
+      // not discard a successfully fetched list.
+      try {
+        await db.providerKey.create({
+          data: {
+            userId,
+            provider,
+            encryptedKey: encrypt(""),
+            keyHint: "",
+            baseUrl: baseUrl || null,
+            models: JSON.stringify(merged),
+            isActive: true,
+          },
+        });
+      } catch {
+        /* row created concurrently */
+      }
+    }
 
     return merged;
   } catch {

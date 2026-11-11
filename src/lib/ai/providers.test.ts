@@ -5,6 +5,7 @@ import {
   getProvider,
   resolveModel,
   modelSupportsVision,
+  isKeylessProvider,
   DEFAULT_PROVIDER,
   DEFAULT_MODEL,
 } from "./providers";
@@ -22,6 +23,10 @@ import {
   extractUsageFromBody,
   getBodyMaxTokens,
   setBodyMaxTokens,
+  resolveProviderModelsUrl,
+  resolveProviderBaseUrl,
+  describeProviderError,
+  isPermanentProviderFailure,
 } from "./provider-payloads";
 
 describe("Provider Catalog", () => {
@@ -246,7 +251,7 @@ describe("Provider Catalog", () => {
       expect(headers["Authorization"]).toBeUndefined();
     });
 
-    it("should inject OpenCode session and client emulation headers when providerId is 'zen'", () => {
+    it("should inject OpenCode session headers when providerId is 'zen'", () => {
       const headers = buildProviderHeaders({
         providerId: "zen",
         apiKey: "opencode-key-123",
@@ -255,22 +260,34 @@ describe("Provider Catalog", () => {
       expect(headers["Authorization"]).toBe("Bearer opencode-key-123");
       expect(headers["x-opencode-session"]).toBe("ses_custom_123");
       expect(headers["X-Session-ID"]).toBe("ses_custom_123");
-      expect(headers["x-opencode-client"]).toBe("cli");
       expect(headers["x-opencode-request"]).toMatch(/^req_/);
-      expect(headers["User-Agent"]).toBe("opencode/1.3.15");
+      // Identifies HermOS truthfully — never the official OpenCode client.
+      expect(headers["User-Agent"]).toMatch(/^HermOS\//);
+      expect(headers["x-opencode-client"]).toBeUndefined();
+    });
+
+    it("should inject OpenCode session headers when providerId is 'zen-go'", () => {
+      const headers = buildProviderHeaders({
+        providerId: "zen-go",
+        apiKey: "opencode-key-321",
+        sessionId: "conv_123",
+      });
+      expect(headers["x-opencode-session"]).toBe("ses_conv_123");
+      expect(headers["X-Session-ID"]).toBe("ses_conv_123");
+      expect(headers["User-Agent"]).toMatch(/^HermOS\//);
     });
 
     it("should inject OpenCode headers when baseUrl points to opencode.ai even if providerId is custom", () => {
       const headers = buildProviderHeaders({
-        baseUrl: "https://opencode.ai/zen/v1",
+        baseUrl: "https://opencode.ai/inference/openai/v1",
         apiKey: "opencode-key-456",
       });
       expect(headers["Authorization"]).toBe("Bearer opencode-key-456");
       expect(headers["x-opencode-session"]).toMatch(/^ses_/);
       expect(headers["X-Session-ID"]).toMatch(/^ses_/);
-      expect(headers["x-opencode-client"]).toBe("cli");
       expect(headers["x-opencode-request"]).toMatch(/^req_/);
-      expect(headers["User-Agent"]).toBe("opencode/1.3.15");
+      expect(headers["User-Agent"]).toMatch(/^HermOS\//);
+      expect(headers["x-opencode-client"]).toBeUndefined();
     });
 
     it("should ensure sessionId is prefixed with ses_ when provided without prefix", () => {
@@ -281,6 +298,168 @@ describe("Provider Catalog", () => {
       });
       expect(headers["x-opencode-session"]).toBe("ses_conv-raw-uuid-1234");
       expect(headers["X-Session-ID"]).toBe("ses_conv-raw-uuid-1234");
+    });
+  });
+
+  describe("OpenCode Console endpoints", () => {
+    it("should serve zen from the documented Console inference path", () => {
+      expect(PROVIDERS.zen.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
+      expect(PROVIDERS.zen.modelsUrl).toBe("https://opencode.ai/inference/v1/models");
+    });
+
+    it("should expose the Go plan as its own provider entry", () => {
+      const go = getProvider("zen-go");
+      expect(go).toBeDefined();
+      expect(go?.baseUrl).toBe("https://opencode.ai/inference/go/openai/v1");
+      expect(go?.modelsUrl).toBe("https://opencode.ai/inference/go/v1/models");
+      expect(go?.requiresKey).toBe(true);
+    });
+
+    it("should list the model catalog from the registry override, not the base URL root", () => {
+      expect(resolveProviderModelsUrl("zen", "https://opencode.ai/inference/openai/v1")).toBe(
+        "https://opencode.ai/inference/v1/models",
+      );
+      expect(resolveProviderModelsUrl("zen-go", "https://opencode.ai/inference/go/openai/v1")).toBe(
+        "https://opencode.ai/inference/go/v1/models",
+      );
+    });
+
+    it("should derive the model catalog URL from the base URL for other providers", () => {
+      expect(resolveProviderModelsUrl("openai", "https://api.openai.com/v1")).toBe(
+        "https://api.openai.com/v1/models",
+      );
+      expect(resolveProviderModelsUrl("custom:local", "http://localhost:11434/v1")).toBe(
+        "http://localhost:11434/v1/models",
+      );
+    });
+  });
+
+  describe("Local model servers", () => {
+    it("should expose keyless, free local providers", () => {
+      for (const id of ["ollama", "lmstudio"] as const) {
+        expect(PROVIDERS[id].requiresKey).toBe(false);
+        expect(PROVIDERS[id].free).toBe(true);
+        expect(isKeylessProvider(id)).toBe(true);
+      }
+    });
+
+    it("should keep key-requiring providers keyed", () => {
+      expect(isKeylessProvider("openai")).toBe(false);
+      expect(isKeylessProvider("zen")).toBe(false);
+      expect(isKeylessProvider(undefined)).toBe(false);
+    });
+
+    it("should point the local providers at loopback endpoints the SSRF policy allows", async () => {
+      const { checkUrlHost } = await import("@/lib/ssrf");
+      for (const id of ["ollama", "lmstudio"] as const) {
+        expect(await checkUrlHost(`${PROVIDERS[id].baseUrl}/models`)).toBeNull();
+      }
+    });
+
+    it("should send no Authorization header for keyless providers", () => {
+      const headers = buildProviderHeaders({
+        providerId: "ollama",
+        apiKey: "",
+        baseUrl: PROVIDERS.ollama.baseUrl,
+      });
+      expect(headers["Authorization"]).toBeUndefined();
+    });
+  });
+
+  describe("Provider base URL resolution", () => {
+    it("should prefer an explicitly stored override", () => {
+      expect(resolveProviderBaseUrl("openai", "https://proxy.example.com/v1/")).toBe(
+        "https://proxy.example.com/v1",
+      );
+    });
+
+    it("should fall back to the registry endpoint when nothing is stored", () => {
+      expect(resolveProviderBaseUrl("openai")).toBe("https://api.openai.com/v1");
+      expect(resolveProviderBaseUrl("ollama")).toBe(PROVIDERS.ollama.baseUrl);
+    });
+
+    it("should ignore a retired OpenCode base URL saved by an older install", () => {
+      expect(resolveProviderBaseUrl("zen", "https://opencode.ai/zen/v1")).toBe(
+        PROVIDERS.zen.baseUrl,
+      );
+    });
+
+    it("should keep an unrelated custom base URL for a migrated provider", () => {
+      expect(resolveProviderBaseUrl("zen", "https://my-proxy.example.com/v1")).toBe(
+        "https://my-proxy.example.com/v1",
+      );
+    });
+  });
+
+  describe("Provider error classification", () => {
+    it("should translate the OpenCode free-tier refusal into an actionable message", () => {
+      const body = JSON.stringify({
+        type: "error",
+        error: {
+          type: "FreeTierError",
+          message:
+            "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.",
+        },
+      });
+      const detail = describeProviderError(403, body, "zen");
+      expect(detail.type).toBe("FreeTierError");
+      expect(detail.message).toMatch(/OpenCode client only/);
+      expect(detail.message).toMatch(/OpenCode Go/);
+      expect(detail.message).not.toMatch(/free tier can only be used/);
+    });
+
+    it("should classify the post-quota 429 free-usage refusal the same way", () => {
+      const body = JSON.stringify({
+        type: "error",
+        error: {
+          type: "FreeUsageLimitError",
+          message: "Free usage limit reached. Free models work in OpenCode.",
+        },
+      });
+      const detail = describeProviderError(429, body, "zen");
+      expect(detail.type).toBe("FreeUsageLimitError");
+      expect(detail.message).toMatch(/OpenCode Go/);
+    });
+
+    it("should only treat the free-tier gate as a permanent failure", () => {
+      const gate = JSON.stringify({
+        type: "error",
+        error: { type: "FreeUsageLimitError", message: "Free usage limit reached." },
+      });
+      expect(isPermanentProviderFailure(gate)).toBe(true);
+      expect(isPermanentProviderFailure(undefined)).toBe(false);
+      expect(
+        isPermanentProviderFailure(JSON.stringify({ error: { message: "Rate limit exceeded" } })),
+      ).toBe(false);
+    });
+
+    it("should point at the Console key manager when Console rejects the key", () => {
+      const body = JSON.stringify({
+        error: { type: "server_error", message: "Upstream request failed: Invalid credential" },
+      });
+      const detail = describeProviderError(401, body, "zen-go");
+      expect(detail.message).toMatch(/personal API key/i);
+    });
+
+    it("should report a retired model without leaking the upstream blob", () => {
+      const body = JSON.stringify({
+        type: "error",
+        error: { type: "ModelDeprecated", message: "Model mimo-v2.5-free has been deprecated." },
+      });
+      const detail = describeProviderError(410, body, "zen");
+      expect(detail.type).toBe("ModelDeprecated");
+      expect(detail.message).toMatch(/retired/);
+    });
+
+    it("should report insufficient credits for payment failures", () => {
+      const body = JSON.stringify({ error: { message: "Insufficient account funds" } });
+      const detail = describeProviderError(402, body, "zen");
+      expect(detail.message).toMatch(/credits/i);
+    });
+
+    it("should leave unknown failures unrecognized so the raw body is kept", () => {
+      expect(describeProviderError(500, "boom", "zen").message).toBe("");
+      expect(describeProviderError(400, "not json", "openai").message).toBe("");
     });
   });
 

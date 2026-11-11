@@ -143,6 +143,40 @@ describe("Validation Schemas — all schemas", () => {
       });
       expect(r.success).toBe(false);
     });
+
+    it("should accept an empty apiKey for keyless local providers", () => {
+      const r = saveKeySchema.safeParse({
+        provider: "ollama",
+        apiKey: "",
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("should accept per-model config objects", () => {
+      const r = saveKeySchema.safeParse({
+        provider: "openai",
+        apiKey: "sk-abc123",
+        models: [
+          { id: "gpt-x", enabled: true, thinkingLevel: "high" },
+          { id: "gpt-y" },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("should require a key for named custom providers", () => {
+      const r = saveKeySchema.safeParse({ provider: "custom:Local Gateway", apiKey: "" });
+      expect(r.success).toBe(false);
+    });
+
+    it("should reject more than 500 model entries", () => {
+      const r = saveKeySchema.safeParse({
+        provider: "openai",
+        apiKey: "sk-abc123",
+        models: Array.from({ length: 501 }, (_, i) => `m-${i}`),
+      });
+      expect(r.success).toBe(false);
+    });
   });
 
   describe("createMcpServerSchema", () => {

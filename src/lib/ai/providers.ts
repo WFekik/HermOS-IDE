@@ -22,6 +22,12 @@ type ProviderInfoWithFlags = ProviderInfo & {
    * captured at runtime from provider `/models` metadata when available.
    */
   pricing?: ModelRate;
+  /**
+   * Absolute `/models` listing URL when it does not follow the baseUrl root.
+   * OpenCode Console publishes its catalog at `/inference/v1/models` while
+   * serving inference from `/inference/openai/v1`.
+   */
+  modelsUrl?: string;
 };
 
 export const PROVIDERS: Record<ProviderId, ProviderInfoWithFlags> = {
@@ -140,15 +146,59 @@ export const PROVIDERS: Record<ProviderId, ProviderInfoWithFlags> = {
   },
   zen: {
     id: "zen",
-    name: "OpenCode Zen",
-    description: "OpenCode Zen API gateway. OpenAI-compatible endpoint; models are fetched live after saving a key.",
+    name: "OpenCode Console",
+    description:
+      "OpenCode Console inference API (pay-as-you-go). Paste a personal API key from opencode.ai/console (Account -> Personal API keys). Free models are served to the official OpenCode client only; paid models are billed to your workspace.",
     docsUrl: "https://dev.opencode.ai/docs/zen/",
-    baseUrl: "https://opencode.ai/zen/v1",
+    baseUrl: "https://opencode.ai/inference/openai/v1",
+    modelsUrl: "https://opencode.ai/inference/v1/models",
     requiresKey: true,
     supportsNativeFunctionCalling: true,
     reasoningScheme: "custom_effort", // Same path as the verified `custom` endpoint — never guess
     supportsVision: true,
     models: [], // Models are fetched live from the provider after the user saves their API key
+  },
+  "zen-go": {
+    id: "zen-go",
+    name: "OpenCode Go",
+    description:
+      "OpenCode Go subscription inference API. The free models are unlimited on Go, so use this entry when the Console pay-as-you-go key rejects a free model. Requires a key from a Go workspace; a session id is sent on every request.",
+    docsUrl: "https://dev.opencode.ai/docs/console/go",
+    baseUrl: "https://opencode.ai/inference/go/openai/v1",
+    modelsUrl: "https://opencode.ai/inference/go/v1/models",
+    requiresKey: true,
+    supportsNativeFunctionCalling: true,
+    reasoningScheme: "custom_effort", // Same path as the verified `custom` endpoint — never guess
+    supportsVision: true,
+    models: [], // Models are fetched live from the provider after the user saves their API key
+  },
+  ollama: {
+    id: "ollama",
+    name: "Ollama (local)",
+    description:
+      "Run open models on your own machine with Ollama. Free, private and unlimited - no key, no account, no usage cap. Start Ollama, pull a model, then connect.",
+    docsUrl: "https://ollama.com/library",
+    baseUrl: "http://localhost:11434/v1",
+    requiresKey: false,
+    free: true,
+    supportsNativeFunctionCalling: true,
+    reasoningScheme: "none", // Local servers expose no documented reasoning parameters
+    supportsVision: true,
+    models: [], // Models are fetched live from the local server
+  },
+  lmstudio: {
+    id: "lmstudio",
+    name: "LM Studio (local)",
+    description:
+      "Run open models on your own machine with the LM Studio local server. Free, private and unlimited - no key, no account, no usage cap.",
+    docsUrl: "https://lmstudio.ai",
+    baseUrl: "http://127.0.0.1:1234/v1",
+    requiresKey: false,
+    free: true,
+    supportsNativeFunctionCalling: true,
+    reasoningScheme: "none", // Local servers expose no documented reasoning parameters
+    supportsVision: true,
+    models: [], // Models are fetched live from the local server
   },
   custom: {
     id: "custom",
@@ -165,6 +215,15 @@ export const PROVIDERS: Record<ProviderId, ProviderInfoWithFlags> = {
 
 export function listProviders(): ProviderInfoWithFlags[] {
   return Object.values(PROVIDERS);
+}
+
+/**
+ * Providers that need no API key (local model servers). Their endpoint is
+ * reached with an empty credential and no Authorization header.
+ */
+export function isKeylessProvider(providerId?: string): boolean {
+  if (!providerId) return false;
+  return PROVIDERS[providerId as ProviderId]?.requiresKey === false;
 }
 
 export function getProvider(

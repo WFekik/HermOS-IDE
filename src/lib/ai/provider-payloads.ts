@@ -4,7 +4,8 @@
  * all models and providers without duplication or code drift.
  */
 
-import { getProvider } from "./providers";
+import { getProvider, PROVIDERS } from "./providers";
+import { getAppVersion } from "@/lib/version";
 import type { ProviderId } from "@/lib/types";
 
 // Fallback max_tokens only where a provider API REQUIRES the field.
@@ -307,10 +308,6 @@ export interface BuildProviderHeadersOptions {
   includeContentType?: boolean;
 }
 
-// Client-emulation User-Agent sent to OpenCode Zen gateways.
-// Keep in sync with the minimum CLI version the gateway accepts.
-export const OPENCODE_EMULATION_USER_AGENT = "opencode/1.3.15";
-
 /** crypto.randomUUID with fallback for non-secure contexts (http, older browsers). */
 export function safeRandomUUID(): string {
   try {
@@ -325,9 +322,9 @@ export function safeRandomUUID(): string {
   });
 }
 
-/** True for OpenCode Zen (`zen` provider or `*.opencode.ai` gateway hostname). */
+/** True for OpenCode Console (`zen`/`zen-go` providers or `*.opencode.ai` gateways). */
 export function isZenProvider(providerId?: string, baseUrl?: string): boolean {
-  if (providerId === "zen") return true;
+  if (providerId === "zen" || providerId === "zen-go") return true;
   if (typeof baseUrl === "string" && baseUrl) {
     try {
       const host = new URL(baseUrl).hostname.toLowerCase();
@@ -344,6 +341,34 @@ export function isZenProvider(providerId?: string, baseUrl?: string): boolean {
 /** Trim trailing slashes for stable URL concatenation. */
 export function normalizeBaseUrl(baseUrl?: string): string {
   return (baseUrl || "").replace(/\/+$/, "");
+}
+
+/**
+ * Harness identity sent to OpenCode Console / Go gateways. Their docs require
+ * third-party clients to identify themselves with their own user agent
+ * ("my-coding-agent/1.0") instead of a generic HTTP-library name, and the
+ * gateway accounts for that traffic during abuse monitoring.
+ */
+export const PROVIDER_CLIENT_USER_AGENT = `HermOS/${getAppVersion()}`;
+
+/**
+ * Retired base URLs per provider. A row saved before an endpoint move pins the
+ * old URL forever, because every call site prefers `row.baseUrl` over the
+ * registry default. Treating a retired alias as "not configured" lets the
+ * registry migration reach existing installs without touching endpoints the
+ * user actually customised.
+ */
+const RETIRED_PROVIDER_BASE_URLS: Readonly<Record<string, readonly string[]>> = {
+  zen: ["https://opencode.ai/zen/v1"],
+};
+
+/** Effective base URL for a provider: stored override, else registry default. */
+export function resolveProviderBaseUrl(providerId?: string, storedBaseUrl?: string | null): string {
+  const registry = normalizeBaseUrl(PROVIDERS[providerId as ProviderId]?.baseUrl);
+  const stored = normalizeBaseUrl(storedBaseUrl ?? undefined);
+  const retired = providerId ? RETIRED_PROVIDER_BASE_URLS[providerId] : undefined;
+  if (stored && retired?.includes(stored)) return registry;
+  return stored || registry;
 }
 
 /** Stable memo key for responses-required learning (slash-insensitive, case-insensitive model). */
@@ -379,10 +404,135 @@ export function resolveModelsUrl(baseUrl: string): string {
 }
 
 /**
+ * `/models` listing URL for a provider. Providers whose catalog lives outside
+ * the inference base URL (OpenCode Console: inference on `/inference/openai/v1`,
+ * catalog on `/inference/v1/models`) declare an absolute `modelsUrl` in the
+ * registry; everything else derives it from the configured baseUrl.
+ */
+export function resolveProviderModelsUrl(providerId?: string, baseUrl?: string): string {
+  const override = providerId ? PROVIDERS[providerId as ProviderId]?.modelsUrl : undefined;
+  if (override) return override;
+  return resolveModelsUrl(baseUrl || "");
+}
+
+/**
+ * Upstream error shape, decoded far enough to tell the user what to do next.
+ */
+export interface ProviderErrorDetail {
+  /** Upstream error type token (e.g. `FreeTierError`), when the body carries one. */
+  type?: string;
+  /** Actionable, user-facing explanation. Empty when nothing is recognized. */
+  message: string;
+}
+
+/** Upstream error type tokens for the free-tier client gate. */
+const FREE_TIER_ERROR_TYPES = new Set(["FreeTierError", "FreeUsageLimitError", "FreeTierNotAllowed"]);
+
+/**
+ * Prose forms of the same gate. Console answers 403 ("free tier can only be
+ * used from within OpenCode") before the quota is touched and 429 ("free usage
+ * limit reached … free models work in OpenCode") afterwards; both mean the same
+ * thing to a third-party client.
+ */
+const FREE_TIER_GATE_RE =
+  /free tier can only be used|free (?:usage )?limit reached|free models work in opencode/i;
+
+/** Extracts the upstream error type/message from a provider error body. */
+function parseProviderErrorBody(bodyText: string): { type?: string; message?: string } {
+  if (!bodyText) return {};
+  let parsed: any;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object") return {};
+  const envelope = parsed.error && typeof parsed.error === "object" ? parsed.error : parsed;
+  const type =
+    typeof envelope?.type === "string"
+      ? envelope.type
+      : typeof parsed?.type === "string" && parsed.type !== "error"
+        ? parsed.type
+        : undefined;
+  const message =
+    typeof envelope?.message === "string"
+      ? envelope.message
+      : typeof parsed?.message === "string"
+        ? parsed.message
+        : undefined;
+  return { type, message };
+}
+
+/** True when a body is the free-tier client gate, in either its 403 or 429 form. */
+function isFreeTierGate(type: string | undefined, upstream: string): boolean {
+  return (type ? FREE_TIER_ERROR_TYPES.has(type) : false) || FREE_TIER_GATE_RE.test(upstream);
+}
+
+/**
+ * Turns a provider failure into an actionable message instead of a raw JSON
+ * blob. Only errors the provider names explicitly are translated; anything
+ * else keeps the upstream body so no diagnostic detail is lost.
+ *
+ * `providerId` tailors the remedy (OpenCode Console keys are minted in the
+ * Console, not by the IDE).
+ */
+export function describeProviderError(
+  status: number,
+  bodyText: string,
+  providerId?: string,
+): ProviderErrorDetail {
+  const { type, message } = parseProviderErrorBody(bodyText);
+  const upstream = `${type ?? ""} ${message ?? ""}`;
+  const isConsole = providerId === "zen" || providerId === "zen-go";
+
+  if (isFreeTierGate(type, upstream)) {
+    return {
+      type,
+      message:
+        "OpenCode serves free-tier models to the OpenCode client only, so this request cannot succeed from HermOS. Use OpenCode Go (free models are unlimited there) or pick a paid Console model.",
+    };
+  }
+
+  if (type === "ModelDeprecated" || /has been deprecated/i.test(upstream)) {
+    return { type, message: "The provider retired this model. Pick another model from the list." };
+  }
+
+  if (status === 401) {
+    return {
+      type,
+      message: isConsole
+        ? "OpenCode Console rejected this API key. Create a personal API key in the Console (Account -> Personal API keys) and paste it again."
+        : "The provider rejected this API key. Check the key in Settings -> Providers.",
+    };
+  }
+
+  if (status === 402 || /insufficient (account )?funds|credit balance/i.test(upstream)) {
+    return {
+      type,
+      message: "The provider reports insufficient credits for this request. Add credits or use a different model.",
+    };
+  }
+
+  return { type, message: "" };
+}
+
+/**
+ * True when the provider permanently refuses the request, so retrying cannot
+ * help. Only the free-tier gate needs this: it arrives as HTTP 429, which the
+ * executors otherwise treat as a transient rate limit and retry with backoff.
+ */
+export function isPermanentProviderFailure(bodyText?: string): boolean {
+  if (!bodyText) return false;
+  const { type, message } = parseProviderErrorBody(bodyText);
+  return isFreeTierGate(type, `${type ?? ""} ${message ?? ""}`);
+}
+
+/**
  * Builds standard HTTP headers for AI provider requests.
- * Automatically injects required session affinity and client emulation headers
- * for OpenCode Zen (`zen` provider or `opencode.ai` gateways) to ensure
- * compatibility and bypass the MissingSessionID validation.
+ * Injects the headers OpenCode Console / Go document for third-party harnesses:
+ * a stable `x-opencode-session` per conversation (Go requires it) and the
+ * harness's own user agent. HermOS never claims to be the OpenCode client — the
+ * free tier is gated to that client upstream and stays unavailable here.
  *
  * Session affinity: main chat passes `conversation.id`, subagents pass their
  * `sessionId`. One-shots (title, inline-edit, summarize) pass a stable derived
@@ -417,12 +567,8 @@ export function buildProviderHeaders({
       : `ses_${safeRandomUUID()}`;
     headers["x-opencode-session"] = sId;
     headers["X-Session-ID"] = sId;
-    headers["x-opencode-client"] = "cli";
     headers["x-opencode-request"] = `req_${safeRandomUUID()}`;
-    // Client-emulation string expected by the Zen gateway.
-    // Bump OPENCODE_EMULATION_USER_AGENT when the gateway raises its minimum
-    // supported CLI version.
-    headers["User-Agent"] = OPENCODE_EMULATION_USER_AGENT;
+    headers["User-Agent"] = PROVIDER_CLIENT_USER_AGENT;
   }
 
   return headers;

@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { testProvider } from "@/lib/ai/executor";
 import { PROVIDERS, getProvider } from "@/lib/ai/providers";
+import { resolveProviderBaseUrl } from "@/lib/ai/provider-payloads";
 import { parseJson, withErrorHandler, apiError, unauthorized, ok } from "@/app/api/_lib/helpers";
 import type { ProviderId } from "@/lib/types";
 
@@ -36,23 +37,28 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
     where: { userId_provider: { userId: user.id, provider } },
   });
 
-  if (!row || !row.isActive) {
+  const info = getProvider(provider) ?? PROVIDERS[provider];
+  // Local model servers need no key: they are reachable straight from the
+  // registry endpoint, with or without a saved row.
+  const keyless = info?.requiresKey === false;
+  if ((!row || !row.isActive) && !keyless) {
     return ok({ ok: false, error: "No API key saved for this provider." });
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decrypt(row.encryptedKey);
-  } catch {
-    return ok({ ok: false, error: "Failed to decrypt API key. Please re-save your key." });
+  let apiKey = "";
+  if (row?.isActive && !keyless) {
+    try {
+      apiKey = decrypt(row.encryptedKey);
+    } catch {
+      return ok({ ok: false, error: "Failed to decrypt API key. Please re-save your key." });
+    }
   }
 
-  const info = getProvider(provider) ?? PROVIDERS[provider];
-  const baseUrl = row.baseUrl || info?.baseUrl || "";
+  const baseUrl = resolveProviderBaseUrl(provider, row?.baseUrl);
 
   // Pick the first enabled model from the saved key's model list for testing.
   let testModel: string | undefined;
-  if (row.models) {
+  if (row?.models) {
     try {
       const parsed = JSON.parse(row.models);
       if (Array.isArray(parsed)) {

@@ -13,6 +13,9 @@ export type ProviderId =
   | "together"
   | "gemini"
   | "zen"
+  | "zen-go"
+  | "ollama"
+  | "lmstudio"
   | "custom"
   | (string & {});
 

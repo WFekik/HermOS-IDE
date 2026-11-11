@@ -96,6 +96,7 @@ export const BRAND_BY_PROVIDER_ID: Readonly<Record<string, Brand>> = {
   huggingface: "huggingface",
   hf: "huggingface",
   zen: "opencode",
+  "zen-go": "opencode",
   opencode: "opencode",
   allam: "allam",
   orpheus: "orpheus",

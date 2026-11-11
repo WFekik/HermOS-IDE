@@ -114,6 +114,14 @@ describe("Retry & Fail-Fast — Latency Optimization & Retry Unification", () =>
       expect(isTransientStreamError(new Error("__NO_MODEL__"))).toBe(false);
     });
 
+    test("instant fail-fast (false) for caller-marked permanent errors, even as 429", () => {
+      const gate = Object.assign(new Error("Provider returned 429: Free usage limit reached."), {
+        status: 429,
+        permanent: true,
+      });
+      expect(isTransientStreamError(gate)).toBe(false);
+    });
+
     test("instant fail-fast (false) for non-retryable keywords", () => {
       expect(isTransientStreamError(new Error("Invalid API key provided"))).toBe(false);
       expect(isTransientStreamError(new Error("model_not_found: The model does not exist"))).toBe(false);

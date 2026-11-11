@@ -102,7 +102,10 @@ import {
   clearResponsesRequired,
   buildResponsesRequestBody,
   resolveProviderUrls,
-  resolveModelsUrl,
+  resolveProviderModelsUrl,
+  resolveProviderBaseUrl,
+  describeProviderError,
+  isPermanentProviderFailure,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
   FALLBACK_OUTPUT_TOKEN_CAP,
@@ -143,11 +146,23 @@ import type {
   AgentMode,
 } from "@/lib/types";
 
-function throwProviderError(resp: Response, retryText: string) {
+function throwProviderError(resp: Response, retryText: string, providerId?: string) {
   const text = retryText.slice(0, 500);
-  const err = new Error(`Provider returned ${resp.status}: ${stripHtml(text) || resp.statusText}`);
+  const detail = describeProviderError(resp.status, retryText, providerId);
+  const reason = detail.message || stripHtml(text) || resp.statusText;
+  const err = new Error(`Provider returned ${resp.status}: ${reason}`);
   (err as Error & { status?: number }).status = resp.status;
   (err as Error & { responseBody?: string }).responseBody = retryText.slice(0, 1000);
+  if (detail.message) {
+    // The failure was already translated into an actionable message; the raw
+    // body must not be appended on top of it.
+    (err as Error & { translated?: boolean }).translated = true;
+  }
+  // The free-tier client gate can arrive as 429, which would otherwise be
+  // retried on the rate-limit ladder even though it never clears.
+  if (isPermanentProviderFailure(retryText)) {
+    (err as Error & { permanent?: boolean }).permanent = true;
+  }
   throw err;
 }
 
@@ -1898,7 +1913,7 @@ export async function* streamOpenAICompatible(
             // success on retry, continue below
           } else {
             const retryText = await resp.text().catch(() => "");
-            throwProviderError(resp, retryText);
+            throwProviderError(resp, retryText, providerId);
           }
         } else if (promptLimitMatch) {
           const promptTokens = parseInt(promptLimitMatch[1], 10);
@@ -1920,7 +1935,7 @@ export async function* streamOpenAICompatible(
             // success on retry
           } else {
             const retryText = await resp.text().catch(() => "");
-            throwProviderError(resp, retryText);
+            throwProviderError(resp, retryText, providerId);
           }
         } else if (contextLimitMatch) {
           const limit = parseInt(contextLimitMatch[1], 10);
@@ -1944,7 +1959,7 @@ export async function* streamOpenAICompatible(
             // success on retry
           } else {
             const retryText = await resp.text().catch(() => "");
-            throwProviderError(resp, retryText);
+            throwProviderError(resp, retryText, providerId);
           }
         }
       }
@@ -1964,7 +1979,7 @@ export async function* streamOpenAICompatible(
           });
           if (!resp.ok || !resp.body) {
             const retryText = await resp.text().catch(() => "");
-            throwProviderError(resp, retryText);
+            throwProviderError(resp, retryText, providerId);
           }
         }
         const groqLimitMatch = text.match(/maximum context length is (\d+) tokens.*?requested (\d+) tokens \((\d+) in the messages, (\d+) in the completion_length\)/i);
@@ -1988,7 +2003,7 @@ export async function* streamOpenAICompatible(
             // success on retry
           } else {
             const retryText = await resp.text().catch(() => "");
-            throwProviderError(resp, retryText);
+            throwProviderError(resp, retryText, providerId);
           }
         }
       }
@@ -2031,11 +2046,18 @@ export async function* streamOpenAICompatible(
   }
 
   if (!resp.ok || !resp.body) {
-      const err = new Error(
-        `Provider returned ${resp.status}: ${stripHtml(text.slice(0, 500)) || resp.statusText}`,
-      );
+      const detail = describeProviderError(resp.status, text, providerId);
+      const reason = detail.message || stripHtml(text.slice(0, 500)) || resp.statusText;
+      const err = new Error(`Provider returned ${resp.status}: ${reason}`);
       (err as Error & { status?: number }).status = resp.status;
       (err as Error & { responseBody?: string }).responseBody = text.slice(0, 1000);
+      if (detail.message) {
+        // Already translated; the raw body must not be appended on top of it.
+        (err as Error & { translated?: boolean }).translated = true;
+      }
+      if (isPermanentProviderFailure(text)) {
+        (err as Error & { permanent?: boolean }).permanent = true;
+      }
       const retryHeader =
         resp.headers.get("retry-after") ||
         resp.headers.get("x-ratelimit-reset") ||
@@ -2859,18 +2881,25 @@ async function resolveByok(
   userId: string,
   provider: ProviderId,
 ): Promise<{ apiKey: string; baseUrl: string } | null> {
+  const info = getProvider(provider) ?? PROVIDERS[provider];
+  const keyless = info?.requiresKey === false;
   const row = await db.providerKey.findUnique({
     where: { userId_provider: { userId, provider } },
   });
-  if (!row || !row.isActive) return null;
+  const baseUrl = resolveProviderBaseUrl(provider, row?.baseUrl);
+  if (!row || !row.isActive) {
+    // Local model servers need no credential: fall back to the registry
+    // endpoint so the provider is usable without saving anything.
+    if (keyless && baseUrl) return { apiKey: "", baseUrl };
+    return null;
+  }
+  if (keyless) return { apiKey: "", baseUrl };
   let apiKey: string;
   try {
     apiKey = decrypt(row.encryptedKey);
   } catch {
     return null;
   }
-  const info = getProvider(provider) ?? PROVIDERS[provider];
-  const baseUrl = row.baseUrl || info?.baseUrl || "";
   return { apiKey, baseUrl };
 }
 
@@ -2908,7 +2937,7 @@ async function getModelReasoningState(
     const caps = mergeReasoningCapability(undefined, persistedCaps, registryEntry);
     // Gateway providers scoped like `custom` (nvidia/zen) must never inherit
     // a stale interleaved echo persisted from a prior registry-scoped refresh.
-    if (provider === "nvidia" || provider === "zen") {
+    if (provider === "nvidia" || provider === "zen" || provider === "zen-go") {
       if (caps?.interleavedField) {
         const noEcho = { ...caps };
         delete (noEcho as { interleavedField?: unknown }).interleavedField;
@@ -5321,8 +5350,14 @@ const thinkInstruction = thinkPlan.kind === "params"
           // quota exhausted, invalid model id, etc. Many gateways return 429
           // with an explanatory JSON body that is otherwise swallowed.
           let enriched = msg;
-          if (lastStreamError instanceof Error && "responseBody" in lastStreamError) {
-            const body = (lastStreamError as Error & { responseBody?: string }).responseBody || "";
+          const lastErr = lastStreamError as Error & { responseBody?: string; translated?: boolean };
+          // Surface the upstream response body if present, so users can see the
+          // actual reason NIM (or another gateway) rejected the request — e.g.
+          // quota exhausted, invalid model id, etc. Many gateways return 429
+          // with an explanatory JSON body that is otherwise swallowed. Errors
+          // already translated into an actionable message keep just that.
+          if (lastErr.responseBody && !lastErr.translated) {
+            const body = lastErr.responseBody;
             if (body && !msg.includes(body)) {
               enriched = `${msg} | upstream body: ${body}`;
             }
@@ -6768,10 +6803,11 @@ export async function testProvider(
 ): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
   const t0 = Date.now();
   try {
-    if (!apiKey) {
+    const info = getProvider(provider) ?? PROVIDERS[provider];
+    // Local model servers take no credential.
+    if (!apiKey && info?.requiresKey !== false) {
       return { ok: false, error: "No API key provided." };
     }
-    const info = getProvider(provider) ?? PROVIDERS[provider];
     const baseUrl = (baseUrlOverride || info?.baseUrl || "").replace(/\/$/, "");
 
     if (provider === "anthropic") {
@@ -6785,7 +6821,7 @@ export async function testProvider(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey,
+          "x-api-key": apiKey ?? "",
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
@@ -6815,7 +6851,7 @@ export async function testProvider(
         apiKey,
         acceptStream: false,
       });
-      const modelsResp = await safeProviderFetch(resolveModelsUrl(baseUrl), {
+      const modelsResp = await safeProviderFetch(resolveProviderModelsUrl(provider, baseUrl), {
         method: "GET",
         headers,
       });
@@ -6824,10 +6860,11 @@ export async function testProvider(
       }
       if (modelsResp.status === 401 || modelsResp.status === 403) {
         const text = await modelsResp.text().catch(() => "");
+        const detail = describeProviderError(modelsResp.status, text, provider);
         return {
           ok: false,
           latencyMs: Date.now() - t0,
-          error: `HTTP ${modelsResp.status}: Invalid API Key. ${text.slice(0, 200)}`,
+          error: detail.message || `HTTP ${modelsResp.status}: Invalid API Key. ${text.slice(0, 200)}`,
         };
       }
     } catch {
@@ -6906,10 +6943,11 @@ export async function testProvider(
       }
       if (resp.status === 401 || resp.status === 403) {
         const text = await resp.text().catch(() => "");
+        const detail = describeProviderError(resp.status, text, provider);
         return {
           ok: false,
           latencyMs: Date.now() - t0,
-          error: `HTTP ${resp.status}: Invalid API Key. ${text.slice(0, 200)}`,
+          error: detail.message || `HTTP ${resp.status}: Invalid API Key. ${text.slice(0, 200)}`,
         };
       }
       const text = await resp.text().catch(() => "");

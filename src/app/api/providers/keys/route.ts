@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireUser } from "@/lib/session";
-import { providerIdSchema, thinkingLevelSchema } from "@/lib/validation";
+import { saveKeySchema } from "@/lib/validation";
 import { withRateLimit, getClientIp } from "@/lib/rate-limit";
 import { encrypt } from "@/lib/encryption";
 import { PROVIDERS } from "@/lib/ai/providers";
@@ -17,27 +17,9 @@ import {
   parseModelsColumn as parseProviderModelsColumn,
   type ProviderModelConfig,
 } from "@/lib/provider-models";
-import { z } from "zod";
 import type { ProviderId, ProviderKeyDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-// Extended schema: models may be either a string[] (legacy) or an array of
-// per-model config objects ({ id, enabled?, thinkingLevel? }).
-const modelEntrySchema = z.object({
-  id: z.string().trim().min(1).max(200),
-  enabled: z.boolean().optional(),
-  thinkingLevel: thinkingLevelSchema.optional(),
-});
-
-const saveKeySchemaExt = z.object({
-  provider: providerIdSchema,
-  apiKey: z.string().trim().min(1).max(4096),
-  baseUrl: z.string().trim().url().max(2048).optional(),
-  models: z
-    .union([z.array(z.string().trim().min(1).max(200)).max(500), z.array(modelEntrySchema).max(500)])
-    .optional(),
-});
 
 type ProviderKeyDTOWithModels = ProviderKeyDTO & {
   modelsConfig?: ProviderModelConfig[];
@@ -77,7 +59,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const ip = getClientIp(req);
   const body = await parseJson<unknown>(req);
   if (!body) return apiError("Invalid JSON body.", 400);
-  const parsed = saveKeySchemaExt.safeParse(body);
+  const parsed = saveKeySchema.safeParse(body);
   if (!parsed.success) {
     return apiError("Invalid save-key payload.", 400, {
       details: parsed.error.flatten(),
@@ -85,12 +67,14 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   }
   const { provider, apiKey, baseUrl } = parsed.data;
   const isCustom = provider.startsWith("custom");
-  if (!PROVIDERS[provider as ProviderId] && !isCustom) {
+  const info = PROVIDERS[provider as ProviderId];
+  if (!info && !isCustom) {
     return apiError("Unknown provider.", 400);
   }
   const encryptedKey = encrypt(apiKey);
   // Only show last 4 chars if the key is long enough; otherwise mask entirely.
-  const rawHint = apiKey.length >= 8 ? apiKey.slice(-4) : "****";
+  // Keyless providers have no key to hint at.
+  const rawHint = info?.requiresKey === false ? "" : apiKey.length >= 8 ? apiKey.slice(-4) : "****";
 
   // Normalize the incoming `models` field to a ProviderModelConfig[] JSON
   // string for storage in the `models` column.

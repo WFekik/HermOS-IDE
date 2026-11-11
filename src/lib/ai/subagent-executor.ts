@@ -78,6 +78,9 @@ import {
   clearResponsesRequired,
   buildResponsesRequestBody,
   resolveProviderUrls,
+  resolveProviderBaseUrl,
+  describeProviderError,
+  isPermanentProviderFailure,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   ANTHROPIC_SDK_DEFAULT_MAX_TOKENS,
   FALLBACK_OUTPUT_TOKEN_CAP,
@@ -1298,22 +1301,25 @@ async function resolveProvider(
   provider: string,
   requestedModel?: string,
 ): Promise<{ baseUrl: string; apiKey: string; model: string } | null> {
+  const info = getProvider(provider as ProviderId) ?? PROVIDERS[provider as ProviderId];
+  const keyless = info?.requiresKey === false;
   // BYOK path — looks up the stored auth token (Puter or any other provider)
   try {
     const row = await db.providerKey.findUnique({
       where: { userId_provider: { userId, provider: provider as ProviderId } },
     });
-    if (row?.isActive) {
-      const apiKey = decrypt(row.encryptedKey);
-      const info = getProvider(provider as ProviderId) ?? PROVIDERS[provider as ProviderId];
-      const baseUrl = row.baseUrl || info?.baseUrl || "";
+    if (row?.isActive || keyless) {
+      // Local model servers take no credential; never decrypt their empty key.
+      const apiKey = row?.isActive && !keyless ? decrypt(row.encryptedKey) : "";
+      const baseUrl = resolveProviderBaseUrl(provider, row?.baseUrl);
+      if (!baseUrl) return null;
       const userModels: Array<{ id: string }> = (() => {
         try {
-          const parsed = JSON.parse(row.models ?? "[]");
+          const parsed = JSON.parse(row?.models ?? "[]");
           return Array.isArray(parsed) ? parsed : [];
         } catch { return []; }
       })();
-      
+
       let model = requestedModel || "auto";
       if (model === "auto") {
         const concreteModel = 
@@ -1324,6 +1330,8 @@ async function resolveProvider(
           "auto";
         model = concreteModel;
       }
+      // Keyless server with no saved model list: the sentinel would 404 upstream.
+      if (!row && model === "auto") return null;
       return { baseUrl: cleanBase(baseUrl), apiKey, model };
     }
   } catch {
@@ -1814,9 +1822,15 @@ async function* streamOpenAICompatible(
       if (!resp.ok) text = await resp.text().catch(() => "");
     }
     if (!resp.ok || !resp.body) {
-      const err = new Error(`Provider returned ${resp.status}: ${stripHtml(text.slice(0, 500)) || resp.statusText}`);
+      const detail = describeProviderError(resp.status, text, providerId);
+      const reason = detail.message || stripHtml(text.slice(0, 500)) || resp.statusText;
+      const err = new Error(`Provider returned ${resp.status}: ${reason}`);
       (err as Error & { status?: number }).status = resp.status;
       (err as Error & { responseBody?: string }).responseBody = text.slice(0, 1000);
+      // Free-tier client gate (429) never clears on retry — fail fast.
+      if (isPermanentProviderFailure(text)) {
+        (err as Error & { permanent?: boolean }).permanent = true;
+      }
       const retryHeader =
         resp.headers.get("retry-after") ||
         resp.headers.get("x-ratelimit-reset") ||

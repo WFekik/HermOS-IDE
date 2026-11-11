@@ -3,6 +3,7 @@ import { THINKING_LEVEL_INPUTS, normalizeThinkingLevel } from "@/lib/reasoning";
 import type { ThinkingLevelInput } from "@/lib/reasoning";
 import { isValidRedactionRegex } from "@/lib/security-types";
 import { SUPPORTED_LANGUAGE_CODES } from "@/lib/i18n";
+import { isKeylessProvider } from "@/lib/ai/providers";
 
 const PROVIDER_IDS = [
   "puter",
@@ -15,6 +16,9 @@ const PROVIDER_IDS = [
   "together",
   "gemini",
   "zen",
+  "zen-go",
+  "ollama",
+  "lmstudio",
   "custom",
 ] as const;
 
@@ -233,12 +237,31 @@ export function isAllowedAttachmentType(type: string): boolean {
   return ALLOWED_ATTACHMENT_TYPES.has(lower);
 }
 
-export const saveKeySchema = z.object({
-  provider: providerIdSchema,
-  apiKey: z.string().trim().min(1).max(4096),
-  baseUrl: z.string().trim().url().max(2048).optional(),
-  models: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+/** Per-model config entry accepted by the provider-key save endpoint. */
+export const providerModelEntrySchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  enabled: z.boolean().optional(),
+  thinkingLevel: thinkingLevelSchema.optional(),
 });
+
+export const saveKeySchema = z
+  .object({
+    provider: providerIdSchema,
+    // Empty only for keyless providers (local model servers).
+    apiKey: z.string().trim().max(4096),
+    baseUrl: z.string().trim().url().max(2048).optional(),
+    // Legacy `string[]` of ids, or per-model config objects.
+    models: z
+      .union([
+        z.array(z.string().trim().min(1).max(200)).max(500),
+        z.array(providerModelEntrySchema).max(500),
+      ])
+      .optional(),
+  })
+  .refine((data) => isKeylessProvider(data.provider) || data.apiKey.length > 0, {
+    message: "API key required for this provider.",
+    path: ["apiKey"],
+  });
 
 export const createMcpServerSchema = z.object({
   name: SAFE_STRING(120),

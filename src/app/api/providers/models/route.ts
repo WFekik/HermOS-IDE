@@ -8,7 +8,7 @@ import {
   apiError,
   audit,
 } from "@/app/api/_lib/helpers";
-import { decrypt } from "@/lib/encryption";
+import { decrypt, encrypt } from "@/lib/encryption";
 import { PROVIDERS, getProvider } from "@/lib/ai/providers";
 import { db } from "@/lib/db";
 import { z } from "zod";
@@ -21,7 +21,7 @@ import type { ModelReasoningCapabilities } from "@/lib/reasoning";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId } from "@/lib/types";
-import { buildProviderHeaders, resolveModelsUrl } from "@/lib/ai/provider-payloads";
+import { buildProviderHeaders, resolveProviderModelsUrl, resolveProviderBaseUrl, describeProviderError } from "@/lib/ai/provider-payloads";
 
 export const dynamic = "force-dynamic";
 
@@ -204,7 +204,7 @@ async function fetchProviderModels(
       }
     }
     // OpenAI-compatible (openrouter, openai, groq, mistral, together, custom, puter, nvidia, zen)
-    const url = resolveModelsUrl(baseUrl);
+    const url = resolveProviderModelsUrl(provider, baseUrl);
     if (!url) return { ok: true, models: [] };
     // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
     const controller = new AbortController();
@@ -225,7 +225,11 @@ async function fetchProviderModels(
         // truthful. Any other non-OK is transient — fail instead of
         // returning [] that the caller would persist over stored config.
         if (resp.status === 404) return { ok: true, models: [] };
-        return { ok: false, error: `Provider returned HTTP ${resp.status}.` };
+        const detail = describeProviderError(resp.status, await resp.text().catch(() => ""), provider);
+        return {
+          ok: false,
+          error: detail.message || `Provider returned HTTP ${resp.status}.`,
+        };
       }
       const json = (await resp.json()) as {
         data?: Array<any>;
@@ -300,16 +304,21 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const row = await db.providerKey.findUnique({
     where: { userId_provider: { userId: user.id, provider } },
   });
-  if (!row || !row.isActive) {
+  // Local model servers need no key: they are usable straight from the
+  // registry endpoint, with or without a saved row.
+  const keyless = info.requiresKey === false;
+  if ((!row || !row.isActive) && !keyless) {
     return ok({ ok: false, error: `No API key saved for ${info.name}.` });
   }
-  let apiKey: string;
-  try {
-    apiKey = decrypt(row.encryptedKey);
-  } catch {
-    return ok({ ok: false, error: "Saved key could not be decrypted. Re-save it." });
+  let apiKey = "";
+  if (row?.isActive && !keyless) {
+    try {
+      apiKey = decrypt(row.encryptedKey);
+    } catch {
+      return ok({ ok: false, error: "Saved key could not be decrypted. Re-save it." });
+    }
   }
-  const baseUrl = row.baseUrl || info.baseUrl || "";
+  const baseUrl = resolveProviderBaseUrl(provider, row?.baseUrl);
   if (!baseUrl) {
     return ok({ ok: false, error: "No base URL configured for this provider." });
   }
@@ -319,7 +328,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     return ok({ ok: false, error: result.error });
   }
 
-  const existing = parseModelsColumn(row.models);
+  const existing = parseModelsColumn(row?.models);
   // Never persist an empty fetch over a non-empty stored config: an empty
   // list means "endpoint silent/absent", not "user has no models" — wiping
   // here destroys hand-curated entries on every transient failure. Report
@@ -361,10 +370,26 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     }),
   );
   try {
-    await db.providerKey.update({
-      where: { id: row.id },
-      data: { models: JSON.stringify(merged) },
-    });
+    if (row) {
+      await db.providerKey.update({
+        where: { id: row.id },
+        data: { models: JSON.stringify(merged) },
+      });
+    } else if (keyless) {
+      // Keyless providers may be fetched before they are connected: create
+      // the (credential-less) row so the model list can be stored and picked.
+      await db.providerKey.create({
+        data: {
+          userId: user.id,
+          provider,
+          encryptedKey: encrypt(""),
+          keyHint: "",
+          baseUrl: baseUrl || null,
+          models: JSON.stringify(merged),
+          isActive: true,
+        },
+      });
+    }
   } catch {
     /* persisting is best-effort */
   }

@@ -57,7 +57,7 @@ export function resetRegistryCache(): void {
 
 /** Scopes provider ID for reasoning capabilities; gateways map to "custom" to avoid invalid vendor facts. */
 function registryScopeProvider(providerId?: string): string | undefined {
-  if (providerId === "nvidia" || providerId === "zen") return "custom";
+  if (providerId === "nvidia" || providerId === "zen" || providerId === "zen-go") return "custom";
   return providerId;
 }
 
