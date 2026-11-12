@@ -55,6 +55,22 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.4" || tag === "1.1.4") {
+    return `### HermOS IDE ${tag}
+
+Local-first desktop IDE with autonomous subagent execution, MCP support, and office document generation.
+
+#### Highlights
+- **Office Studio Document Hub**: Fixed the blank black canvas bug when opening workspaces with documents by adding the Document Hub & Workspace Browser with interactive document cards and automatic active-document selection.
+- **Per-Conversation Artifacts**: Scoped artifact panel state per conversation with containment validation and real on-disk metadata discovery.
+- **Provider Enhancements**: Added OpenCode Go and keyless local model providers (Ollama, LM Studio); server-authoritative context window tracking on settings save.
+- **Background Command Wake-Up**: Long-running background commands wake idle agents automatically on completion, stamping running tool cards by execution id.
+- **Checkpoints & Undo**: Confinement-checked checkpoint restores inside artifact directories with innermost boundary protections.
+- **Security Hardening**: Strict loopback port allowlist, fast-fail DNS error propagation, and path containment validation across workspace file APIs.
+
+#### Downloads & Verification
+Verify installers against SHA256SUMS. Auto-update integrity is covered by minisign signatures.`;
+  }
   if (tag === "v1.1.3" || tag === "1.1.3") {
     return `### HermOS IDE ${tag}
 

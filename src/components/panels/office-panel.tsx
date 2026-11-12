@@ -265,17 +265,11 @@ export function OfficePanel() {
               const first = res.documents[0];
               if (first.manifest) {
                 setActiveOfficeDoc(withRelPath(first.manifest, first.path));
+                setCurrentSlideIndex(0);
+                setCurrentDocPage(1);
               } else {
-                const docRes = await apiGet<{ ok: boolean; document: { manifest?: OfficeDocManifest } }>(
-                  `/api/office/document?path=${encodeURIComponent(first.path)}${wsQuery}`
-                );
-                if (seq !== fetchSeqRef.current) return;
-                if (docRes.ok && docRes.document.manifest) {
-                  setActiveOfficeDoc(withRelPath(docRes.document.manifest, first.path));
-                }
+                void handleSelectDoc(first.path);
               }
-              setCurrentSlideIndex(0);
-              setCurrentDocPage(1);
             } else {
               // No office docs in this project -> immediately clear active document so previous project NEVER leaks!
               setActiveOfficeDoc(null);
@@ -380,8 +374,32 @@ export function OfficePanel() {
         `/api/office/document?path=${encodeURIComponent(docPath)}${wsQuery}`
       );
       if (seq !== selectSeqRef.current) return;
-      if (res.ok && res.document.manifest) {
-        setActiveOfficeDoc(withRelPath(res.document.manifest, docPath));
+      if (res.ok) {
+        if (res.document?.manifest) {
+          setActiveOfficeDoc(withRelPath(res.document.manifest, docPath));
+        } else {
+          const ext = docPath.toLowerCase().endsWith(".pptx")
+            ? "presentation"
+            : docPath.toLowerCase().endsWith(".pdf")
+            ? "pdf"
+            : "document";
+          const fallbackManifest: OfficeDocManifest = {
+            version: 1,
+            path: docPath,
+            type: ext,
+            title: docPath.split("/").pop() || "Document",
+            theme: ext === "pdf" ? "crimson" : "executive",
+            sections: [
+              {
+                id: "sec-1",
+                heading: docPath.split("/").pop() || "Document",
+                paragraphs: ["Workspace document loaded."],
+              },
+            ],
+            updatedAt: Date.now(),
+          };
+          setActiveOfficeDoc(fallbackManifest);
+        }
         setCurrentSlideIndex(0);
         setCurrentDocPage(1);
       }
@@ -496,85 +514,196 @@ export function OfficePanel() {
   const resolvedQuote = activeSlide ? resolveSlideQuote(activeSlide) : { text: "" };
 
   // =========================================================================
-  // EMPTY STATE (When no office docs have been generated yet)
+  // EMPTY STATE / DOCUMENT HUB (When no active document is selected)
   // =========================================================================
-  if (!activeOfficeDoc && documents.length === 0) {
+  if (!activeOfficeDoc) {
     return (
-      <div className="flex flex-col h-full bg-background/50 select-none">
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
-          <div className="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center text-brand mb-5 shadow-xs">
-            <Presentation className="w-7 h-7" />
-          </div>
-          <h2 className="text-lg font-semibold tracking-tight text-foreground mb-1.5">
-            HermOS Office Studio
-          </h2>
-          <p className="text-xs text-muted-foreground leading-relaxed mb-6">
-            Your AI agent creates professional presentations, Word specifications, and PDF reports
-            slide-by-slide with executive layouts, live theme switchers, and real-time visual inspection.
-          </p>
+      <div className="flex flex-col h-full bg-background select-none overflow-y-auto">
+        <div className="p-6 max-w-2xl mx-auto w-full">
+          {documents.length > 0 ? (
+            <div className="space-y-6">
+              <div className="text-center md:text-start">
+                <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-xl bg-brand/10 border border-brand/20 flex items-center justify-center text-brand">
+                    <LayoutGrid className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">
+                      Workspace Office Documents
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Select an existing file to view and edit, or start a new document below.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-          <div className="w-full space-y-2.5 text-start">
-            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
-              Step-by-Step Agent Starters:
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {documents.map((d) => (
+                  <button
+                    key={d.path}
+                    onClick={() => handleSelectDoc(d.path)}
+                    className="p-3.5 rounded-xl border border-border/80 bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
+                  >
+                    <div className="p-2 rounded-lg bg-background border border-border/60 group-hover:scale-105 transition-transform shrink-0">
+                      {d.type === "presentation" ? (
+                        <Presentation className="w-4 h-4 text-brand" />
+                      ) : d.type === "pdf" ? (
+                        <FileText className="w-4 h-4 text-rose-500" />
+                      ) : (
+                        <FileType className="w-4 h-4 text-blue-500" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-foreground truncate group-hover:text-brand transition-colors">
+                        {d.name}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {d.relPath || d.path}
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 mt-2 font-mono">
+                        <span>{d.size ? `${Math.round(d.size / 1024)} KB` : "0 KB"}</span>
+                        <span>•</span>
+                        <span>{new Date(d.updatedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="pt-2 border-t border-border/60">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                  Or Create a New Document:
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  <button
+                    onClick={() => {
+                      handleTriggerPrompt(
+                        "Outline and create an executive 6-slide presentation (presentation.pptx) on our platform architecture, roadmap, and performance metrics. Build it slide-by-slide with tailored layouts (KPI cards, split architecture, metrics table, roadmap timeline, and executive quote)."
+                      );
+                    }}
+                    className="p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group cursor-pointer shadow-xs"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Presentation className="w-3.5 h-3.5 text-brand" />
+                      <span className="text-xs font-semibold text-foreground">{t("create_presentation")}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-2">
+                      Build an executive 6-slide deck slide-by-slide.
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleTriggerPrompt(
+                        "Generate a formal technical assessment PDF report (report.pdf) with executive summary, callouts, and benchmark tables."
+                      );
+                    }}
+                    className="p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group cursor-pointer shadow-xs"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <FileText className="w-3.5 h-3.5 text-rose-500" />
+                      <span className="text-xs font-semibold text-foreground">{t("generate_pdf_report")}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-2">
+                      Formal technical report with callouts and tables.
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleTriggerPrompt(
+                        "Draft an executive engineering specification Word document (spec.docx) with sections, tables, and metric highlights."
+                      );
+                    }}
+                    className="p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group cursor-pointer shadow-xs"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <FileType className="w-3.5 h-3.5 text-blue-500" />
+                      <span className="text-xs font-semibold text-foreground">{t("draft_word_document")}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-2">
+                      Engineering specification Word doc with tables.
+                    </p>
+                  </button>
+                </div>
+              </div>
             </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center text-center max-w-md mx-auto pt-8">
+              <div className="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center text-brand mb-5 shadow-xs">
+                <Presentation className="w-7 h-7" />
+              </div>
+              <h2 className="text-lg font-semibold tracking-tight text-foreground mb-1.5">
+                HermOS Office Studio
+              </h2>
+              <p className="text-xs text-muted-foreground leading-relaxed mb-6">
+                Your AI agent creates professional presentations, Word specifications, and PDF reports
+                slide-by-slide with executive layouts, live theme switchers, and real-time visual inspection.
+              </p>
 
-            <button
-              onClick={() => {
-                handleTriggerPrompt(
-                  "Outline and create an executive 6-slide presentation (presentation.pptx) on our platform architecture, roadmap, and performance metrics. Build it slide-by-slide with tailored layouts (KPI cards, split architecture, metrics table, roadmap timeline, and executive quote)."
-                );
-              }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
-            >
-              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500 group-hover:scale-105 transition-transform shrink-0">
-                <Presentation className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">{t("create_presentation")}</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
-                  "Build an executive 6-slide deck carefully slide-by-slide with cards, tables, and roadmaps"
+              <div className="w-full space-y-2.5 text-start">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+                  Step-by-Step Agent Starters:
                 </div>
-              </div>
-            </button>
 
-            <button
-              onClick={() => {
-                handleTriggerPrompt(
-                  "Generate a formal technical assessment PDF report (report.pdf) with executive summary, callouts, and benchmark tables."
-                );
-              }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
-            >
-              <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500 group-hover:scale-105 transition-transform shrink-0">
-                <FileText className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">{t("generate_pdf_report")}</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
-                  "Generate a formal technical assessment PDF with callouts and tables"
-                </div>
-              </div>
-            </button>
+                <button
+                  onClick={() => {
+                    handleTriggerPrompt(
+                      "Outline and create an executive 6-slide presentation (presentation.pptx) on our platform architecture, roadmap, and performance metrics. Build it slide-by-slide with tailored layouts (KPI cards, split architecture, metrics table, roadmap timeline, and executive quote)."
+                    );
+                  }}
+                  className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
+                >
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500 group-hover:scale-105 transition-transform shrink-0">
+                    <Presentation className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-foreground">{t("create_presentation")}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
+                      "Build an executive 6-slide deck carefully slide-by-slide with cards, tables, and roadmaps"
+                    </div>
+                  </div>
+                </button>
 
-            <button
-              onClick={() => {
-                handleTriggerPrompt(
-                  "Draft an executive engineering specification Word document (spec.docx) with sections, tables, and metric highlights."
-                );
-              }}
-              className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
-            >
-              <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 group-hover:scale-105 transition-transform shrink-0">
-                <FileType className="w-4 h-4" />
+                <button
+                  onClick={() => {
+                    handleTriggerPrompt(
+                      "Generate a formal technical assessment PDF report (report.pdf) with executive summary, callouts, and benchmark tables."
+                    );
+                  }}
+                  className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
+                >
+                  <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500 group-hover:scale-105 transition-transform shrink-0">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-foreground">{t("generate_pdf_report")}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
+                      "Generate a formal technical assessment PDF with callouts and tables"
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    handleTriggerPrompt(
+                      "Draft an executive engineering specification Word document (spec.docx) with sections, tables, and metric highlights."
+                    );
+                  }}
+                  className="w-full p-3 rounded-xl border border-border bg-card/60 hover:bg-accent/40 hover:border-brand/40 transition-all text-start group flex items-start gap-3 cursor-pointer shadow-xs"
+                >
+                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 group-hover:scale-105 transition-transform shrink-0">
+                    <FileType className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-foreground">{t("draft_word_document")}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
+                      "Draft an engineering specification Word doc with comparison tables"
+                    </div>
+                  </div>
+                </button>
               </div>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground">{t("draft_word_document")}</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
-                  "Draft an engineering specification Word doc with comparison tables"
-                </div>
-              </div>
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       </div>
     );
