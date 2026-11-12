@@ -14,6 +14,7 @@ import {
   SearchX,
   ChevronDown,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -515,11 +516,26 @@ function ConversationRow({
   onRename: (title: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const generateTitle = useAppStore((s) => s.generateConversationTitle);
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(conversation.title);
   const [saving, setSaving] = React.useState(false);
+  const [titling, setTitling] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const displayTitle = displayConversationTitle(conversation.title, t);
+
+  const handleAutoTitle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTitling(true);
+    try {
+      const newTitle = await generateTitle(conversation.id, { force: true });
+      if (newTitle) toast.success(newTitle);
+    } catch {
+      toast.error(t("auto_title_failed") || "Title generation failed");
+    } finally {
+      setTitling(false);
+    }
+  };
 
   React.useEffect(() => {
     if (!editing) setDraft(conversation.title);
@@ -635,6 +651,19 @@ function ConversationRow({
               onClick={(e) => { e.stopPropagation(); onPin(); }}
             >
               <Pin className={cn("size-3", conversation.pinned ? "text-brand fill-brand" : "text-muted-foreground")} />
+            </Button>
+          )}
+          {!isPending && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="size-5 p-0 text-muted-foreground hover:text-foreground"
+              aria-label={t("auto_title") || "Auto-generate title"}
+              title={t("auto_title") || "Auto-generate title"}
+              disabled={titling}
+              onClick={handleAutoTitle}
+            >
+              <Sparkles className={cn("size-3", titling && "animate-spin text-brand")} />
             </Button>
           )}
           <Button variant="ghost" size="sm" className="size-5 p-0 text-muted-foreground hover:text-foreground" aria-label={t("rename")} onClick={startRename}>

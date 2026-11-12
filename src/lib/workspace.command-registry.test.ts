@@ -72,7 +72,11 @@ describe("running-command registry — orphan-proof stop after alias handover", 
   });
   afterAll(async () => {
     vi.unstubAllEnvs();
-    await fs.rm(root, { recursive: true, force: true });
+    try {
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* best-effort cleanup on Windows */
+    }
   });
 
   it(

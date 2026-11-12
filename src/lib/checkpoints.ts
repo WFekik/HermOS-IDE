@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import { createHash } from "crypto";
 import { db } from "@/lib/db";
-import { CHECKPOINTS_DIR } from "@/lib/paths";
+import { CHECKPOINTS_DIR, ARTIFACTS_DIR } from "@/lib/paths";
 import { computeDiff } from "@/lib/diff";
 
 /**
@@ -43,17 +43,44 @@ export async function hashFileOnDisk(absPath: string): Promise<string | null> {
   }
 }
 
+function isInsideDir(parentDir: string, targetPath: string): boolean {
+  const root = path.resolve(parentDir);
+  const target = path.resolve(targetPath);
+  return target === root || target.startsWith(root + path.sep);
+}
+
 /**
- * Containment gate: restore/delete targets must resolve inside the
- * conversation's CURRENT workspace root. Manifests record absolute paths
- * from edit time; after a workspace switch/move those go stale, and without
- * this gate undo would write to (or rmdir above) the wrong location while
- * reporting success.
+ * Containment gate: restore/delete targets must resolve inside either the
+ * conversation's CURRENT workspace root or the user's artifact root (which is
+ * where every artifact path resolved by `resolveAgentPath` lives — including
+ * legacy flat files and other conversations' artifact directories).
+ * Manifests record absolute paths from edit time; after a workspace switch/move
+ * those go stale, and without this gate undo would write to (or rmdir above)
+ * the wrong location while reporting success.
  */
-function assertInsideWorkspace(rootDir: string, p: string): void {
-  const root = path.resolve(rootDir);
-  const target = path.resolve(p);
-  if (target !== root && !target.startsWith(root + path.sep)) {
+function assertInsideUndoBoundary(
+  targetPath: string,
+  workspaceRoot?: string,
+  convArtifactDir?: string,
+  artifactUserDir?: string,
+): void {
+  const target = path.resolve(targetPath);
+  if (workspaceRoot && isInsideDir(workspaceRoot, target)) {
+    return;
+  }
+  if (convArtifactDir && isInsideDir(convArtifactDir, target)) {
+    return;
+  }
+  if (artifactUserDir && isInsideDir(artifactUserDir, target)) {
+    return;
+  }
+  if (workspaceRoot || convArtifactDir || artifactUserDir) {
+    throw new Error(`Refusing undo outside the workspace: ${targetPath}`);
+  }
+}
+
+export function assertInsideWorkspace(rootDir: string, p: string): void {
+  if (!isInsideDir(rootDir, p)) {
     throw new Error(`Refusing undo outside the workspace: ${p}`);
   }
 }
@@ -411,11 +438,19 @@ async function locateCheckpoint(
 export interface RestoreOptions {
   /**
    * Current workspace root for containment. Every restore/delete target
-   * must resolve inside it — manifests record edit-time absolute paths,
-   * which go stale after a workspace switch/move. Omitted (legacy callers)
-   * skips the gate but still bounds parent-dir removal.
+   * must resolve inside it or the user's artifact root.
    */
   workspaceRoot?: string;
+  /**
+   * Allowed conversation artifact root directory.
+   * If omitted, defaults to path.join(ARTIFACTS_DIR, userId, conversationId).
+   */
+  conversationArtifactDir?: string;
+  /**
+   * Allowed user artifact root (parent of every conversation artifact dir).
+   * If omitted, defaults to path.join(ARTIFACTS_DIR, userId).
+   */
+  artifactUserDir?: string;
 }
 
 /** Restore a checkpoint by writing snapshot files back to disk and deleting newly added files. */
@@ -427,12 +462,25 @@ export async function restoreCheckpoint(
   const located = await locateCheckpoint(userId, checkpointId);
   if (!located) throw new Error("Checkpoint not found");
   const { conversationId, dir } = located;
+  const convArtifactDir = opts.conversationArtifactDir ?? path.join(ARTIFACTS_DIR, userId, conversationId);
+  const artifactUserDir = opts.artifactUserDir ?? path.join(ARTIFACTS_DIR, userId);
+  // Never climb above the innermost boundary the target was validated against:
+  // a file in the conversation artifact dir must not take the conversation dir
+  // (or sibling data) down with it when its parent chain looks empty.
+  const stopAtFor = (p: string): string => {
+    const containing = [opts.workspaceRoot, convArtifactDir, artifactUserDir]
+      .filter((root): root is string => !!root && isInsideDir(root, p))
+      .sort((a, b) => path.resolve(b).length - path.resolve(a).length);
+    return containing[0] ?? convArtifactDir;
+  };
 
   const manifest = await readManifest(userId, conversationId, checkpointId);
   const restoredFiles: string[] = [];
   const errors: string[] = [];
   const guard = (p: string) => {
-    if (opts.workspaceRoot) assertInsideWorkspace(opts.workspaceRoot, p);
+    if (opts.workspaceRoot || opts.conversationArtifactDir) {
+      assertInsideUndoBoundary(p, opts.workspaceRoot, convArtifactDir, artifactUserDir);
+    }
   };
 
   // Delete files created by the agent
@@ -442,7 +490,7 @@ export async function restoreCheckpoint(
         guard(newFilePath);
         if (existsSync(newFilePath)) {
           await fs.unlink(newFilePath);
-          await removeEmptyParentDirs(newFilePath, opts.workspaceRoot);
+          await removeEmptyParentDirs(newFilePath, stopAtFor(newFilePath));
           restoredFiles.push(newFilePath);
         }
       } catch (e) {
@@ -459,7 +507,7 @@ export async function restoreCheckpoint(
         guard(newDirPath);
         if (existsSync(newDirPath)) {
           await fs.rm(newDirPath, { recursive: true, force: true });
-          await removeEmptyParentDirs(newDirPath, opts.workspaceRoot);
+          await removeEmptyParentDirs(newDirPath, stopAtFor(newDirPath));
           restoredFiles.push(newDirPath);
         }
       } catch (e) {
@@ -643,6 +691,8 @@ export async function buildUndoPreview(
   opts: RestoreOptions = {},
 ): Promise<UndoPreview> {
   await verifyConversationOwnership(userId, conversationId);
+  const convArtifactDir = opts.conversationArtifactDir ?? path.join(ARTIFACTS_DIR, userId, conversationId);
+  const artifactUserDir = opts.artifactUserDir ?? path.join(ARTIFACTS_DIR, userId);
   const allCheckpoints = await listCheckpoints(userId, conversationId);
   const target = allCheckpoints
     .filter((cp) => timestampFromId(cp.id) >= targetTimestamp)
@@ -675,16 +725,30 @@ export async function buildUndoPreview(
 
   const files: UndoPreviewFile[] = [];
   const expected: { path: string; hash: string | null }[] = [];
-  const displayOf = (absPath: string) =>
-    opts.workspaceRoot
-      ? path.relative(opts.workspaceRoot, absPath) || path.basename(absPath)
-      : path.basename(absPath);
+  const displayOf = (absPath: string) => {
+    if (isInsideDir(convArtifactDir, absPath)) {
+      const rel = path.relative(convArtifactDir, absPath);
+      return `artifacts/${rel.replace(/\\/g, "/")}`;
+    }
+    // Artifacts outside this conversation's directory (legacy flat layout or
+    // another conversation) still resolve inside the user's artifact root.
+    if (isInsideDir(artifactUserDir, absPath)) {
+      const rel = path.relative(artifactUserDir, absPath);
+      return `artifacts/${rel.replace(/\\/g, "/")}`;
+    }
+    if (opts.workspaceRoot && isInsideDir(opts.workspaceRoot, absPath)) {
+      return path.relative(opts.workspaceRoot, absPath) || path.basename(absPath);
+    }
+    return path.basename(absPath);
+  };
 
   // Paths deleted outright (oldest touch is agent-created).
   for (const [absPath, touch] of oldestTouch) {
     if (touch.kind !== "new") continue;
     try {
-      if (opts.workspaceRoot) assertInsideWorkspace(opts.workspaceRoot, absPath);
+      if (opts.workspaceRoot || opts.conversationArtifactDir) {
+        assertInsideUndoBoundary(absPath, opts.workspaceRoot, convArtifactDir, artifactUserDir);
+      }
     } catch {
       continue;
     }
@@ -710,7 +774,9 @@ export async function buildUndoPreview(
     if (touch.kind !== "files") continue;
     const { dir } = touch;
     try {
-      if (opts.workspaceRoot) assertInsideWorkspace(opts.workspaceRoot, absPath);
+      if (opts.workspaceRoot || opts.conversationArtifactDir) {
+        assertInsideUndoBoundary(absPath, opts.workspaceRoot, convArtifactDir, artifactUserDir);
+      }
     } catch {
       continue;
     }

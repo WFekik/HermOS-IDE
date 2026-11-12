@@ -127,9 +127,14 @@ export function hostClassError(cls: HostClass): string | null {
  */
 const LOCAL_AI_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
-/** Standard local AI and local application service ports allowed on loopback. */
+/**
+ * Loopback ports that local model servers and their web UIs bind to. Kept
+ * deliberately narrow: agent-driven fetches share this policy, so generic
+ * dev/admin surfaces (3001, 4000, 8088, 8443, 8888...) stay blocked — they are
+ * not model endpoints and some expose privileged local APIs.
+ */
 const LOCAL_AI_ALLOWED_PORTS = new Set([
-  80, 443, 1234, 2242, 3000, 5000, 5173, 8000, 8080, 8081, 11434,
+  80, 443, 1234, 2242, 3000, 5000, 5173, 7860, 7861, 8000, 8080, 8081, 11434,
 ]);
 
 function isLocalAiHost(host: string): boolean {
@@ -157,33 +162,39 @@ function policyErrorFor(host: string, cls: HostClass, port?: number): string | n
   return hostClassError(cls);
 }
 
+interface HostCheckResult {
+  /** Refusal reason, or null when the target is allowed. */
+  reason: string | null;
+  /** Underlying resolver code when the refusal was a DNS failure. */
+  dnsCode?: string;
+}
+
 /**
  * Validate a URL against the SSRF policy: scheme (http/https only), host
  * literals (incl. encoded IP forms), and DNS resolution of every record.
- * Returns an error message when the target is refused, null when allowed.
  */
-export async function checkUrlHost(urlStr: string): Promise<string | null> {
+async function checkUrlHostDetailed(urlStr: string): Promise<HostCheckResult> {
   let u: URL;
   try {
     u = new URL(urlStr);
   } catch {
-    return "Invalid URL.";
+    return { reason: "Invalid URL." };
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") {
-    return "Only http(s) URLs are allowed.";
+    return { reason: "Only http(s) URLs are allowed." };
   }
   const port = u.port ? Number(u.port) : u.protocol === "https:" ? 443 : 80;
   let host = u.hostname.toLowerCase();
   if (host.endsWith(".")) host = host.slice(0, -1);
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
-  if (!host) return "Invalid URL host.";
+  if (!host) return { reason: "Invalid URL host." };
   if (host === "localhost" || host === "localhost.localdomain") {
-    return policyErrorFor(host, "loopback", port);
+    return { reason: policyErrorFor(host, "loopback", port) };
   }
   const literal = parseIpv4Literal(host);
-  if (literal) return policyErrorFor(literal, classifyIpv4(literal), port);
-  if (isIP(host) === 6) return policyErrorFor(host, classifyIpv6(host), port);
-  if (isIP(host) === 4) return policyErrorFor(host, classifyIpv4(host), port);
+  if (literal) return { reason: policyErrorFor(literal, classifyIpv4(literal), port) };
+  if (isIP(host) === 6) return { reason: policyErrorFor(host, classifyIpv6(host), port) };
+  if (isIP(host) === 4) return { reason: policyErrorFor(host, classifyIpv4(host), port) };
   try {
     const addrs = await dnsLookup(host, { all: true, verbatim: true });
     for (const a of addrs) {
@@ -193,9 +204,9 @@ export async function checkUrlHost(urlStr: string): Promise<string | null> {
       // an attacker-controlled domain resolving to 127.0.0.1 is still refused
       // under the strict policy (DNS-rebinding protection).
       const err = policyErrorFor(host, cls, port);
-      if (err) return err;
+      if (err) return { reason: err };
     }
-  } catch {
+  } catch (dnsErr: unknown) {
     // Fail-closed on DNS failure: an unresolvable host cannot be verified as
     // public. Allowing it would let an attacker probe internal DNS or exploit
     // TOCTOU where check-time NXDOMAIN / timeout becomes a private IP at
@@ -204,15 +215,44 @@ export async function checkUrlHost(urlStr: string): Promise<string | null> {
     // Post-fetch IP re-verification is also performed in provider-fetch.ts
     // (redirect re-check) and should be added to any http_fetch / browser
     // tool paths that can be guided by untrusted page content.
-    return "DNS resolution failed — host is unresolvable or blocked; refusing request.";
+    const code = (dnsErr as { code?: string })?.code;
+    const codeSuffix = code ? ` (${code})` : "";
+    return {
+      reason: `DNS resolution failed — host is unresolvable or network offline${codeSuffix}; refusing request.`,
+      dnsCode: code,
+    };
   }
-  return null;
+  return { reason: null };
+}
+
+/**
+ * Validate a URL against the SSRF policy: scheme (http/https only), host
+ * literals (incl. encoded IP forms), and DNS resolution of every record.
+ * Returns an error message when the target is refused, null when allowed.
+ */
+export async function checkUrlHost(urlStr: string): Promise<string | null> {
+  return (await checkUrlHostDetailed(urlStr)).reason;
 }
 
 /** Throw when `urlStr` violates the SSRF policy; resolve when allowed. */
 export async function assertUrlAllowed(urlStr: string): Promise<void> {
-  const reason = await checkUrlHost(urlStr);
+  const { reason, dnsCode } = await checkUrlHostDetailed(urlStr);
   if (reason) {
+    if (reason.startsWith("DNS resolution failed")) {
+      let host = urlStr;
+      try {
+        host = new URL(urlStr).hostname;
+      } catch {
+        /* ignore invalid URL parse */
+      }
+      const err = new Error(
+        `DNS resolution failed for host "${host}": network may be offline or host is unresolvable.`,
+      );
+      // Preserve the resolver code so retry logic can tell a permanently bad
+      // hostname (ENOTFOUND) from a transient resolver outage (EAI_AGAIN).
+      (err as { code?: string }).code = dnsCode ?? "ENOTFOUND";
+      throw err;
+    }
     throw new Error(`URL blocked by SSRF policy: ${reason}`);
   }
 }

@@ -1,4 +1,5 @@
 import { readdirSync } from "fs";
+import path from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/session";
 import { withRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
@@ -12,8 +13,12 @@ import {
   createFileWs,
   deletePathWs,
   mkdirWs,
+  isSubpathOrEqual,
+  safePath,
+  safePathFromRoot,
   MAX_FILE_BYTES,
 } from "@/lib/workspace";
+import { ARTIFACTS_DIR } from "@/lib/paths";
 import { parseJson, apiError, ok, withErrorHandler } from "@/app/api/_lib/helpers";
 import { noNulBytes, byteCappedContent } from "@/lib/validation";
 
@@ -44,6 +49,33 @@ async function resolveWs(userId: string) {
   return (await getActiveWorkspace(userId)) ?? (await ensureDefaultWorkspace(userId));
 }
 
+const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Resolve the artifact roots for a request.
+ *
+ * `conversationId` arrives from the query string, so it is validated and
+ * containment-checked before being used as a path segment: an escaped
+ * conversation root would make every absolute-path read below resolve against
+ * an attacker-chosen directory (arbitrary local file access).
+ */
+function resolveArtifactRoots(
+  userId: string,
+  conversationIdParam: string | null,
+): { userDir: string; conversationDir: string | null; invalid: boolean } {
+  const userDir = path.join(ARTIFACTS_DIR, userId);
+  const conversationId = (conversationIdParam ?? "").trim();
+  if (!conversationId) return { userDir, conversationDir: null, invalid: false };
+  if (!CONVERSATION_ID_RE.test(conversationId)) {
+    return { userDir, conversationDir: null, invalid: true };
+  }
+  const conversationDir = path.resolve(userDir, conversationId);
+  if (!isSubpathOrEqual(conversationDir, path.resolve(userDir))) {
+    return { userDir, conversationDir: null, invalid: true };
+  }
+  return { userDir, conversationDir, invalid: false };
+}
+
 export const GET = withErrorHandler(async (req: NextRequest) => {
   const user = await requireUser();
 
@@ -60,20 +92,33 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
   // resolves correctly instead of returning a silent 500.
   const rel = rawRel.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "");
 
+  const {
+    userDir: artifactUserDir,
+    conversationDir: conversationArtifactDir,
+    invalid: invalidConversation,
+  } = resolveArtifactRoots(user.id, url.searchParams.get("conversationId"));
+  if (invalidConversation) return apiError("Invalid conversation.", 400);
+
   // Raw binary file read for images and media files in artifacts
   if (url.searchParams.get("raw") === "true") {
     const ws = await resolveWs(user.id);
     const cleanPath = rel;
     const fs = await import("fs/promises");
-    const path = await import("path");
     const { existsSync } = await import("fs");
     const { safePath, safePathFromRoot } = await import("@/lib/workspace");
 
-    const { ARTIFACTS_DIR } = await import("@/lib/paths");
-    const artifactsUserDir = path.join(ARTIFACTS_DIR, user.id);
     let absPath = safePath(user.id, ws.name, cleanPath, ws.rootDir);
     if (!absPath && path.isAbsolute(cleanPath) && existsSync(cleanPath)) {
-      absPath = safePathFromRoot(artifactsUserDir, cleanPath);
+      absPath = conversationArtifactDir
+        ? safePathFromRoot(conversationArtifactDir, cleanPath)
+        : null;
+      absPath = absPath ?? safePathFromRoot(artifactUserDir, cleanPath);
+    }
+    if (!absPath && conversationArtifactDir) {
+      const direct = path.join(conversationArtifactDir, path.basename(cleanPath));
+      if (existsSync(direct)) {
+        absPath = safePathFromRoot(conversationArtifactDir, direct);
+      }
     }
     if (!absPath) return apiError("Invalid path.", 400);
 
@@ -145,16 +190,21 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     return ok({ file: range });
   }
 
-  const pathModule = await import("path");
   const { statSync, existsSync, readFileSync } = await import("fs");
   const ws = await resolveWs(user.id);
 
   // Directly read absolute artifact files existing on disk (within workspace or the current user's artifacts)
-  const { ARTIFACTS_DIR } = await import("@/lib/paths");
-  const artifactsUserDir = pathModule.join(ARTIFACTS_DIR, user.id);
-  const { safePathFromRoot } = await import("@/lib/workspace");
-  const isAbsExisting = pathModule.isAbsolute(rel) && existsSync(rel);
-  const artifactAbs = isAbsExisting ? safePathFromRoot(artifactsUserDir, rel) : null;
+  const isAbsExisting = path.isAbsolute(rel) && existsSync(rel);
+  let artifactAbs = isAbsExisting
+    ? (conversationArtifactDir ? safePathFromRoot(conversationArtifactDir, rel) : null) ??
+      safePathFromRoot(artifactUserDir, rel)
+    : null;
+  if (!artifactAbs && conversationArtifactDir) {
+    const directPath = path.join(conversationArtifactDir, path.basename(rel));
+    if (existsSync(directPath)) {
+      artifactAbs = safePathFromRoot(conversationArtifactDir, directPath);
+    }
+  }
   const workspaceAbs = isAbsExisting ? safePathFromRoot(ws.rootDir, rel) : null;
   const resolvedAbs = artifactAbs ?? workspaceAbs;
 
@@ -170,7 +220,6 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     }
   }
 
-  const { safePath } = await import("@/lib/workspace");
   const absPath = safePath(user.id, ws.name, rel, ws.rootDir);
 
   if (absPath) {
@@ -199,7 +248,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
    */
   function findBestArtifact(dir: string, requestedRel: string): string | null {
     if (!existsSync(dir)) return null;
-    const targetName = pathModule.basename(requestedRel);
+    const targetName = path.basename(requestedRel);
     const matches: string[] = [];
     const walk = (current: string) => {
       let entries;
@@ -209,7 +258,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
         return;
       }
       for (const entry of entries) {
-        const fullPath = pathModule.join(current, entry.name);
+        const fullPath = path.join(current, entry.name);
         if (entry.isDirectory()) {
           walk(fullPath);
         } else if (entry.isFile() && entry.name.toLowerCase() === targetName.toLowerCase()) {
@@ -263,10 +312,19 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     // the workspace. Only fall back for requests scoped to the user's own
     // artifact directory — never for arbitrary or path-traversal workspace
     // paths, which should still 404.
-    const isBareFilename = rel === pathModule.basename(rel);
-    const isArtifactScoped = pathModule.isAbsolute(rel) && safePathFromRoot(artifactsUserDir, rel) !== null;
+    const isBareFilename = rel === path.basename(rel);
+    const isArtifactScoped = path.isAbsolute(rel) && safePathFromRoot(artifactUserDir, rel) !== null;
     if (isBareFilename || isArtifactScoped) {
-      const foundArtifactPath = findBestArtifact(artifactsUserDir, rel);
+      let foundArtifactPath: string | null = null;
+      if (conversationArtifactDir) {
+        const directConvPath = path.join(conversationArtifactDir, path.basename(rel));
+        if (existsSync(directConvPath)) {
+          foundArtifactPath = safePathFromRoot(artifactUserDir, directConvPath);
+        }
+      }
+      if (!foundArtifactPath && !conversationArtifactDir) {
+        foundArtifactPath = findBestArtifact(artifactUserDir, rel);
+      }
       if (foundArtifactPath) {
         try {
           const stat = statSync(/* turbopackIgnore: true */ foundArtifactPath);

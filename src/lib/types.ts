@@ -36,6 +36,7 @@ export interface ModelInfo {
   id: string;
   name: string;
   contextWindow?: number;
+  serverContextWindow?: number;
   maxOutput?: number;
   /** Billing rate in USD per 1M tokens (input `in`, output `out`), from live provider /models metadata. */
   pricing?: { in: number; out: number };
@@ -239,12 +240,26 @@ export type ChatStreamEvent =
   /** Reset the thinking field on retry (clears partial content from a failed attempt). */
   | { type: "thinking_reset" }
   /** Emitted before first delta when middle messages are trimmed to fit model context window. */
-  | { type: "context_trimmed"; dropped: number; keptTokens: number; activePromptTokens?: number; via?: "command" | "auto" | "overflow" }
+  | {
+      type: "context_trimmed";
+      dropped: number;
+      keptTokens: number;
+      activePromptTokens?: number;
+      via?: "command" | "auto" | "overflow";
+      summaryMessage?: {
+        id: string;
+        role?: "user";
+        content: string;
+        createdAt: string;
+      };
+    }
   | {
       type: "usage";
       tokensIn: number;
       tokensOut: number;
       promptTokens: number;
+      /** Model context window limit resolved by the server. */
+      contextWindow?: number;
       cacheWrites?: number;
       cacheReads?: number;
       model: string;
@@ -279,7 +294,13 @@ export interface ProviderKeyDTO {
   keyHint?: string;
   baseUrl?: string;
   models?: string[];
-  modelsConfig?: Array<{ id: string; enabled?: boolean; thinkingLevel?: string }>;
+  modelsConfig?: Array<{
+    id: string;
+    enabled?: boolean;
+    thinkingLevel?: string;
+    contextWindow?: number;
+    contextWindowSource?: "user";
+  }>;
   isActive: boolean;
 }
 

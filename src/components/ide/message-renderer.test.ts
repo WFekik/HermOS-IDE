@@ -947,6 +947,12 @@ describe("cleanUserMessageContent", () => {
     expect(cleanUserMessageContent(raw)).toBe("Check this file  and image  for details.");
   });
 
+  it("strips context_summary XML tags cleanly for UI display", async () => {
+    const { cleanUserMessageContent } = await import("@/components/ide/message-renderer");
+    const raw = '<context_summary compacted="true">\nObjective:\nUser greeted.\n</context_summary>';
+    expect(cleanUserMessageContent(raw)).toBe("Objective:\nUser greeted.");
+  });
+
   it("handles empty or whitespace messages safely", async () => {
     const { cleanUserMessageContent } = await import("@/components/ide/message-renderer");
     expect(cleanUserMessageContent("")).toBe("");

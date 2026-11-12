@@ -30,13 +30,13 @@ db/*.db-wal
 db/*.db-shm
 # shell / misc artifacts
 pwd_output.txt
-AppData/
-workspaces/
-artifacts/
-browser-screenshots/
-checkpoints/
-uploads/
-.hermos/
+/AppData/
+/workspaces/
+/artifacts/
+/browser-screenshots/
+/checkpoints/
+/uploads/
+/.hermos/
 # screenshots & temp files
 *.png
 *.jpg

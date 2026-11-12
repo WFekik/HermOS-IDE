@@ -70,6 +70,10 @@ export interface CreateSubagentOpts {
   thinkingLevel?: string;
   /** Parent mode at spawn — the worker enforces the same tool wall. */
   agentMode?: AgentMode;
+  /** Optional max iterations cap for this subagent (default: uncapped / HERMOS_MAX_SUBAGENT_ITERATIONS). */
+  maxIterations?: number;
+  /** UI language of the invoking agent for subagent localized thinking and reporting. */
+  uiLanguage?: string;
 }
 
 

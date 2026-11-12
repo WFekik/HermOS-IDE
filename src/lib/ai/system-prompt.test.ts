@@ -47,6 +47,8 @@ describe("system prompt composition", () => {
     expect(BASE_SYSTEM_RULES).toContain("never poll or loop-wait");
     expect(BASE_SYSTEM_RULES).toContain("create_artifact");
     expect(BASE_SYSTEM_RULES).toContain("résumé");
+    expect(BASE_SYSTEM_RULES).toContain("always reply in the language the user uses in their prompt");
+    expect(BASE_SYSTEM_RULES).toContain("Conduct internal thinking and reasoning in the application's selected language");
   });
 
   it("stays framework-agnostic", () => {

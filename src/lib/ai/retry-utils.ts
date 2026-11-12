@@ -81,6 +81,23 @@ export function isNonRetryableError(status: number | null, msg?: string): boolea
 }
 
 /**
+ * Checks whether an error represents a transient network or DNS failure.
+ */
+export function isNetworkError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = String((err as any)?.code || (err as any)?.cause?.code || "");
+  return (
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|fetch failed|network|socket hang up|DNS resolution failed|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET_TIMEOUT/i.test(
+      msg,
+    ) ||
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/i.test(
+      code,
+    )
+  );
+}
+
+/**
  * Classifies an error as transient (retryable HTTP 429/5xx, network drops)
  * vs permanent (400-404/422, auth/quota failures).
  */
@@ -111,11 +128,7 @@ export function isTransientStreamError(err: unknown): boolean {
   }
 
   // Network level transient errors
-  if (
-    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EAI_AGAIN|fetch failed|network|socket hang up|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET_TIMEOUT/i.test(
-      msg,
-    )
-  ) {
+  if (isNetworkError(err)) {
     return true;
   }
 
@@ -132,19 +145,36 @@ export function isTransientStreamError(err: unknown): boolean {
 }
 
 /**
- * Shared retry ladder for agent stream loops: rate limits are expected under
- * shared keys and deserve a long ladder, while other transient failures get
- * the short one.
+ * Permanent DNS failure: the hostname does not resolve and retrying will not
+ * change that (NXDOMAIN). Transient resolver outages surface as EAI_AGAIN and
+ * keep the normal network ladder.
  */
-export function retryAttemptLimit(is429: boolean): number {
-  return is429 ? 15 : 3;
+export function isPermanentDnsError(err: unknown): boolean {
+  const code = String((err as { code?: unknown })?.code || (err as { cause?: { code?: unknown } })?.cause?.code || "");
+  return /ENOTFOUND|EAI_NONAME/.test(code);
 }
 
-/** Exponential backoff with jitter; 429 honors Retry-After up to two minutes. */
+/**
+ * Shared retry ladder for agent stream loops: rate limits are expected under
+ * shared keys (15 attempts), network connectivity drops get 10 attempts to
+ * ride out connection recovery, and other transient errors get 3.
+ */
+export function retryAttemptLimit(
+  is429: boolean,
+  isNetwork = false,
+  isPermanentDns = false,
+): number {
+  if (is429) return 15;
+  if (isPermanentDns) return 2;
+  if (isNetwork) return 10;
+  return 3;
+}
+
+/** Exponential backoff with jitter; 429 honors Retry-After up to two minutes; network drops capped at 30s. */
 export function retryBackoffMs(attempt: number, is429: boolean, headerMs: number | null): number {
   if (is429 && headerMs !== null && headerMs > 0) return Math.min(headerMs, 120_000);
   const delay = (is429 ? 2000 : 1000) * Math.pow(2, attempt) + Math.random() * 500;
-  return is429 ? Math.min(delay, 120_000) : delay;
+  return is429 ? Math.min(delay, 120_000) : Math.min(delay, 30_000);
 }
 
 /**

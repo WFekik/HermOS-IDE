@@ -259,6 +259,7 @@ export const ar: Record<string, string> = {
   "connect": "اتصال",
   "connected": "متصل",
   "context": "السياق",
+  "context_compacted": "تم ضغط السياق",
   "context_governance": "إدارة السياق",
   "context_governance_desc": "تتحكم سياسات الاحتفاظ بكيفية إدارة الوكيل لنافذة السياق.",
   "context_left": "({remaining} متبقي)",

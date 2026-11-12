@@ -265,6 +265,7 @@ export const es: Record<string, string> = {
   "connect": "Conectar",
   "connected": "Conectado",
   "context": "Contexto",
+  "context_compacted": "Contexto compactado",
   "context_governance": "Gobernanza del contexto",
   "context_governance_desc": "Las políticas de retención controlan la ventana de contexto.",
   "context_left": "(restan {remaining})",

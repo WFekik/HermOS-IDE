@@ -148,8 +148,8 @@ export const RightPanel = React.memo(function RightPanel() {
   const activeTabLabel = t(tab);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card overflow-hidden">
-      <Tabs value={tab} onValueChange={(v) => setTab(v as RightPanelTab)} className="flex-1 flex flex-col gap-0 min-h-0">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-card overflow-hidden">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as RightPanelTab)} className="flex-1 flex flex-col gap-0 min-h-0 min-w-0 w-full">
         <div className="shrink-0 flex items-center border-b px-1 py-0.5 bg-muted/20 gap-1 min-w-0">
           {!tabBarCollapsed ? (
             <>
@@ -197,63 +197,63 @@ export const RightPanel = React.memo(function RightPanel() {
             </div>
           )}
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden relative">
-          <TabsContent value="files" className="mt-0 h-full data-[state=inactive]:hidden">
+        <div className="flex-1 min-h-0 min-w-0 w-full overflow-hidden relative">
+          <TabsContent value="files" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="files_panel_error">
               <WorkspacePanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="artifacts" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="artifacts" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="artifacts_panel_error">
               <ArtifactPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="outline" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="outline" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="outline_panel_error">
               <OutlinePanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="mcp" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="mcp" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="mcp_panel_error">
               <McpPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="plugins" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="plugins" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="plugins_panel_error">
               <PluginsPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="skills" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="skills" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="skills_panel_error">
               <SkillsPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="terminal" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="terminal" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="terminal_panel_error">
               <TerminalPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="browser" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="browser" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="browser_panel_error">
               <BrowserPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="office" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="office" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="office_panel_error">
               <OfficePanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="subagents" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="subagents" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="subagents_panel_error">
               <SubagentsPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="git" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="git" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="git_panel_error">
               <GitPanel />
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="problems" className="mt-0 h-full data-[state=inactive]:hidden">
+          <TabsContent value="problems" className="mt-0 h-full w-full min-w-0 data-[state=inactive]:hidden flex flex-col">
             <ErrorBoundary fallbackTitle="problems_panel_error">
               <ProblemsPanel />
             </ErrorBoundary>

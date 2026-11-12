@@ -1419,18 +1419,20 @@ export function preprocessContent(content: string): string {
 
 export function cleanUserMessageContent(content: string): string {
   if (!content) return "";
+  let base = content
+    .replace(/<context_summary(?:\s+[^>]*)?>/gi, "")
+    .replace(/<\/context_summary>/gi, "");
   // Display-only strip of the system-appended attachment block. The marker is
   // appended verbatim as "\n\n## Attached files\n" + previews (see
   // executor.ts / queue/route.ts): only strip it when the trailing block
   // actually contains a system preview token, so a user literally typing
   // "## Attached files" keeps their text.
   const marker = "\n\n## Attached files\n";
-  let base = content;
-  const idx = content.lastIndexOf(marker);
+  const idx = base.lastIndexOf(marker);
   if (idx !== -1) {
-    const tail = content.slice(idx + marker.length);
+    const tail = base.slice(idx + marker.length);
     if (/\[Image:|\[File:|\[Attachment:?/i.test(tail)) {
-      base = content.slice(0, idx);
+      base = base.slice(0, idx);
     }
   }
   return base

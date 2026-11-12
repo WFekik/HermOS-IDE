@@ -265,6 +265,7 @@ export const ja: Record<string, string> = {
   "connect": "接続",
   "connected": "接続済み",
   "context": "コンテキスト",
+  "context_compacted": "コンテキストを圧縮しました",
   "context_governance": "コンテキスト管理",
   "context_governance_desc": "エージェントがコンテキストウィンドウを管理する保持ポリシーを設定します。",
   "context_left": "(残り {remaining})",

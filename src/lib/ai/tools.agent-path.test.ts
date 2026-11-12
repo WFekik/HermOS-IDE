@@ -294,4 +294,55 @@ describe("ConvergenceDetector with different tool edits", () => {
     }
     expect((detector as unknown as { toolSignatures: string[] }).toolSignatures.length).toBeLessThanOrEqual(20);
   });
+
+  it("create_artifact records newly created and modified artifacts in checkpoints for undo", async () => {
+    const { db } = await import("@/lib/db");
+    const { createCheckpoint } = await import("@/lib/checkpoints");
+    const fsPromises = await import("fs/promises");
+    const convId = "conv-artifact-chk-test";
+
+    await db.user.upsert({
+      where: { id: USER },
+      update: {},
+      create: { id: USER, email: "user@test.com" },
+    });
+    await db.conversation.upsert({
+      where: { id: convId },
+      update: {},
+      create: { id: convId, userId: USER, title: "Artifact test" },
+    });
+
+    const cp1 = await createCheckpoint(USER, convId, "Turn 1");
+
+    // 1. Create a new artifact in Turn 1
+    const res1 = await runTool(
+      "create_artifact",
+      { path: "architecture.md", content: "# Architecture v1\n" },
+      { userId: USER, conversationId: convId, checkpointId: cp1.id },
+    );
+    expect(res1.ok).toBe(true);
+    expect(res1.result).toMatchObject({ isArtifact: true, created: true });
+
+    // 2. Modify that artifact in Turn 2
+    const cp2 = await createCheckpoint(USER, convId, "Turn 2");
+    const res2 = await runTool(
+      "create_artifact",
+      { path: "architecture.md", content: "# Architecture v2\nUpdated\n" },
+      { userId: USER, conversationId: convId, checkpointId: cp2.id },
+    );
+    expect(res2.ok).toBe(true);
+    expect(res2.result).toMatchObject({ isArtifact: true, created: false });
+
+    // Verify manifest contents for checkpoint 1 (recorded as newFile) and 2 (recorded in files)
+    const { CHECKPOINTS_DIR } = await import("@/lib/paths");
+    const m1Path = path.join(CHECKPOINTS_DIR, USER, convId, cp1.id, "manifest.json");
+    const m2Path = path.join(CHECKPOINTS_DIR, USER, convId, cp2.id, "manifest.json");
+
+    const m1 = JSON.parse(await fsPromises.readFile(m1Path, "utf-8"));
+    const m2 = JSON.parse(await fsPromises.readFile(m2Path, "utf-8"));
+
+    const artifactAbs = (res1.result as { path: string }).path;
+    expect(m1.newFiles).toContain(artifactAbs);
+    expect(m2.files[artifactAbs]).toBeGreaterThan(0);
+  });
 });

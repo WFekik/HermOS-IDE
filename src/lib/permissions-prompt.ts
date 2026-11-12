@@ -27,12 +27,12 @@ export interface PendingApproval {
   status: ApprovalStatus;
   /** Set when the request originates from a background subagent. */
   subagent?: { id: string; name: string };
-  /** Auto-deny window for this entry, from createdAt. */
-  ttlMs: number;
+  /** Auto-deny window for this entry, from createdAt, or null for indefinite (no expiration). */
+  ttlMs: number | null;
   /** Resolves the awaited promise in the executor. */
   resolve: (decision: PermissionDecision) => void;
-  /** Auto-deny timer (entry `ttlMs`). */
-  timeout: NodeJS.Timeout;
+  /** Optional auto-deny timer when entry has a finite ttlMs. */
+  timeout?: NodeJS.Timeout;
 }
 
 /** Public shape returned to the API layer (no `resolve`/`timeout`). */
@@ -48,8 +48,8 @@ export interface PendingApprovalDTO {
   args: Record<string, unknown>;
   createdAt: number;
   status?: ApprovalStatus;
-  /** Auto-deny window for this entry, from createdAt. */
-  ttlMs: number;
+  /** Auto-deny window for this entry, from createdAt, or null for indefinite. */
+  ttlMs: number | null;
   subagent?: { id: string; name: string };
 }
 
@@ -63,11 +63,11 @@ export interface CreatePendingInput {
   target: string;
   args: Record<string, unknown>;
   subagent?: { id: string; name: string };
-  /** Override the default auto-deny window (subagent prompts allow longer review). */
-  ttlMs?: number;
+  /** Override the default window (null for no expiration). */
+  ttlMs?: number | null;
 }
 
-/** How long to wait for user decision before auto-denying (2 minutes / 120s). */
+/** Default auto-deny window (null = no expiration). */
 export const APPROVAL_TTL_MS = PERMISSION_APPROVAL_TTL_MS;
 
 const VALID_DECISIONS: ReadonlySet<PermissionDecision> = new Set([
@@ -106,7 +106,7 @@ function expireEntry(entry: PendingApproval, reason: "expired" | "aborted" = "ex
   if (entry.status !== "pending") return;
   entry.status = reason;
   pendingById.delete(entry.id);
-  clearTimeout(entry.timeout);
+  if (entry.timeout) clearTimeout(entry.timeout);
   try {
     entry.resolve("deny");
   } catch {
@@ -117,7 +117,9 @@ function expireEntry(entry: PendingApproval, reason: "expired" | "aborted" = "ex
 /** Lazy cleanup: drop entries past their TTL before inserting new ones. */
 function purgeExpired(now: number): void {
   for (const entry of pendingById.values()) {
-    if (now - entry.createdAt > entry.ttlMs) expireEntry(entry, "expired");
+    if (typeof entry.ttlMs === "number" && Number.isFinite(entry.ttlMs) && now - entry.createdAt > entry.ttlMs) {
+      expireEntry(entry, "expired");
+    }
   }
 }
 
@@ -127,20 +129,21 @@ export function createPendingApproval(
 ): { id: string; promise: Promise<PermissionDecision> } {
   purgeExpired(Date.now());
   const id = newId();
-  const ttlMs = input.ttlMs ?? APPROVAL_TTL_MS;
+  const ttlMs = input.ttlMs !== undefined ? input.ttlMs : APPROVAL_TTL_MS;
   let resolveFn!: (decision: PermissionDecision) => void;
   const promise = new Promise<PermissionDecision>((resolve) => {
     resolveFn = resolve;
   });
 
-  // Auto-deny after ttlMs so the executor never deadlocks.
-  const timeout = setTimeout(() => {
-    const entry = pendingById.get(id);
-    if (!entry) return;
-    expireEntry(entry, "expired");
-  }, ttlMs);
-  // Don't let the timer keep the event loop alive on shutdown.
-  if (typeof timeout.unref === "function") timeout.unref();
+  let timeout: NodeJS.Timeout | undefined;
+  if (typeof ttlMs === "number" && Number.isFinite(ttlMs) && ttlMs > 0) {
+    timeout = setTimeout(() => {
+      const entry = pendingById.get(id);
+      if (!entry) return;
+      expireEntry(entry, "expired");
+    }, ttlMs);
+    if (typeof timeout.unref === "function") timeout.unref();
+  }
 
   const entry: PendingApproval = {
     id,
@@ -176,7 +179,7 @@ export function resolvePendingApproval(
   if (entry.userId !== userId) return false;
   entry.status = "resolved";
   pendingById.delete(id);
-  clearTimeout(entry.timeout);
+  if (entry.timeout) clearTimeout(entry.timeout);
   try {
     entry.resolve(decision);
   } catch {
@@ -239,7 +242,7 @@ export function cancelPendingForConversation(
 /** Test-only: clear everything. Not used in production paths. */
 export function __clearAll(): void {
   for (const entry of pendingById.values()) {
-    clearTimeout(entry.timeout);
+    if (entry.timeout) clearTimeout(entry.timeout);
   }
   pendingById.clear();
 }

@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Undo2, GitBranch, Copy, Check, Loader2 } from "lucide-react";
+import { Undo2, GitBranch, Copy, Check, Loader2, Layers, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MessageRenderer, cleanUserMessageContent } from "@/components/ide/message-renderer";
+import { MessageRenderer, cleanUserMessageContent, MarkdownContent } from "@/components/ide/message-renderer";
+import { isCompactionMarker, extractCompactionSummary } from "@/lib/ai/context";
 import { Composer } from "@/components/ide/composer";
 import { EmptyState } from "@/components/ide/empty-state";
 import { useAppStore, isPendingConversationId } from "@/stores/app-store";
@@ -752,16 +753,83 @@ function SubagentResultLine({ content }: { content: string }) {
   );
 }
 
+function CompactionSummaryRow({ content }: { content: string }) {
+  const [expanded, setExpanded] = React.useState(true);
+  const [copied, setCopied] = React.useState(false);
+  const { t } = useTranslation();
+  const summaryText = extractCompactionSummary(content);
+
+  const copySummary = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      setCopied(true);
+      toast.success(t("copied"));
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  return (
+    <div className="my-3 rounded-2xl border border-border/70 bg-card/60 shadow-xs overflow-hidden transition-all text-start">
+      <div
+        className="flex items-center justify-between gap-2 px-4 py-2.5 bg-muted/30 cursor-pointer select-none border-b border-border/40 hover:bg-muted/50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Layers className="size-4 text-brand shrink-0" />
+          <span className="font-medium text-xs text-foreground/90 truncate">
+            {t("context_compacted", { defaultValue: "Context Compacted" })}
+          </span>
+          <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-mono">
+            {t("summary", { defaultValue: "Summary" })}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+            onClick={copySummary}
+            type="button"
+            title={t("copy")}
+          >
+            {copied ? <Check className="size-3 text-brand" /> : <Copy className="size-3" />}
+          </Button>
+          <div className="text-muted-foreground/70 p-0.5">
+            {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </div>
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-4 py-3.5 text-xs leading-relaxed text-foreground/80 font-sans space-y-2 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5">
+          <MarkdownContent content={summaryText} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessageRow({ message }: { message: UIMessage; index: number }) {
+  const isCompaction = isCompactionMarker(message.content);
   const isSubagentResult =
     message.role === "user" &&
     (SUBAGENT_REPORT_RE.test(message.content.trim()) ||
       message.content.startsWith("[Subagent results]") ||
       message.content.startsWith("[Subagent failed]"));
-  const isUser = message.role === "user" && !isSubagentResult;
+  const isUser = message.role === "user" && !isSubagentResult && !isCompaction;
   const isAssistant = message.role === "assistant";
   const [assistantCopied, setAssistantCopied] = React.useState(false);
   const { t: tRow } = useTranslation();
+
+  if (isCompaction) {
+    return (
+      <div className="scroll-mt-24" data-message-id={message.id}>
+        <CompactionSummaryRow content={message.content} />
+      </div>
+    );
+  }
 
   if (isSubagentResult) {
     return (
@@ -958,6 +1026,11 @@ function UserMessageRow({ message }: { message: UIMessage }) {
       // in-flight divergence without resurrecting tombstoned rows).
       try {
         await useAppStore.getState().refreshMessages(cid);
+      } catch {
+        /* best-effort */
+      }
+      try {
+        await useAppStore.getState().loadConversationArtifacts(cid);
       } catch {
         /* best-effort */
       }

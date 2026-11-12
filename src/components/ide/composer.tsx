@@ -1274,17 +1274,19 @@ function PermissionPromptCard({
   React.useEffect(() => {
     resolveRef.current = onResolve;
   });
-  // Subagent prompts carry a 30-minute server TTL; main-agent prompts use the
-  // default two-minute window.
-  const ttlMs = prompt.ttlMs ?? PERMISSION_APPROVAL_TTL_MS;
+  const ttlMs = prompt.ttlMs !== undefined ? prompt.ttlMs : PERMISSION_APPROVAL_TTL_MS;
+  const hasTtl = typeof ttlMs === "number" && Number.isFinite(ttlMs) && ttlMs > 0;
   const [remaining, setRemaining] = React.useState(() =>
-    Math.max(
-      0,
-      ttlMs - (Date.now() - (Number.isFinite(prompt.createdAt) ? prompt.createdAt : Date.now())),
-    ),
+    hasTtl && typeof ttlMs === "number"
+      ? Math.max(
+          0,
+          ttlMs - (Date.now() - (Number.isFinite(prompt.createdAt) ? prompt.createdAt : Date.now())),
+        )
+      : 0,
   );
 
   React.useEffect(() => {
+    if (!hasTtl || typeof ttlMs !== "number") return;
     const createdAt = Number.isFinite(prompt.createdAt) ? prompt.createdAt : Date.now();
     const tick = () => {
       const left = Math.max(0, ttlMs - (Date.now() - createdAt));
@@ -1302,7 +1304,7 @@ function PermissionPromptCard({
       }
     }, 200);
     return () => clearInterval(interval);
-  }, [prompt.id, prompt.createdAt, ttlMs]);
+  }, [prompt.id, prompt.createdAt, ttlMs, hasTtl]);
 
   const secondsLeft = Math.ceil(remaining / 1000);
 
@@ -1329,13 +1331,15 @@ function PermissionPromptCard({
               {prompt.subagentName}
             </span>
           ) : null}
-          <span
-            className="ms-auto flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground"
-            title={t("auto_deny_in", { seconds: secondsLeft })}
-          >
-            <Clock className="size-3 text-muted-foreground/70" />
-            {secondsLeft}s
-          </span>
+          {hasTtl ? (
+            <span
+              className="ms-auto flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground"
+              title={t("auto_deny_in", { seconds: secondsLeft })}
+            >
+              <Clock className="size-3 text-muted-foreground/70" />
+              {secondsLeft}s
+            </span>
+          ) : null}
         </div>
 
         <div
@@ -1387,12 +1391,14 @@ function PermissionPromptCard({
           </Button>
         </div>
 
-        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-muted">
-          <div
-            className="h-full bg-brand transition-all duration-200 ease-linear"
-            style={{ width: `${(remaining / ttlMs) * 100}%` }}
-          />
-        </div>
+        {hasTtl && typeof ttlMs === "number" && ttlMs > 0 && (
+          <div className="absolute inset-x-0 bottom-0 h-0.5 bg-muted">
+            <div
+              className="h-full bg-brand transition-all duration-200 ease-linear"
+              style={{ width: `${(remaining / ttlMs) * 100}%` }}
+            />
+          </div>
+        )}
       </div>
     </motion.div>
   );

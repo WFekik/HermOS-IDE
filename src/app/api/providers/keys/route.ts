@@ -84,10 +84,21 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       if (typeof m === "string") {
         return { id: m, enabled: true, thinkingLevel: "default" };
       }
+      const serverCap = m.serverContextWindow;
+      let targetCw = m.contextWindow;
+      if (typeof targetCw === "number" && typeof serverCap === "number" && serverCap > 0) {
+        targetCw = Math.min(targetCw, serverCap);
+      }
       return {
         id: m.id,
         enabled: m.enabled !== false,
         thinkingLevel: m.thinkingLevel ?? "default",
+        contextWindow: targetCw ?? serverCap,
+        serverContextWindow: serverCap,
+        contextWindowSource:
+          m.contextWindow !== undefined && (serverCap === undefined || targetCw !== serverCap)
+            ? "user"
+            : undefined,
       };
     });
     modelsJson = JSON.stringify(cfg);

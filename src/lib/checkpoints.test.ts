@@ -286,5 +286,158 @@ describe("Undo truth propagation (no silent partial success)", () => {
       status: "created",
     });
   });
+
+  it("integrates conversation artifacts into undo preview, restore, and containment", async () => {
+    const wsRoot = path.join(tmpDir, "workspace");
+    const convArtifactsDir = path.join(tmpDir, "artifacts", userId, conversationId);
+    await fs.mkdir(wsRoot, { recursive: true });
+    await fs.mkdir(convArtifactsDir, { recursive: true });
+
+    const wsFile = path.join(wsRoot, "main.ts");
+    await fs.writeFile(wsFile, "const x = 1;\n", "utf-8");
+
+    const existingArtifact = path.join(convArtifactsDir, "spec.md");
+    await fs.writeFile(existingArtifact, "# Initial Spec\n", "utf-8");
+
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn-with-artifact");
+
+    // Modify workspace file
+    await snapshotFile(userId, conversationId, cp.id, wsFile);
+    await fs.writeFile(wsFile, "const x = 2;\n", "utf-8");
+
+    // Modify existing artifact
+    await snapshotFile(userId, conversationId, cp.id, existingArtifact);
+    await fs.writeFile(existingArtifact, "# Updated Spec\nMore details\n", "utf-8");
+
+    // Create a new artifact in the same turn
+    const newArtifact = path.join(convArtifactsDir, "report.md");
+    await fs.writeFile(newArtifact, "# Generated Report\nLine 1\nLine 2\n", "utf-8");
+    await trackNewFile(userId, conversationId, cp.id, newArtifact);
+
+    const restoreOpts = {
+      workspaceRoot: wsRoot,
+      conversationArtifactDir: convArtifactsDir,
+    };
+
+    // 1. Verify buildUndoPreview includes both workspace file and artifacts with correct display
+    const preview = await buildUndoPreview(userId, conversationId, t0, restoreOpts);
+    expect(preview.files).toHaveLength(3);
+
+    const wsPreview = preview.files.find((f) => f.path === wsFile);
+    expect(wsPreview).toBeDefined();
+    expect(wsPreview?.display).toBe("main.ts");
+    expect(wsPreview?.status).toBe("modified");
+
+    const existingArtPreview = preview.files.find((f) => f.path === existingArtifact);
+    expect(existingArtPreview).toBeDefined();
+    expect(existingArtPreview?.display).toBe("artifacts/spec.md");
+    expect(existingArtPreview?.status).toBe("modified");
+
+    const newArtPreview = preview.files.find((f) => f.path === newArtifact);
+    expect(newArtPreview).toBeDefined();
+    expect(newArtPreview?.display).toBe("artifacts/report.md");
+    expect(newArtPreview?.status).toBe("created");
+    expect(newArtPreview?.removed).toBe(3);
+
+    // 2. Perform restore
+    const res = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, restoreOpts);
+    expect(res.ok).toBe(true);
+
+    // Workspace file reverted
+    expect(await fs.readFile(wsFile, "utf-8")).toBe("const x = 1;\n");
+    // Existing artifact reverted
+    expect(await fs.readFile(existingArtifact, "utf-8")).toBe("# Initial Spec\n");
+    // Newly created artifact deleted
+    expect(await fs.stat(newArtifact).catch(() => null)).toBeNull();
+    // Artifact parent directory retained
+    expect((await fs.stat(convArtifactsDir)).isDirectory()).toBe(true);
+  });
+
+  it("undoes legacy artifacts that live directly under the user's artifact root", async () => {
+    // Artifacts written by older builds (and by tool paths that resolve the
+    // whole `<artifacts>/<userId>` tree) are not inside a conversation
+    // subdirectory. The single-conversation boundary alone would refuse them,
+    // making those files impossible to undo.
+    const wsRoot = path.join(tmpDir, "workspace");
+    const userArtifactsDir = path.join(tmpDir, "artifacts", userId);
+    const convArtifactsDir = path.join(userArtifactsDir, conversationId);
+    await fs.mkdir(wsRoot, { recursive: true });
+    await fs.mkdir(convArtifactsDir, { recursive: true });
+
+    const legacyArtifact = path.join(userArtifactsDir, "legacy-spec.md");
+    await fs.writeFile(legacyArtifact, "# Legacy\n", "utf-8");
+
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn-with-legacy-artifact");
+    await trackNewFile(userId, conversationId, cp.id, legacyArtifact);
+
+    const restoreOpts = {
+      workspaceRoot: wsRoot,
+      conversationArtifactDir: convArtifactsDir,
+      artifactUserDir: userArtifactsDir,
+    };
+
+    const preview = await buildUndoPreview(userId, conversationId, t0, restoreOpts);
+    const entry = preview.files.find((f) => f.path === legacyArtifact);
+    expect(entry?.display).toBe("artifacts/legacy-spec.md");
+    expect(entry?.status).toBe("created");
+
+    const res = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, restoreOpts);
+    expect(res.ok).toBe(true);
+    expect(await fs.stat(legacyArtifact).catch(() => null)).toBeNull();
+    // The shared user artifact root survives the cleanup.
+    expect((await fs.stat(userArtifactsDir)).isDirectory()).toBe(true);
+  });
+
+  it("keeps the conversation artifact directory when undo removes its last file", async () => {
+    const wsRoot = path.join(tmpDir, "workspace");
+    const userArtifactsDir = path.join(tmpDir, "artifacts", userId);
+    const convArtifactsDir = path.join(userArtifactsDir, conversationId);
+    await fs.mkdir(wsRoot, { recursive: true });
+    await fs.mkdir(convArtifactsDir, { recursive: true });
+
+    const onlyArtifact = path.join(convArtifactsDir, "only.md");
+    await fs.writeFile(onlyArtifact, "# Only\n", "utf-8");
+
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn-with-last-artifact");
+    await trackNewFile(userId, conversationId, cp.id, onlyArtifact);
+
+    const res = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, {
+      workspaceRoot: wsRoot,
+      conversationArtifactDir: convArtifactsDir,
+      artifactUserDir: userArtifactsDir,
+    });
+    expect(res.ok).toBe(true);
+    expect(await fs.stat(onlyArtifact).catch(() => null)).toBeNull();
+    // Cleanup stops at the conversation boundary, not at the user root.
+    expect((await fs.stat(convArtifactsDir)).isDirectory()).toBe(true);
+  });
+
+  it("still refuses undo targets outside every allowed root", async () => {
+    const wsRoot = path.join(tmpDir, "workspace");
+    const userArtifactsDir = path.join(tmpDir, "artifacts", userId);
+    const convArtifactsDir = path.join(userArtifactsDir, conversationId);
+    const outside = path.join(tmpDir, "outside");
+    await fs.mkdir(wsRoot, { recursive: true });
+    await fs.mkdir(convArtifactsDir, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+
+    const outsideFile = path.join(outside, "secret.txt");
+    await fs.writeFile(outsideFile, "keep me\n", "utf-8");
+
+    const t0 = Date.now();
+    const cp = await createCheckpoint(userId, conversationId, "turn-with-outside-file");
+    await trackNewFile(userId, conversationId, cp.id, outsideFile);
+
+    const res = await restoreCheckpointsSinceTimestamp(userId, conversationId, t0, {
+      workspaceRoot: wsRoot,
+      conversationArtifactDir: convArtifactsDir,
+      artifactUserDir: userArtifactsDir,
+    });
+    expect(res.ok).toBe(false);
+    expect(await fs.readFile(outsideFile, "utf-8")).toBe("keep me\n");
+  });
 });
 

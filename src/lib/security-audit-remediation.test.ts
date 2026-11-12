@@ -149,6 +149,8 @@ describe("Security Audit Remediation Regression Suite", () => {
       expect(await checkUrlHost("http://localhost:1234/v1/models")).toBeNull();
       expect(await checkUrlHost("http://127.0.0.1:8080/completion")).toBeNull();
       expect(await checkUrlHost("http://localhost:8000/v1/chat/completions")).toBeNull();
+      expect(await checkUrlHost("http://127.0.0.1:7860/v1")).toBeNull();
+      expect(await checkUrlHost("http://127.0.0.1:8081/v1")).toBeNull();
     });
 
     it("blocks dangerous non-AI ports on loopback (e.g. database, redis, ssh, docker)", async () => {
@@ -157,6 +159,10 @@ describe("Security Audit Remediation Regression Suite", () => {
       expect(await checkUrlHost("http://localhost:5432/")).toMatch(/blocked/);
       expect(await checkUrlHost("http://127.0.0.1:2375/")).toMatch(/blocked/);
       expect(await checkUrlHost("http://127.0.0.1:9000/")).toMatch(/blocked/);
+      // The desktop server binds 3001–3999; agent fetches must not bridge into
+      // the app's own authenticated-looking API surface.
+      expect(await checkUrlHost("http://127.0.0.1:3001/api/providers")).toMatch(/blocked/);
+      expect(await checkUrlHost("http://127.0.0.1:8888/v1")).toMatch(/blocked/);
     });
   });
 });

@@ -6,6 +6,8 @@ import {
   stripHtml,
   parseRetryHeader,
   getErrorStatusCode,
+  isNetworkError,
+  isPermanentDnsError,
   isTransientStreamError,
   retryAttemptLimit,
   retryBackoffMs,
@@ -57,6 +59,8 @@ import {
   type PermissionDecision,
 } from "@/lib/permissions-prompt";
 import { SUBAGENT_PERMISSION_APPROVAL_TTL_MS } from "@/lib/permissions-core";
+import { languageDisplayName } from "@/lib/detect-language";
+import type { SupportedLanguage } from "@/lib/i18n";
 import { raceWithAbort } from "@/lib/question-prompt";
 import { isTrustedLoopbackBrowserOpen } from "@/lib/browser-trust";
 import { audit } from "@/app/api/_lib/helpers";
@@ -141,6 +145,7 @@ export const DEFAULT_SUBAGENT_PROMPT = `You are an HermOS research subagent. Gat
 - NO OVERTHINKING: read files <500 lines in one call; for larger files read by range. Never re-read identical ranges.
 - TREES: show directory structures only as fenced \`\`\`tree code blocks, one entry per line — never inline with | separators.
 - PROTECT SECRETS: never repeat credential content or API keys in your report.
+- LANGUAGE: conduct internal reasoning/thinking in the application's selected language, and report in the language used in the task prompt.
 - REPORT ONLY: 1-sentence headline + 2-5 evidence bullets with exact paths. No preamble.`;
 
 export const DEFAULT_WORKER_SUBAGENT_PROMPT = `You are an HermOS worker subagent. Execute the task precisely, then verify.
@@ -153,16 +158,20 @@ export const DEFAULT_WORKER_SUBAGENT_PROMPT = `You are an HermOS worker subagent
 - MINIMAL: change only what the task requires; no stubs or TODOs.
 - TREES: show directory structures only as fenced \`\`\`tree code blocks, one entry per line — never inline with | separators.
 - PROTECT SECRETS: never print, echo, or write real keys, tokens, or secrets.
+- LANGUAGE: conduct internal reasoning/thinking in the application's selected language, and report in the language used in the task prompt.
 - REPORT ONLY: 1-sentence summary, files changed, verification. No preamble.`;
 
 import { cleanContent, parseTextToolCalls, parseNonStreamingResponse, extractUpstreamError, stripThinkingTags } from "@/lib/ai/tool-call-parser";
 
 /** Select subagent prompt based on tool access — workers that can write get the verification-focused prompt. */
-function selectSubagentPrompt(allowedTools?: string[]): string {
-  if (!allowedTools || allowedTools.length === 0) return DEFAULT_SUBAGENT_PROMPT;
-  // create_artifact writes artifacts but does not modify workspace files directly.
-  const hasWriteAccess = allowedTools.some(t => isWriteTool(t) && t !== "create_artifact");
-  return hasWriteAccess ? DEFAULT_WORKER_SUBAGENT_PROMPT : DEFAULT_SUBAGENT_PROMPT;
+function selectSubagentPrompt(allowedTools?: string[], uiLanguage?: string): string {
+  const hasWriteAccess = (allowedTools && allowedTools.length > 0)
+    ? allowedTools.some(t => isWriteTool(t) && t !== "create_artifact")
+    : false;
+  const base = hasWriteAccess ? DEFAULT_WORKER_SUBAGENT_PROMPT : DEFAULT_SUBAGENT_PROMPT;
+  if (!uiLanguage) return base;
+  const langName = languageDisplayName(uiLanguage as SupportedLanguage);
+  return `${base}\n- LANGUAGE & REASONING: Conduct internal thinking and reasoning traces in ${langName} (${uiLanguage}) matching the application's selected language. Report findings in the language requested or used in the task instruction.`;
 }
 
 /** Apply a terminal transition and queue the report for the main agent. */
@@ -184,13 +193,13 @@ const SUBAGENT_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set([
 
 /**
  * Max worker iterations — configurable via HERMOS_MAX_SUBAGENT_ITERATIONS.
- * Defaults to 300 to support complex autonomous multi-step tasks without early cutoff.
+ * Defaults to Infinity (uncapped) to support autonomous long-horizon multi-step tasks without early cutoff.
  */
 export const MAX_SUBAGENT_ITERATIONS: number = (() => {
   const raw = process.env.HERMOS_MAX_SUBAGENT_ITERATIONS;
-  if (!raw) return 300;
+  if (!raw) return Infinity;
   const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 300;
+  return Number.isFinite(n) && n > 0 ? n : Infinity;
 })();
 
 const conversationToolLocks = new Map<string, Promise<void>>();
@@ -252,19 +261,23 @@ export function spawnSubagent(
     checkpointId?: string;
     thinkingLevel?: string;
     agentMode?: AgentMode;
+    maxIterations?: number;
+    uiLanguage?: string;
   },
 ): { subagentId: string; name: string; status: "running" } {
   const allowedTools = resolveSubagentAllowedTools(opts);
   const session = createSession(userId, conversationId, {
     name: opts.name,
     task: opts.task,
-    systemPrompt: opts.systemPrompt || selectSubagentPrompt(allowedTools),
+    systemPrompt: opts.systemPrompt || selectSubagentPrompt(allowedTools, opts.uiLanguage),
     allowedTools,
     provider: opts.provider || "",
     model: opts.model || "",
     checkpointId: opts.checkpointId,
     thinkingLevel: opts.thinkingLevel,
     agentMode: opts.agentMode,
+    maxIterations: opts.maxIterations,
+    uiLanguage: opts.uiLanguage,
   });
   // Fire-and-forget with error boundary to prevent awaitSubagents from hanging on early crash.
   runSubagentWorker(session.id).catch((err) => {
@@ -330,7 +343,8 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
     };
     let sawMeasured = false;
 
-    for (let iter = 0; iter < MAX_SUBAGENT_ITERATIONS; iter++) {
+    const effectiveMaxIterations = session.maxIterations ?? MAX_SUBAGENT_ITERATIONS;
+    for (let iter = 0; iter < effectiveMaxIterations; iter++) {
       const live = internalGet(sessionId);
       if (!live || sessionAbort.signal.aborted || live.rolledBack) return;
       const mailbox = drainSubagentMailbox(sessionId);
@@ -418,8 +432,16 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
                     m && typeof m === "object" && "id" in m && (m as { id: string }).id === byok.model,
                 );
                 if (entry && typeof entry === "object") {
-                  if ("contextWindow" in entry && typeof (entry as { contextWindow: number }).contextWindow === "number") {
-                    subagentContextWindow = (entry as { contextWindow: number }).contextWindow;
+                  const srvCap = "serverContextWindow" in entry && typeof (entry as { serverContextWindow: number }).serverContextWindow === "number"
+                    ? (entry as { serverContextWindow: number }).serverContextWindow
+                    : undefined;
+                  const usrCw = "contextWindow" in entry && typeof (entry as { contextWindow: number }).contextWindow === "number"
+                    ? (entry as { contextWindow: number }).contextWindow
+                    : undefined;
+                  if (srvCap !== undefined) {
+                    subagentContextWindow = usrCw !== undefined ? Math.min(usrCw, srvCap) : srvCap;
+                  } else if (usrCw !== undefined) {
+                    subagentContextWindow = usrCw;
                   }
                   if ("maxOutput" in entry && typeof (entry as { maxOutput: number }).maxOutput === "number") {
                     const maxOut = (entry as { maxOutput: number }).maxOutput;
@@ -488,7 +510,10 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           // so the model sees its own past tool calls in history and doesn't
           // repeat the same call infinitely. The main executor (executor.ts)
           // preserves these fields — the subagent must do the same.
-          const effectiveContextWindow = subagentContextWindow ?? lookupContextWindow(byok.model);
+          const effectiveContextWindow =
+            subagentContextWindow ??
+            lookupContextWindow(byok.model) ??
+            (session.provider === "ollama" || session.provider === "lmstudio" ? 4096 : undefined);
           interface SubagentTruncationMsg {
             role: string;
             content: string;
@@ -681,8 +706,9 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
           if (isTransient) {
             // Mirror the main agent's retry ladder: 429s are expected under
             // shared-key rate limits, so wait them out (15 attempts) instead
-            // of failing the subagent after three.
-            const maxAttempts = retryAttemptLimit(is429);
+            // of failing the subagent after three; network drops get 10 attempts.
+            const isNet = isNetworkError(err);
+            const maxAttempts = retryAttemptLimit(is429, isNet, isPermanentDnsError(err));
             if (attempts < maxAttempts - 1) {
               const headerVal = (err as any)?.retryAfter || (err as any)?.headers?.get?.("retry-after") || (err as any)?.headers?.get?.("x-ratelimit-reset");
               const headerMs = (err as any)?.retryAfterMs || parseRetryHeader(headerVal);
@@ -691,7 +717,7 @@ async function runSubagentWorker(sessionId: string, opts?: { resume?: boolean })
               const delaySec = Math.max(1, Math.ceil(delayMs / 1000));
               appendProgress(
                 sessionId,
-                `${is429 ? "Rate limited" : "Transient error"} — retrying in ${delaySec}s (attempt ${attempts + 2}/${maxAttempts})`,
+                `${is429 ? "Rate limited" : isNet ? "Network connection lost" : "Transient error"} — retrying in ${delaySec}s (attempt ${attempts + 2}/${maxAttempts})`,
               );
               for (let sec = delaySec; sec > 0; sec--) {
                 const liveSession = internalGet(sessionId);

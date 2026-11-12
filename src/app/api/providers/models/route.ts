@@ -9,12 +9,12 @@ import {
   audit,
 } from "@/app/api/_lib/helpers";
 import { decrypt, encrypt } from "@/lib/encryption";
-import { PROVIDERS, getProvider } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider, isKeylessProvider } from "@/lib/ai/providers";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { providerIdSchema, thinkingLevelSchema } from "@/lib/validation";
-import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
-import { extractCapabilities, extractPricing, extractReasoningCapabilities } from "@/lib/provider-fetch";
+import { parseModelsColumn, mergeReasoningCapability, resolveModelContextWindow, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
+import { extractCapabilities, extractPricing, extractReasoningCapabilities, resolveOllamaContextWindows } from "@/lib/provider-fetch";
 import { normalizeThinkingLevel } from "@/lib/reasoning";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
 import type { ModelReasoningCapabilities } from "@/lib/reasoning";
@@ -48,6 +48,7 @@ const putSchema = z.object({
         enabled: z.boolean().optional(),
         thinkingLevel: thinkingLevelSchema.optional(),
         contextWindow: z.number().int().positive().optional(),
+        serverContextWindow: z.number().int().positive().optional(),
         pricing: z
           .object({ in: z.number().nonnegative(), out: z.number().nonnegative() })
           .optional(),
@@ -60,6 +61,7 @@ interface FetchedModel {
   id: string;
   name: string;
   contextWindow?: number;
+  serverContextWindow?: number;
   maxOutput?: number;
   pricing?: ModelRate;
   reasoning?: ModelReasoningCapabilities;
@@ -241,12 +243,25 @@ async function fetchProviderModels(
         .map((m) => m?.id)
         .filter((id): id is string => typeof id === "string");
       const deduped = dedupeByIds(ids);
+      // Ollama reports context lengths only on its native /api/show endpoint —
+      // probe them so truncation and auto-compact have a real window to work with.
+      const ollamaWins = provider === "ollama" ? await resolveOllamaContextWindows(baseUrl, deduped) : undefined;
       const models = await Promise.all(
         deduped.map(async (id) => {
           const item = activeList.find((m) => m?.id === id);
           const caps = extractCapabilities(item);
-          const reg = caps.contextWindow !== undefined ? {} : await lookupModelInRegistry(id, provider, { core: true });
-          return { id, name: id, contextWindow: caps.contextWindow ?? reg.contextWindow ?? lookupContextWindow(id), maxOutput: caps.maxOutput ?? reg.maxOutput, pricing: extractPricing(item) ?? undefined, reasoning: extractReasoningCapabilities(item) };
+          const serverCtx = caps.contextWindow ?? ollamaWins?.get(id);
+          const reg = serverCtx !== undefined ? {} : await lookupModelInRegistry(id, provider, { core: true });
+          const cw = serverCtx ?? reg.contextWindow ?? lookupContextWindow(id) ?? (provider === "ollama" || provider === "lmstudio" ? 4096 : undefined);
+          return {
+            id,
+            name: id,
+            contextWindow: cw,
+            serverContextWindow: serverCtx,
+            maxOutput: caps.maxOutput ?? reg.maxOutput,
+            pricing: extractPricing(item) ?? undefined,
+            reasoning: extractReasoningCapabilities(item),
+          };
         }),
       );
       return { ok: true, models };
@@ -342,7 +357,12 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     );
     return ok({
       ok: true,
-      models: existing.map((m) => ({ id: m.id, name: m.id })),
+      models: existing.map((m) => ({
+        id: m.id,
+        name: m.id,
+        contextWindow: m.contextWindow,
+        serverContextWindow: m.serverContextWindow,
+      })),
       keptStale: true,
     });
   }
@@ -358,11 +378,18 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       // `reasoning`, `reasoning_options`, `interleaved.field` — see
       // mergeReasoningCapability.
       const reg = await lookupModelInRegistry(m.id, provider);
+      const { contextWindow, serverContextWindow, contextWindowSource } = resolveModelContextWindow(
+        prev,
+        m.serverContextWindow ?? m.contextWindow,
+        [reg?.contextWindow, lookupContextWindow(m.id)],
+      );
       return {
         id: m.id,
         enabled: prev ? prev.enabled : true,
         thinkingLevel: normalizeThinkingLevel(prev?.thinkingLevel),
-        contextWindow: m.contextWindow,
+        contextWindow,
+        serverContextWindow,
+        contextWindowSource,
         maxOutput: m.maxOutput,
         pricing: m.pricing ?? prev?.pricing,
         reasoning: mergeReasoningCapability(m.reasoning, prev?.reasoning, reg),
@@ -425,21 +452,46 @@ export const PUT = withErrorHandler(async (req: NextRequest) => {
     return apiError("Invalid models payload.", 400, { details: parsed.error.flatten() });
   }
   const provider = parsed.data.provider as ProviderId;
-  const row = await db.providerKey.findUnique({
+  let row = await db.providerKey.findUnique({
     where: { userId_provider: { userId: user.id, provider } },
   });
   if (!row) {
-    return apiError("Save an API key for this provider first.", 404);
+    if (isKeylessProvider(provider)) {
+      row = await db.providerKey.create({
+        data: {
+          userId: user.id,
+          provider,
+          encryptedKey: encrypt(""),
+          keyHint: "",
+          baseUrl: null,
+          models: "[]",
+          isActive: true,
+        },
+      });
+    } else {
+      return apiError("Save an API key for this provider first.", 404);
+    }
   }
   const existing = parseModelsColumn(row.models);
   const existingById = new Map(existing.map((m) => [m.id, m]));
   const config: ProviderModelConfig[] = parsed.data.models.map((m) => {
     const prev = existingById.get(m.id);
+    // Stored cap wins: the UI forwards the catalog value, but a stale/derived
+    // cap must never overwrite what the server already established.
+    const serverCap = prev?.serverContextWindow ?? m.serverContextWindow;
+    let targetCw = m.contextWindow ?? prev?.contextWindow;
+    if (typeof targetCw === "number" && typeof serverCap === "number" && serverCap > 0) {
+      targetCw = Math.min(targetCw, serverCap);
+    }
+    const isUserOverride =
+      m.contextWindow !== undefined && (serverCap === undefined || targetCw !== serverCap);
     return {
       id: m.id,
       enabled: m.enabled !== false,
       thinkingLevel: m.thinkingLevel ?? "default",
-      contextWindow: m.contextWindow ?? prev?.contextWindow,
+      contextWindow: targetCw ?? serverCap,
+      serverContextWindow: serverCap,
+      contextWindowSource: isUserOverride ? "user" : prev?.contextWindowSource,
       maxOutput: prev?.maxOutput,
       pricing: m.pricing ?? prev?.pricing,
       reasoning: prev?.reasoning,

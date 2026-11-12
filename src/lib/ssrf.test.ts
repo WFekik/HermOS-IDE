@@ -15,8 +15,9 @@ vi.mock("dns/promises", () => ({
         { address: "10.0.0.5", family: 4 },
       ];
     }
-    const err = new Error("ENOTFOUND") as NodeJS.ErrnoException;
-    err.code = "ENOTFOUND";
+    const code = host === "transient-dns.local" ? "EAI_AGAIN" : "ENOTFOUND";
+    const err = new Error(code) as NodeJS.ErrnoException;
+    err.code = code;
     throw err;
   }),
 }));
@@ -116,13 +117,22 @@ describe("checkUrlHost — default mode (fail-closed, local-AI allowlist)", () =
     expect(await m.checkUrlHost("http://0.0.0.0/")).toBeNull();
     expect(await m.checkUrlHost("http://[::ffff:127.0.0.1]/")).toBeNull();
     expect(await m.checkUrlHost("http://[::ffff:7f00:1]/")).toBeNull();
+    expect(await m.checkUrlHost("http://127.0.0.1:7860/")).toBeNull();
+    expect(await m.checkUrlHost("http://127.0.0.1:7861/")).toBeNull();
+    expect(await m.checkUrlHost("http://127.0.0.1:8081/")).toBeNull();
   });
 
-  it("blocks unapproved loopback ports (e.g. redis, postgres, ssh)", async () => {
+  it("blocks unapproved loopback ports (e.g. redis, postgres, ssh, app APIs)", async () => {
     const m = await loadSsrf("default");
     expect(await m.checkUrlHost("http://127.0.0.1:6379/")).toMatch(/blocked/);
     expect(await m.checkUrlHost("http://localhost:22/")).toMatch(/blocked/);
     expect(await m.checkUrlHost("http://127.0.0.1:5432/")).toMatch(/blocked/);
+    // Generic dev/admin surfaces are not model endpoints, and the desktop
+    // server's own API port must never be reachable from agent-driven fetches.
+    expect(await m.checkUrlHost("http://127.0.0.1:3001/")).toMatch(/blocked/);
+    expect(await m.checkUrlHost("http://127.0.0.1:4000/")).toMatch(/blocked/);
+    expect(await m.checkUrlHost("http://127.0.0.1:8888/v1")).toMatch(/blocked/);
+    expect(await m.checkUrlHost("http://127.0.0.1:1337/")).toMatch(/blocked/);
   });
 
   it("blocks RFC1918 and other loopback-adjacent ranges by default", async () => {
@@ -204,6 +214,29 @@ describe("checkUrlHost — strict mode (SSRF_BLOCK_PRIVATE=true)", () => {
   it("blocks hostnames that resolve to any private address", async () => {
     const m = await loadSsrf("strict");
     expect(await m.checkUrlHost("http://mixed.local/")).toMatch(/private\/internal/);
+  });
+});
+
+describe("assertUrlAllowed — resolver code propagation", () => {
+  it("throws the resolver's own code so retries can tell NXDOMAIN from a resolver outage", async () => {
+    const m = await loadSsrf("default");
+    await expect(m.assertUrlAllowed("http://does-not-exist.example/")).rejects.toMatchObject({
+      code: "ENOTFOUND",
+    });
+    await expect(m.assertUrlAllowed("http://transient-dns.local/")).rejects.toMatchObject({
+      code: "EAI_AGAIN",
+    });
+    await expect(m.assertUrlAllowed("http://does-not-exist.example/")).rejects.toThrow(
+      /DNS resolution failed/,
+    );
+  });
+
+  it("throws a plain policy error (no resolver code) for blocked targets", async () => {
+    const m = await loadSsrf("strict");
+    const err = await m.assertUrlAllowed("http://10.0.0.5/").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/blocked by SSRF policy/);
+    expect((err as { code?: string }).code).toBeUndefined();
   });
 });
 
@@ -308,5 +341,28 @@ describe("fetchWithSsrf", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("throws a transient DNS resolution error on network drop without claiming SSRF block", async () => {
+    const { assertUrlAllowed } = await import("./ssrf");
+    await expect(assertUrlAllowed("https://unresolvable-drop.example.com/v1")).rejects.toThrow(
+      /DNS resolution failed.*network may be offline/i,
+    );
+    try {
+      await assertUrlAllowed("https://unresolvable-drop.example.com/v1");
+    } catch (err: any) {
+      expect(err.message).not.toMatch(/blocked by ssrf policy/i);
+      expect(err.code).toBe("ENOTFOUND");
+    }
+  });
+
+  it("still throws an SSRF policy error when accessing a blocked loopback port or private range", async () => {
+    const { assertUrlAllowed } = await import("./ssrf");
+    await expect(assertUrlAllowed("http://127.0.0.1:6379/")).rejects.toThrow(
+      /URL blocked by SSRF policy/i,
+    );
+    await expect(assertUrlAllowed("http://169.254.169.254/")).rejects.toThrow(
+      /URL blocked by SSRF policy/i,
+    );
   });
 });

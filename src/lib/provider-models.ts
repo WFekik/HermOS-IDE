@@ -23,6 +23,10 @@ export interface ProviderModelConfig {
   enabled: boolean;
   thinkingLevel: ThinkingLevel;
   contextWindow?: number;
+  /** Maximum context window allowed by the server / provider definition. Caps UI config. */
+  serverContextWindow?: number;
+  /** Present when the user explicitly set `contextWindow`; capped by `serverContextWindow`. */
+  contextWindowSource?: "user";
   maxOutput?: number;
   /** Live per-model pricing (USD per 1M tokens) from provider /models metadata. */
   pricing?: ModelRate;
@@ -46,6 +50,7 @@ export function parseModelsColumn(raw: string | null | undefined): ProviderModel
           if (!id) return null;
           const enabled = item.enabled !== false;
           const contextWindow = typeof item.contextWindow === "number" ? item.contextWindow : undefined;
+          const serverContextWindow = typeof item.serverContextWindow === "number" ? item.serverContextWindow : undefined;
           const maxOutput = typeof item.maxOutput === "number" ? item.maxOutput : undefined;
           const pricing =
             item.pricing &&
@@ -59,6 +64,8 @@ export function parseModelsColumn(raw: string | null | undefined): ProviderModel
             enabled,
             thinkingLevel: normalizeThinkingLevel(item.thinkingLevel),
             contextWindow,
+            serverContextWindow,
+            contextWindowSource: item.contextWindowSource === "user" ? "user" : undefined,
             maxOutput,
             pricing,
             reasoning: parseModelReasoningCapabilities(item.reasoning),
@@ -80,6 +87,49 @@ export function parseModelsColumn(raw: string | null | undefined): ProviderModel
  */
 export function shouldPersistFetchedModels(fetchedCount: number, storedCount: number): boolean {
   return fetchedCount > 0 || storedCount === 0;
+}
+
+/**
+ * Effective context window for a freshly fetched model. When the server
+ * defines a context window (live detection or stored server definition),
+ * that server context is prioritized and acts as the default one AND the
+ * strict maximum cap for any user UI configuration.
+ */
+export function resolveModelContextWindow(
+  prev: ProviderModelConfig | undefined,
+  detected: number | undefined,
+  fallbacks: readonly (number | undefined)[],
+): { contextWindow?: number; serverContextWindow?: number; contextWindowSource?: "user" } {
+  const serverContext =
+    typeof detected === "number" && detected > 0
+      ? detected
+      : typeof prev?.serverContextWindow === "number" && prev.serverContextWindow > 0
+        ? prev.serverContextWindow
+        : undefined;
+
+  if (serverContext !== undefined) {
+    const userCw =
+      prev?.contextWindowSource === "user" && typeof prev.contextWindow === "number" && prev.contextWindow > 0
+        ? prev.contextWindow
+        : undefined;
+
+    const effectiveCw = userCw !== undefined ? Math.min(userCw, serverContext) : serverContext;
+
+    return {
+      contextWindow: effectiveCw,
+      serverContextWindow: serverContext,
+      contextWindowSource: userCw !== undefined && userCw < serverContext ? "user" : undefined,
+    };
+  }
+
+  if (prev?.contextWindowSource === "user" && typeof prev.contextWindow === "number" && prev.contextWindow > 0) {
+    return { contextWindow: prev.contextWindow, contextWindowSource: "user" };
+  }
+  if (typeof prev?.contextWindow === "number" && prev.contextWindow > 0) {
+    return { contextWindow: prev.contextWindow, contextWindowSource: prev.contextWindowSource };
+  }
+  const fallback = fallbacks.find((f) => typeof f === "number" && f > 0);
+  return fallback !== undefined ? { contextWindow: fallback } : {};
 }
 
 /** Resolves model billing rate (USD per 1M tokens) from runtime model config or provider catalog. */

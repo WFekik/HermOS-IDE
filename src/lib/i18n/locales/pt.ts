@@ -265,6 +265,7 @@ export const pt: Record<string, string> = {
   "connect": "Conectar",
   "connected": "Conectado",
   "context": "Contexto",
+  "context_compacted": "Contexto compactado",
   "context_governance": "Governança de contexto",
   "context_governance_desc": "Políticas de retenção controlam a janela de contexto do agente.",
   "context_left": "({remaining} restantes)",

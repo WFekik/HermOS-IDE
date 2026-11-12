@@ -35,6 +35,8 @@ export type ToolCtx = {
   userAllowedOutsideWorkspace?: boolean;
   /** Mode of the invoking agent; architect mode keeps spawned subagents read-only. */
   agentMode?: "agent" | "chat" | "architect";
+  /** UI language of the invoking agent for subagent localized thinking and reporting. */
+  uiLanguage?: string;
 };
 
 export type ToolResult = { ok: boolean; result: unknown };

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireUser } from "@/lib/session";
 import { withRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
-import { PROVIDERS, getProvider } from "@/lib/ai/providers";
+import { PROVIDERS, getProvider, isKeylessProvider, DEFAULT_PROVIDER } from "@/lib/ai/providers";
 import { decrypt } from "@/lib/encryption";
 import type { ProviderId } from "@/lib/types";
 import {
@@ -14,18 +14,45 @@ import {
   clearResponsesRequired,
   buildResponsesRequestBody,
   resolveProviderUrls,
+  resolveProviderBaseUrl,
   ZEN_PROTOCOL_FAILOVER_STATUSES,
   TITLE_MAX_OUTPUT_TOKENS,
 } from "@/lib/ai/provider-payloads";
 import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
+import { cleanHeuristicTitle } from "@/lib/conversation-title";
 import {
   withErrorHandler,
   notFound,
   ok,
+  parseJson,
 } from "@/app/api/_lib/helpers";
 
 export const dynamic = "force-dynamic";
+
+function cleanTitle(raw: string): string {
+  let cleaned = (raw || "").trim();
+  cleaned = cleaned.replace(/<think[\s\S]*?<\/think>/gi, "").trim();
+  cleaned = cleaned.replace(/<think[\s\S]*$/gi, "").trim();
+  cleaned = cleaned.replace(/^#+\s*/, "");
+  cleaned = cleaned.replace(/^\*+\s*|\s*\*+$/g, "");
+  cleaned = cleaned.replace(/^[-*•]\s+/, "");
+  cleaned = cleaned.replace(/^(the user wants|the user asks|conversation title|title|topic|subject)[:\s-]*/i, "");
+  cleaned = cleaned.replace(/^["'`]+|["'`]+$/g, "").trim();
+  cleaned = cleaned.replace(/[.?!]+$/, "").trim();
+
+  if (
+    !cleaned ||
+    cleaned.toLowerCase().includes("concise title") ||
+    cleaned.toLowerCase().includes("user wants") ||
+    cleaned.toLowerCase() === "new conversation"
+  ) {
+    return "";
+  }
+  return cleaned.length > 60 ? cleaned.slice(0, 60).replace(/\s+\S*$/, "") : cleaned;
+}
+
+const TITLE_PROMPT_BUDGET = 250;
 
 async function generateTitle(
   baseUrl: string,
@@ -35,27 +62,63 @@ async function generateTitle(
   providerId?: string,
   sessionId?: string,
 ): Promise<string> {
+  const prompt = `Analyze the conversation excerpt below and generate a short, high-level topic title (3 to 5 words).
+Rules:
+- Capture the primary task or technical topic (e.g. "Docker Deployment Fix", "Next.js App Routing", "Local Models Auto-Compaction").
+- Do NOT copy the user's initial sentence or words verbatim.
+- Do NOT wrap in quotes, do NOT add trailing punctuation, and do NOT include any preamble or thought output.
+- Output ONLY the 3 to 5 word title.
+
+Conversation excerpt:
+${preview}`;
+
+  if (providerId === "anthropic") {
+    const url = baseUrl.endsWith("/messages")
+      ? baseUrl
+      : `${baseUrl.replace(/\/+$/, "")}/messages`;
+    const res = await fetchWithSsrf(url, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: TITLE_PROMPT_BUDGET,
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const err = new Error(`Anthropic title generation failed: ${res.status} ${text.slice(0, 200)}`);
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
+    }
+    const data = (await res.json().catch(() => null)) as { content?: Array<{ type?: string; text?: string }> } | null;
+    let raw = "";
+    if (Array.isArray(data?.content)) {
+      for (const block of data.content) {
+        if (block.type === "text" && typeof block.text === "string") {
+          raw += block.text;
+        }
+      }
+    }
+    return cleanTitle(raw);
+  }
+
   const useResponses = isResponsesRequired(providerId, baseUrl, model);
   const { completionsUrl, responsesUrl } = resolveProviderUrls(baseUrl);
   const url = useResponses ? responsesUrl : completionsUrl;
-  // SSRF: user-editable baseUrl — fetchWithSsrf validates every redirect hop.
 
-  const messages = [
-    {
-      role: "system",
-      content: "You are a title generator. Generate a short, descriptive title (3 to 5 words) for the conversation topic. Output ONLY the title text. Do NOT include preambles, meta-commentary, or quotes.",
-    },
-    {
-      role: "user",
-      content: `Messages:\n${preview}`,
-    },
-  ];
+  const messages = [{ role: "user", content: prompt }];
 
   const headers = buildProviderHeaders({
     providerId,
     baseUrl,
     apiKey,
-    // Stable per-conversation affinity (not random per request).
     sessionId,
     acceptStream: false,
   });
@@ -65,14 +128,14 @@ async function generateTitle(
     ? buildResponsesRequestBody({
         model,
         messages,
-        maxTokens: TITLE_MAX_OUTPUT_TOKENS,
+        maxTokens: TITLE_PROMPT_BUDGET,
         temperature: 0.3,
         stream: false,
       })
     : {
         model,
         messages,
-        max_tokens: TITLE_MAX_OUTPUT_TOKENS,
+        max_tokens: TITLE_PROMPT_BUDGET,
         temperature: 0.3,
       };
 
@@ -80,6 +143,7 @@ async function generateTitle(
     method: "POST",
     headers: freshHeaders(),
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
   });
 
   const isZen = isZenProvider(providerId, baseUrl);
@@ -89,7 +153,7 @@ async function generateTitle(
     const fallbackBody = buildResponsesRequestBody({
       model,
       messages,
-      maxTokens: TITLE_MAX_OUTPUT_TOKENS,
+      maxTokens: TITLE_PROMPT_BUDGET,
       temperature: 0.3,
       stream: false,
     });
@@ -97,6 +161,7 @@ async function generateTitle(
       method: "POST",
       headers: freshHeaders(),
       body: JSON.stringify(fallbackBody),
+      signal: AbortSignal.timeout(10000),
     });
   } else if (useResponses && ZEN_PROTOCOL_FAILOVER_STATUSES.has(res.status) && isZen) {
     clearResponsesRequired(baseUrl, model);
@@ -104,7 +169,8 @@ async function generateTitle(
     res = await fetchWithSsrf(fallbackUrl, {
       method: "POST",
       headers: freshHeaders(),
-      body: JSON.stringify({ model, messages, max_tokens: TITLE_MAX_OUTPUT_TOKENS, temperature: 0.3 }),
+      body: JSON.stringify({ model, messages, max_tokens: TITLE_PROMPT_BUDGET, temperature: 0.3 }),
+      signal: AbortSignal.timeout(10000),
     });
   }
 
@@ -117,18 +183,12 @@ async function generateTitle(
 
   const fullBody = await res.text();
   const parsed = parseNonStreamingResponse(fullBody);
-  let raw = (parsed?.content ?? "New conversation").trim();
-
-  // Clean preambles like "The user wants a concise title...", "Title:", quotes
-  raw = raw.replace(/^(the user wants|the user asks|conversation title|title)[:\s]*/i, "");
-  raw = raw.replace(/^["'`](.*)["'`]$/, "$1").trim();
-  raw = raw.replace(/\.$/, "").trim();
-
-  if (!raw || raw.toLowerCase().includes("concise title") || raw.toLowerCase().includes("user wants")) {
-    raw = "Codebase Review";
+  let raw = (parsed?.content ?? "").trim();
+  if (!raw && parsed?.thinking) {
+    raw = parsed.thinking.trim();
   }
 
-  return raw.length > 50 ? raw.slice(0, 50).replace(/\s+\S*$/, "") : raw;
+  return cleanTitle(raw);
 }
 
 export const POST = withErrorHandler(
@@ -141,55 +201,152 @@ export const POST = withErrorHandler(
     const conv = await db.conversation.findUnique({ where: { id } });
     if (!conv || conv.userId !== user.id) return notFound("Conversation not found");
 
-    if (conv.title !== "New conversation") {
+    const body = await parseJson<{ force?: boolean }>(req).catch(() => null);
+    const force = body?.force === true;
+
+    if (!force && conv.title && conv.title.trim().toLowerCase() !== "new conversation" && conv.title.trim() !== "") {
       return ok({ title: conv.title });
     }
 
     const messages = await db.message.findMany({
       where: { conversationId: id, role: { in: ["user", "assistant"] } },
       orderBy: { createdAt: "asc" },
-      take: 4,
+      take: 8,
       select: { role: true, content: true },
     });
 
-    if (messages.length === 0) {
-      return ok({ title: "New conversation" });
+    const realMessages = messages.filter(
+      (m) =>
+        m.content &&
+        !m.content.startsWith("<context_summary") &&
+        !m.content.startsWith("<subagent_report"),
+    );
+
+    if (realMessages.length === 0) {
+      return ok({ title: conv.title || "New conversation" });
     }
 
-    const preview = messages
-      .map((m) => `${m.role}: ${(m.content || "(empty)").slice(0, 300)}`)
+    const firstUserMsg = realMessages.find((m) => m.role === "user");
+    const fallbackTitle = cleanHeuristicTitle(firstUserMsg?.content || "") || "New conversation";
+
+    const preview = realMessages
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${(m.content || "(empty)").slice(0, 400)}`)
       .join("\n\n");
 
-    // Resolve provider key for the conversation's provider
-    const providerId = (conv.provider || "") as ProviderId;
-
-    const row = await db.providerKey.findUnique({
-      where: { userId_provider: { userId: user.id, provider: providerId } },
+    const lastMsgWithModel = await db.message.findFirst({
+      where: {
+        conversationId: id,
+        model: { not: null },
+        provider: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { provider: true, model: true },
     });
-    if (!row || !row.isActive || !row.encryptedKey) return ok({ title: conv.title });
-    let apiKey: string;
-    try {
-      apiKey = decrypt(row.encryptedKey);
-    } catch (err) {
-      console.warn("[generate-title] Failed to decrypt API key:", err instanceof Error ? err.message : err);
-      return ok({ title: conv.title, failed: true });
-    }
-    const titleInfo = getProvider(providerId) ?? PROVIDERS[providerId];
-    const baseUrl = row.baseUrl || titleInfo?.baseUrl || "";
-    const model = conv.model ?? titleInfo?.models[0]?.id ?? "";
-    if (!model) return ok({ title: conv.title });
 
-    let title: string;
+    let effectiveProvider = (lastMsgWithModel?.provider || conv.provider || "") as ProviderId;
+    if (!effectiveProvider || effectiveProvider === "free" || !PROVIDERS[effectiveProvider]) {
+      const activeKey = await db.providerKey.findFirst({
+        where: { userId: user.id, isActive: true },
+        orderBy: { updatedAt: "desc" },
+      });
+      effectiveProvider = (activeKey?.provider || DEFAULT_PROVIDER) as ProviderId;
+    }
+
+    const keyless = isKeylessProvider(effectiveProvider);
+    const row = effectiveProvider
+      ? await db.providerKey.findUnique({
+          where: { userId_provider: { userId: user.id, provider: effectiveProvider } },
+        })
+      : null;
+
+    const baseUrl = resolveProviderBaseUrl(effectiveProvider, row?.baseUrl);
+
+    let effectiveModel = (lastMsgWithModel?.model || conv.model || "").trim();
+    if (!effectiveModel || effectiveModel === "auto") {
+      if (row?.models) {
+        try {
+          const parsed = JSON.parse(row.models);
+          if (Array.isArray(parsed)) {
+            const firstActive = parsed.find((m: any) => m && m.enabled !== false && typeof m.id === "string");
+            if (firstActive?.id) effectiveModel = firstActive.id;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (!effectiveModel || effectiveModel === "auto") {
+      const reg = getProvider(effectiveProvider) ?? PROVIDERS[effectiveProvider];
+      if (reg?.models && reg.models.length > 0) {
+        effectiveModel = reg.models[0].id;
+      }
+    }
+
+    let apiKey = "";
+    if (keyless) {
+      if (row?.encryptedKey) {
+        try {
+          apiKey = decrypt(row.encryptedKey);
+        } catch {
+          apiKey = "";
+        }
+      }
+    } else {
+      if (!row || !row.isActive || !row.encryptedKey) {
+        if (!conv.title || conv.title.trim().toLowerCase() === "new conversation") {
+          await db.conversation.update({
+            where: { id },
+            data: {
+              title: fallbackTitle,
+              ...(effectiveProvider && conv.provider !== effectiveProvider ? { provider: effectiveProvider } : {}),
+              ...(effectiveModel && conv.model !== effectiveModel ? { model: effectiveModel } : {}),
+            },
+          });
+          return ok({ title: fallbackTitle });
+        }
+        return ok({ title: conv.title });
+      }
+      try {
+        apiKey = decrypt(row.encryptedKey);
+      } catch (err) {
+        console.warn("[generate-title] Failed to decrypt API key:", err instanceof Error ? err.message : err);
+        return ok({ title: conv.title });
+      }
+    }
+
+    if (!effectiveModel || !baseUrl) {
+      if (!conv.title || conv.title.trim().toLowerCase() === "new conversation") {
+        await db.conversation.update({
+          where: { id },
+          data: {
+            title: fallbackTitle,
+            ...(effectiveProvider && conv.provider !== effectiveProvider ? { provider: effectiveProvider } : {}),
+            ...(effectiveModel && conv.model !== effectiveModel ? { model: effectiveModel } : {}),
+          },
+        });
+        return ok({ title: fallbackTitle });
+      }
+      return ok({ title: conv.title });
+    }
+
+    let title = "";
     try {
-      title = await generateTitle(baseUrl, apiKey, model, preview, providerId, id);
+      title = await generateTitle(baseUrl, apiKey, effectiveModel, preview, effectiveProvider, id);
     } catch (err) {
-      console.warn("[generate-title] Failed to generate title:", err instanceof Error ? err.message : err);
-      return ok({ title: conv.title, failed: true });
+      console.warn("[generate-title] LLM generation failed, falling back:", err instanceof Error ? err.message : err);
+    }
+
+    if (!title) {
+      title = fallbackTitle;
     }
 
     await db.conversation.update({
       where: { id },
-      data: { title },
+      data: {
+        title,
+        ...(effectiveProvider && conv.provider !== effectiveProvider ? { provider: effectiveProvider } : {}),
+        ...(effectiveModel && conv.model !== effectiveModel ? { model: effectiveModel } : {}),
+      },
     });
 
     return ok({ title });

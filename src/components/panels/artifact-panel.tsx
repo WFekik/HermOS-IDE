@@ -4,7 +4,6 @@ import * as React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  FileText,
   Copy,
   Check,
   Sparkles,
@@ -18,7 +17,6 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { apiGet } from "@/lib/api-client";
 import { CodeBlock } from "@/components/ide/code-block";
@@ -59,18 +57,18 @@ function AlertBlockquote({ children }: { children: React.ReactNode }) {
     const current = config[alertType] ?? { border: "border-border bg-muted/30 text-foreground", icon: Info, title: "Note" };
     const Icon = current.icon;
     return (
-      <div className={cn("my-3 rounded-lg border px-3.5 py-2.5 text-xs leading-relaxed", current.border)}>
+      <div className={cn("my-3 rounded-lg border px-3.5 py-2.5 text-xs leading-relaxed max-w-full min-w-0 break-words [word-break:break-word]", current.border)}>
         <div className="flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wide mb-1">
           <Icon className="size-3.5 shrink-0" />
           <span>{current.title}</span>
         </div>
-        <div>{children}</div>
+        <div className="break-words [word-break:break-word] min-w-0">{children}</div>
       </div>
     );
   }
 
   return (
-    <blockquote className="my-3 border-s-2 border-brand/40 ps-3 text-muted-foreground italic text-xs leading-relaxed">
+    <blockquote className="my-3 border-s-2 border-brand/40 ps-3 text-muted-foreground italic text-xs leading-relaxed break-words [word-break:break-word] min-w-0">
       {children}
     </blockquote>
   );
@@ -89,7 +87,7 @@ const artifactMarkdownComponents: Components = {
     }
     return (
       <code
-        className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[12px] text-foreground"
+        className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[12px] text-foreground break-all"
         {...rest}
       >
         {children}
@@ -97,15 +95,15 @@ const artifactMarkdownComponents: Components = {
     );
   },
   pre({ children }) {
-    return <>{children}</>;
+    return <pre className="max-w-full overflow-x-auto my-2 rounded-md bg-muted/50 p-2 text-xs">{children}</pre>;
   },
   blockquote({ children }) {
     return <AlertBlockquote>{children}</AlertBlockquote>;
   },
   table({ children }) {
     return (
-      <div className="my-3 overflow-x-auto rounded-md border">
-        <table className="w-full text-xs">{children}</table>
+      <div className="my-3 overflow-x-auto rounded-md border max-w-full min-w-0">
+        <table className="w-full text-xs min-w-max border-collapse">{children}</table>
       </div>
     );
   },
@@ -121,25 +119,25 @@ const artifactMarkdownComponents: Components = {
     return <td className="border-b px-3 py-1.5 text-foreground/90">{children}</td>;
   },
   h1({ children }) {
-    return <h1 className="mt-4 mb-2 text-base font-bold tracking-tight text-foreground border-b pb-1">{children}</h1>;
+    return <h1 className="mt-4 mb-2 text-base font-bold tracking-tight text-foreground border-b pb-1 break-words [word-break:break-word] min-w-0">{children}</h1>;
   },
   h2({ children }) {
-    return <h2 className="mt-4 mb-2 text-sm font-semibold tracking-tight text-foreground">{children}</h2>;
+    return <h2 className="mt-4 mb-2 text-sm font-semibold tracking-tight text-foreground break-words [word-break:break-word] min-w-0">{children}</h2>;
   },
   h3({ children }) {
-    return <h3 className="mt-3 mb-1.5 text-xs font-semibold text-foreground">{children}</h3>;
+    return <h3 className="mt-3 mb-1.5 text-xs font-semibold text-foreground break-words [word-break:break-word] min-w-0">{children}</h3>;
   },
   p({ children }) {
-    return <p className="my-2 leading-relaxed text-xs text-foreground/90">{children}</p>;
+    return <p className="my-2 leading-relaxed text-xs text-foreground/90 break-words [word-break:break-word] min-w-0">{children}</p>;
   },
   ul({ children }) {
-    return <ul className="my-2 list-disc ps-5 space-y-1 text-xs">{children}</ul>;
+    return <ul className="my-2 list-disc ps-5 space-y-1 text-xs break-words [word-break:break-word] min-w-0">{children}</ul>;
   },
   ol({ children }) {
-    return <ol className="my-2 list-decimal ps-5 space-y-1 text-xs">{children}</ol>;
+    return <ol className="my-2 list-decimal ps-5 space-y-1 text-xs break-words [word-break:break-word] min-w-0">{children}</ol>;
   },
   li({ children }) {
-    return <li className="leading-relaxed">{children}</li>;
+    return <li className="leading-relaxed break-words [word-break:break-word] min-w-0">{children}</li>;
   },
   img(props) {
     const { src: rawSrc, alt, ...rest } = props;
@@ -181,45 +179,22 @@ const artifactMarkdownComponents: Components = {
 
 export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: ArtifactPanelProps) {
   const { t } = useTranslation();
+  const activeConversationId = useAppStore((s) => s.activeConversationId);
   const storeActivePath = useAppStore((s) => s.activeArtifactPath);
   const storeArtifacts = useAppStore((s) => s.artifactsList);
   const setActiveArtifactPath = useAppStore((s) => s.setActiveArtifactPath);
-  const addArtifact = useAppStore((s) => s.addArtifact);
   const removeArtifact = useAppStore((s) => s.removeArtifact);
+  const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen);
 
   const [content, setContent] = React.useState<string>("");
   const [loading, setLoading] = React.useState<boolean>(false);
   const [copied, setCopied] = React.useState<boolean>(false);
-  const [artifactPath, setArtifactPathState] = React.useState<string>(
-    propArtifactPath || storeActivePath || ""
-  );
-
-  const setRightPanelOpen = useAppStore((s) => s.setRightPanelOpen);
-
-  const setArtifactPath = React.useCallback(
-    (path: string) => {
-      setArtifactPathState(path);
-      setActiveArtifactPath(path);
-    },
-    [setActiveArtifactPath]
-  );
-
-  // Sync active path from store or props when user clicks an artifact in chat
-  React.useEffect(() => {
-    const target = propArtifactPath || storeActivePath;
-    if (target && target !== artifactPath) {
-      setArtifactPathState(target);
-    }
-  }, [propArtifactPath, storeActivePath]);
-
-  const rawList = [
-    ...(artifactPath ? [artifactPath] : []),
-    ...storeArtifacts,
-  ];
+  const [refreshCount, setRefreshCount] = React.useState<number>(0);
 
   const seenKeys = new Set<string>();
   const displayTabs: string[] = [];
-  for (const p of rawList) {
+  for (const p of storeArtifacts) {
+    if (!p) continue;
     const key = p.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() || p;
     if (!seenKeys.has(key)) {
       seenKeys.add(key);
@@ -227,59 +202,82 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
     }
   }
 
+  const activePath = React.useMemo(() => {
+    if (!activeConversationId || displayTabs.length === 0) return "";
+    if (propArtifactPath && displayTabs.includes(propArtifactPath)) return propArtifactPath;
+    if (storeActivePath && displayTabs.includes(storeActivePath)) return storeActivePath;
+    return displayTabs[0] || "";
+  }, [activeConversationId, displayTabs, propArtifactPath, storeActivePath]);
+
+  const handleSelectTab = React.useCallback(
+    (path: string) => {
+      setActiveArtifactPath(path, activeConversationId || undefined);
+    },
+    [setActiveArtifactPath, activeConversationId]
+  );
+
   const handleCloseTab = React.useCallback(
     (path: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      removeArtifact(path);
-      if (artifactPath === path) {
-        const remaining = displayTabs.filter((p) => p !== path);
-        if (remaining.length > 0) {
-          setArtifactPath(remaining[0]);
-        } else {
-          setArtifactPath("");
-          setRightPanelOpen(false);
-        }
+      removeArtifact(path, activeConversationId || undefined);
+      if (displayTabs.length <= 1) {
+        setRightPanelOpen(false);
       }
     },
-    [removeArtifact, artifactPath, setArtifactPath, displayTabs, setRightPanelOpen]
+    [removeArtifact, activeConversationId, displayTabs.length, setRightPanelOpen]
   );
 
-  const loadArtifact = React.useCallback(async () => {
-    if (!artifactPath) {
+  React.useEffect(() => {
+    let cancelled = false;
+
+    if (!activePath || !activeConversationId) {
       setContent("");
+      setLoading(false);
       return;
     }
-    setLoading(true);
-    try {
-      const cleanPath = artifactPath.startsWith("file://")
-        ? (() => {
-            try {
-              return decodeURIComponent(new URL(artifactPath).pathname).replace(/^\/([A-Z]:)/i, "$1");
-            } catch {
-              return artifactPath.replace(/^file:\/\//i, "").replace(/^\/([A-Z]:)/i, "$1");
-            }
-          })()
-        : artifactPath;
-      const encodedPath = encodeURIComponent(cleanPath);
-      const res = await apiGet<{ content?: string }>(`/api/workspace/file?path=${encodedPath}`);
-      if (res?.content) {
-        setContent(res.content);
-      } else {
-        const filename = cleanPath.replace(/\\/g, "/").split("/").pop() || cleanPath;
-        const fallbackRes = await apiGet<{ content?: string }>(`/api/workspace/file?path=${encodeURIComponent(filename)}`);
-        setContent(fallbackRes?.content ?? `# ${filename}\n\n${t("no_artifact_content") || "No content available."}`);
-      }
-    } catch {
-      const filename = artifactPath.replace(/\\/g, "/").split("/").pop() || t("artifact");
-      setContent(`# ${filename}\n\n*${t("unable_to_load_artifact") || "Unable to load artifact content."}*`);
-    } finally {
-      setLoading(false);
-    }
-  }, [artifactPath, t]);
 
-  React.useEffect(() => {
-    void loadArtifact();
-  }, [loadArtifact]);
+    setLoading(true);
+
+    const run = async () => {
+      try {
+        const cleanPath = activePath.startsWith("file://")
+          ? (() => {
+              try {
+                return decodeURIComponent(new URL(activePath).pathname).replace(/^\/([A-Z]:)/i, "$1");
+              } catch {
+                return activePath.replace(/^file:\/\//i, "").replace(/^\/([A-Z]:)/i, "$1");
+              }
+            })()
+          : activePath;
+        const encodedPath = encodeURIComponent(cleanPath);
+        const convParam = `&conversationId=${encodeURIComponent(activeConversationId)}`;
+        const res = await apiGet<{ content?: string }>(`/api/workspace/file?path=${encodedPath}${convParam}`);
+        if (cancelled) return;
+        if (res?.content) {
+          setContent(res.content);
+        } else {
+          const filename = cleanPath.replace(/\\/g, "/").split("/").pop() || cleanPath;
+          const fallbackRes = await apiGet<{ content?: string }>(`/api/workspace/file?path=${encodeURIComponent(filename)}${convParam}`);
+          if (cancelled) return;
+          setContent(fallbackRes?.content ?? `# ${filename}\n\n${t("no_artifact_content") || "No content available."}`);
+        }
+      } catch {
+        if (cancelled) return;
+        const filename = activePath.replace(/\\/g, "/").split("/").pop() || t("artifact");
+        setContent(`# ${filename}\n\n*${t("unable_to_load_artifact") || "Unable to load artifact content."}*`);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePath, activeConversationId, refreshCount, t]);
 
   const handleCopy = () => {
     if (!content) return;
@@ -289,7 +287,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const activeFileName = artifactPath ? artifactPath.replace(/\\/g, "/").split("/").pop() : t("artifact_canvas");
+  const activeFileName = activePath ? activePath.replace(/\\/g, "/").split("/").pop() : t("artifact_canvas");
 
   const [viewMode, setViewMode] = React.useState<"markdown" | "preview" | "code">("markdown");
 
@@ -303,13 +301,13 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
   }, [content]);
 
   const isHtmlOrSvg = React.useMemo(() => {
-    if (!artifactPath) return false;
-    const lower = artifactPath.toLowerCase();
+    if (!activePath) return false;
+    const lower = activePath.toLowerCase();
     return lower.endsWith(".html") || lower.endsWith(".svg") || (content && (content.includes("<!DOCTYPE html>") || content.includes("<svg")));
-  }, [artifactPath, content]);
+  }, [activePath, content]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-background overflow-hidden">
       {/* Panel Header */}
       <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 bg-muted/20">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -317,14 +315,14 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
           <span className="font-semibold text-xs text-foreground truncate font-mono">
             {activeFileName}
           </span>
-          {artifactPath && (
+          {activePath && (
             <Badge variant="outline" className="h-4 text-[10px] font-mono border-brand/30 text-brand bg-brand/5 shrink-0">
               {t("artifact")}
             </Badge>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0 ms-2">
-          {content && (
+          {activePath && content && (
             <div className="flex items-center rounded-md border bg-background p-0.5 text-[11px] me-1">
               <button
                 type="button"
@@ -358,8 +356,8 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             variant="ghost"
             size="icon"
             className="size-6"
-            onClick={() => void loadArtifact()}
-            disabled={loading || !artifactPath}
+            onClick={() => setRefreshCount((c) => c + 1)}
+            disabled={loading || !activePath}
             title={t("refresh_artifact")}
             aria-label={t("refresh_artifact")}
           >
@@ -370,7 +368,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             size="icon"
             className="size-6"
             onClick={handleCopy}
-            disabled={!content}
+            disabled={!content || !activePath}
             title={t("copy_artifact")}
             aria-label={t("copy_artifact")}
           >
@@ -380,7 +378,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
             variant="ghost"
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-            onClick={(e) => handleCloseTab(artifactPath || displayTabs[0] || "", e)}
+            onClick={(e) => handleCloseTab(activePath || displayTabs[0] || "", e)}
             title={t("close_artifact_canvas")}
             aria-label={t("close_artifact_canvas")}
           >
@@ -397,11 +395,11 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
               key={path}
               className={cn(
                 "group flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-mono shrink-0 transition-colors border cursor-pointer select-none",
-                artifactPath === path
+                activePath === path
                   ? "bg-brand/10 border-brand/40 text-brand font-medium"
                   : "border-transparent text-muted-foreground hover:bg-accent/60"
               )}
-              onClick={() => setArtifactPath(path)}
+              onClick={() => handleSelectTab(path)}
             >
               <FileCode className="size-3 shrink-0" />
               <span className="truncate max-w-[140px]">{path.split("/").pop()}</span>
@@ -419,7 +417,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
       )}
 
       {/* View Content */}
-      {content ? (
+      {activePath && content ? (
         viewMode === "preview" ? (
           <div className="flex-1 w-full h-full bg-white relative overflow-hidden">
             <iframe
@@ -432,13 +430,13 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
         ) : viewMode === "code" ? (
           <div className="flex-1 p-3 overflow-y-auto">
             <CodeBlock
-              language={artifactPath.split(".").pop() || "text"}
+              language={activePath.split(".").pop() || "text"}
               value={content}
             />
           </div>
         ) : (
-          <ScrollArea className="flex-1 p-4">
-            <article className="max-w-none text-xs leading-relaxed">
+          <div className="flex-1 min-h-0 min-w-0 w-full overflow-y-auto overflow-x-hidden p-4 scroll-smooth">
+            <article className="max-w-none text-xs leading-relaxed break-words [word-break:break-word] min-w-0 w-full">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={artifactMarkdownComponents}
@@ -446,7 +444,7 @@ export function ArtifactPanel({ activeArtifactPath: propArtifactPath }: Artifact
                 {preprocessContent(content)}
               </ReactMarkdown>
             </article>
-          </ScrollArea>
+          </div>
         )
       ) : (
         <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] text-center p-8 space-y-3 my-auto">

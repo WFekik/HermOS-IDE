@@ -6,6 +6,7 @@ import { withErrorHandler, ok } from "@/app/api/_lib/helpers";
 import { parseModelsColumn, mergeReasoningCapability } from "@/lib/provider-models";
 import { customProvidersFromKeys } from "@/lib/custom-providers";
 import { peekModelInRegistry } from "@/lib/models-dev";
+import { lookupContextWindow } from "@/lib/model-context-windows";
 import type { ProviderId, ModelInfo } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,32 +38,55 @@ export const GET = withErrorHandler(async () => {
       const used = new Set<string>();
       for (const staticModel of staticModels) {
         const stored = storedModels.find((m) => m.id === staticModel.id);
-        if (stored) {
-          // Merge any stored overrides (live-fetched contextWindow, maxOutput,
-          // pricing). Only defined fields override the static catalog — a
-          // stored entry without a contextWindow must not clobber the static
-          // one with `undefined`.
-          mergedModels.push({
-            ...staticModel,
-            ...(stored.enabled !== undefined ? { enabled: stored.enabled } : {}),
-            ...(stored.contextWindow !== undefined ? { contextWindow: stored.contextWindow } : {}),
-            ...(stored.maxOutput !== undefined ? { maxOutput: stored.maxOutput } : {}),
-            ...(stored.pricing !== undefined ? { pricing: stored.pricing } : {}),
-            ...(stored.reasoning !== undefined ? { reasoning: stored.reasoning } : {}),
-          });
+        const serverCap = stored?.serverContextWindow ?? staticModel.contextWindow;
+        let cw: number | undefined;
+        if (typeof serverCap === "number" && serverCap > 0) {
+          cw =
+            stored?.contextWindowSource === "user" && typeof stored.contextWindow === "number"
+              ? Math.min(stored.contextWindow, serverCap)
+              : (stored?.contextWindow ?? serverCap);
+          cw = Math.min(cw, serverCap);
         } else {
-          mergedModels.push(staticModel);
+          cw = stored?.contextWindow ?? staticModel.contextWindow ?? lookupContextWindow(staticModel.id);
+          if (cw === undefined && (p.id === "ollama" || p.id === "lmstudio")) {
+            cw = 4096;
+          }
         }
+
+        mergedModels.push({
+          ...staticModel,
+          ...(stored?.enabled !== undefined ? { enabled: stored.enabled } : {}),
+          contextWindow: cw,
+          ...(serverCap !== undefined ? { serverContextWindow: serverCap } : {}),
+          ...(stored?.maxOutput !== undefined ? { maxOutput: stored.maxOutput } : {}),
+          ...(stored?.pricing !== undefined ? { pricing: stored.pricing } : {}),
+          ...(stored?.reasoning !== undefined ? { reasoning: stored.reasoning } : {}),
+        });
         used.add(staticModel.id);
       }
       // Append models that exist only in stored config (e.g. fetched live)
       for (const stored of storedModels) {
         if (!used.has(stored.id)) {
+          const serverCap = stored.serverContextWindow;
+          let cw: number | undefined;
+          if (typeof serverCap === "number" && serverCap > 0) {
+            cw =
+              stored.contextWindowSource === "user" && typeof stored.contextWindow === "number"
+                ? Math.min(stored.contextWindow, serverCap)
+                : (stored.contextWindow ?? serverCap);
+            cw = Math.min(cw, serverCap);
+          } else {
+            cw = stored.contextWindow ?? lookupContextWindow(stored.id);
+            if (cw === undefined && (p.id === "ollama" || p.id === "lmstudio")) {
+              cw = 4096;
+            }
+          }
           mergedModels.push({
             id: stored.id,
             name: stored.id,
             enabled: stored.enabled,
-            contextWindow: stored.contextWindow,
+            contextWindow: cw,
+            ...(serverCap !== undefined ? { serverContextWindow: serverCap } : {}),
             maxOutput: stored.maxOutput,
             pricing: stored.pricing,
             reasoning: stored.reasoning,

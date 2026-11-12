@@ -96,7 +96,10 @@ export function StatusBar() {
       return { contextWindow: undefined as number | undefined };
     }
     const modelInfo = provider?.models.find((m) => m.id === concreteModel);
-    const cw = modelInfo?.contextWindow ?? lookupContextWindow(concreteModel);
+    let cw = modelInfo?.contextWindow ?? lookupContextWindow(concreteModel);
+    if (!cw && (selectedProvider === "ollama" || selectedProvider === "lmstudio")) {
+      cw = 4096;
+    }
 
     return {
       contextWindow: cw,
@@ -244,12 +247,12 @@ export function StatusBar() {
           <span className={costColorClass}>{costStr}</span>
         </StatusBarItem>
 
-        {contextWindow && (
+        {(contextWindow || ringUsed !== null || totalTokens > 0 || selectedModel) && (
           <>
             <Separator orientation="vertical" className="h-3 hidden lg:block" />
             <ContextCircle
               used={ringUsed}
-              max={resolveEffectiveMaxInputBudget({ contextWindow })}
+              max={contextWindow ? resolveEffectiveMaxInputBudget({ contextWindow }) : undefined}
               promptTokens={ringUsed ?? 0}
               completionTokens={tokensOut}
               cacheReads={cacheReadsTotal}

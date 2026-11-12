@@ -59,13 +59,11 @@ export function useSubagentPermissionStream(): void {
       const sessionTitle = session?.title
         ? `"${session.title}"`
         : t("background_session", lang);
-      // The toast stays up for the server-authoritative review window (up to 30 min)
-      // and dismisses automatically if the approval expires on the server.
-      const ttl = event.permission.ttlMs ?? 1_800_000;
-      const remainingTtl = Math.max(
-        10_000,
-        ttl - (Date.now() - event.permission.createdAt),
-      );
+      const ttl = event.permission.ttlMs;
+      const remainingTtl =
+        typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0
+          ? Math.max(10_000, ttl - (Date.now() - event.permission.createdAt))
+          : Infinity;
       toast(t("permission_requested", lang), {
         id: `perm-${event.permission.approvalId}`,
         description: `${sessionTitle} · ${event.permission.action}`,

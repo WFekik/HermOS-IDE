@@ -11,6 +11,8 @@ import {
 } from "@/app/api/_lib/helpers";
 import { providerIdSchema, thinkingLevelSchema } from "@/lib/validation";
 import { parseModelsColumn as parseProviderModelsColumn, type ProviderModelConfig } from "@/lib/provider-models";
+import { isKeylessProvider } from "@/lib/ai/providers";
+import { encrypt } from "@/lib/encryption";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +25,7 @@ const patchSchema = z.object({
         enabled: z.boolean().optional(),
         thinkingLevel: thinkingLevelSchema.optional(),
         contextWindow: z.number().int().positive().optional(),
+        serverContextWindow: z.number().int().positive().optional(),
       }),
     )
     .max(500),
@@ -45,10 +48,26 @@ export const PATCH = withErrorHandler(
     if (!parsed.success) {
       return apiError("Invalid provider id.", 400);
     }
-    const row = await db.providerKey.findUnique({
+    let row = await db.providerKey.findUnique({
       where: { userId_provider: { userId: user.id, provider: parsed.data } },
     });
-    if (!row) return notFound("Provider key not found");
+    if (!row) {
+      if (isKeylessProvider(parsed.data)) {
+        row = await db.providerKey.create({
+          data: {
+            userId: user.id,
+            provider: parsed.data,
+            encryptedKey: encrypt(""),
+            keyHint: "",
+            baseUrl: null,
+            models: "[]",
+            isActive: true,
+          },
+        });
+      } else {
+        return notFound("Provider key not found");
+      }
+    }
 
     const body = await req
       .json()
@@ -65,11 +84,23 @@ export const PATCH = withErrorHandler(
     const existingById = new Map(existing.map((m) => [m.id, m]));
     const config: ProviderModelConfig[] = parsedBody.data.models.map((m) => {
       const prev = existingById.get(m.id);
+      // The stored cap is server-authoritative: a UI save may refine the
+      // effective window, but it must never shrink or invent the provider's
+      // maximum (a stale client cap would otherwise become the hard limit).
+      const serverCap = prev?.serverContextWindow ?? m.serverContextWindow;
+      let targetCw = m.contextWindow ?? prev?.contextWindow;
+      if (typeof targetCw === "number" && typeof serverCap === "number" && serverCap > 0) {
+        targetCw = Math.min(targetCw, serverCap);
+      }
+      const isUserOverride =
+        m.contextWindow !== undefined && (serverCap === undefined || targetCw !== serverCap);
       return {
         id: m.id,
         enabled: m.enabled !== false,
         thinkingLevel: m.thinkingLevel ?? "default",
-        contextWindow: m.contextWindow ?? prev?.contextWindow,
+        contextWindow: targetCw ?? serverCap,
+        serverContextWindow: serverCap,
+        contextWindowSource: isUserOverride ? "user" : prev?.contextWindowSource,
         // Live-fetched fields (maxOutput/pricing/reasoning caps) are not part
         // of this patch's body — carry them over from the stored row so a
         // "Save model config" never silently drops the reasoning surface.
@@ -105,7 +136,12 @@ export const GET = withErrorHandler(
     const row = await db.providerKey.findUnique({
       where: { userId_provider: { userId: user.id, provider: parsed.data } },
     });
-    if (!row) return notFound("Provider key not found");
+    if (!row) {
+      if (isKeylessProvider(parsed.data)) {
+        return ok({ provider: parsed.data, models: [] });
+      }
+      return notFound("Provider key not found");
+    }
     const models = parseProviderModelsColumn(row.models);
     return ok({ provider: parsed.data, models });
   },

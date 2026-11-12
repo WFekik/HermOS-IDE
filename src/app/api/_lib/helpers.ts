@@ -399,7 +399,7 @@ export function toProviderKeyDTO(r: {
   isActive: boolean;
 }): ProviderKeyDTO {
   let models: string[] | undefined;
-  let modelsConfig: Array<{ id: string; enabled?: boolean; thinkingLevel?: string }> | undefined;
+  let modelsConfig: Array<{ id: string; enabled?: boolean; thinkingLevel?: string; contextWindow?: number; contextWindowSource?: "user" }> | undefined;
   if (r.models) {
     const parsed = safeJsonParse<unknown[]>(r.models);
     if (Array.isArray(parsed)) {
@@ -412,6 +412,8 @@ export function toProviderKeyDTO(r: {
           id: String(m.id),
           enabled: m.enabled !== false,
           thinkingLevel: normalizeThinkingLevel(m.thinkingLevel),
+          contextWindow: typeof m.contextWindow === "number" && m.contextWindow > 0 ? m.contextWindow : undefined,
+          contextWindowSource: m.contextWindowSource === "user" ? "user" : undefined,
         };
       });
     }

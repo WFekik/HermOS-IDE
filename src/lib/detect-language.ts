@@ -26,25 +26,36 @@ export function languageDisplayName(code: SupportedLanguage): string {
   return LANGUAGE_DISPLAY_NAMES[code] ?? "English";
 }
 
-/** High-signal stop words per Latin language (chosen to be rare in English prose). */
+/** Non-Latin supported languages where Latin script should not blindly fall back. */
+const NON_LATIN_LANGUAGES = new Set<SupportedLanguage>(["ar", "ru", "zh", "ja"]);
+
+/** High-signal stop words per Latin language. */
 const LATIN_MARKERS: Record<string, Array<string>> = {
+  en: [
+    "the", "this", "that", "these", "those", "how", "what", "why", "which",
+    "with", "from", "have", "has", "had", "please", "should", "would",
+    "could", "there", "their", "about", "when", "where", "explain", "help",
+  ],
   fr: [
-    "les", "des", "une", "est", "sont", "pour", "avec", "dans", "comment",
-    "pourquoi", "parce", "merci", "voici", "quelle", "quelles", "votre",
-    "nous", "vous", "faire", "peut", "pas", "plus", "comme", "ce", "en",
+    "bonjour", "salut", "les", "des", "une", "est", "sont", "pour", "avec",
+    "dans", "comment", "pourquoi", "parce", "merci", "voici", "quelle",
+    "quelles", "votre", "nous", "vous", "faire", "peut", "peux", "pas",
+    "plus", "comme", "ce", "cette", "plaît", "plait",
   ],
   es: [
-    "los", "las", "una", "está", "son", "para", "porque", "cómo", "cuál",
-    "gracias", "dónde", "tiene", "hacer", "puede", "este", "esta", "entre",
+    "hola", "los", "las", "una", "está", "son", "para", "porque", "cómo",
+    "cuál", "gracias", "dónde", "tiene", "hacer", "puede", "puedes", "este",
+    "esta", "estos", "estas", "entre", "favor", "pero",
   ],
   de: [
-    "der", "die", "das", "und", "ist", "nicht", "mit", "für", "auf", "eine",
-    "einem", "einen", "auch", "warum", "welche", "danke", "bitte", "wird",
-    "werden", "haben", "kann", "nicht",
+    "hallo", "der", "die", "das", "und", "ist", "nicht", "mit", "für",
+    "auf", "eine", "einem", "einen", "auch", "warum", "welche", "welcher",
+    "danke", "bitte", "wird", "werden", "haben", "kann", "kannst",
   ],
   pt: [
-    "para", "porque", "obrigado", "onde", "quando", "este", "esta", "isso",
-    "fazer", "pode", "muito", "também", "você", "entre", "como",
+    "olá", "ola", "para", "porque", "obrigado", "obrigada", "onde", "quando",
+    "este", "esta", "isso", "fazer", "pode", "muito", "também", "você",
+    "entre", "como", "favor",
   ],
 };
 
@@ -105,5 +116,9 @@ export function detectPromptLanguage(
     }
   }
   if (best && bestScore >= 2 && !tied) return best;
+  // If input is overwhelmingly Latin script but fallback is non-Latin, default to English.
+  if (latin >= 1 && share(latin) >= 0.7 && NON_LATIN_LANGUAGES.has(fallback)) {
+    return "en";
+  }
   return fallback;
 }

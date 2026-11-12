@@ -242,7 +242,8 @@ export async function DELETE(
   let filesSkipped = false;
   if (!workspaceRoot && revertFiles) {
     const probe = await buildUndoPreview(user.id, conversationId, msg.createdAt.getTime(), {});
-    if (probe.attempted > 0) {
+    const hasWorkspaceFiles = probe.files.some((f) => !f.display.startsWith("artifacts/"));
+    if (hasWorkspaceFiles) {
       revertFiles = false;
       filesSkipped = true;
     }

@@ -265,6 +265,7 @@ export const ru: Record<string, string> = {
   "connect": "Подключить",
   "connected": "Подключено",
   "context": "Контекст",
+  "context_compacted": "Контекст сжат",
   "context_governance": "Управление контекстом",
   "context_governance_desc": "Политика управления окном контекста модели.",
   "context_left": "(осталось {remaining})",

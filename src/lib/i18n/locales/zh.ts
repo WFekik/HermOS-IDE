@@ -265,6 +265,7 @@ export const zh: Record<string, string> = {
   "connect": "连接",
   "connected": "已连接",
   "context": "上下文",
+  "context_compacted": "上下文已压缩",
   "context_governance": "上下文治理",
   "context_governance_desc": "保留策略控制智能体如何管理上下文窗口。",
   "context_left": "（剩余 {remaining}）",

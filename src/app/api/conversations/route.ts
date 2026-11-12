@@ -30,6 +30,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     take: limit,
     skip,
   });
+
   return ok({ conversations: rows.map(toConversationDTO) });
 });
 

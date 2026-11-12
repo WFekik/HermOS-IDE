@@ -43,16 +43,26 @@ describe("approval ids", () => {
 });
 
 describe("stale entry cleanup", () => {
-  it("purges entries older than the TTL on the next approval request", async () => {
+  it("keeps default entries pending indefinitely with no expiration", async () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
 
-    const stale = createPendingApproval({ ...base, toolCallId: "stale" });
+    const perm = createPendingApproval({ ...base, toolCallId: "indefinite" });
+    nowSpy.mockReturnValue(now + 3_600_000); // 1 hour later
+
+    expect(peekPendingApproval("user-a", perm.id)).not.toBeNull();
+    expect(resolvePendingApproval("user-a", perm.id, "allow")).toBe(true);
+    await expect(perm.promise).resolves.toBe("allow");
+  });
+
+  it("purges entries with an explicit TTL once their window closes", async () => {
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+
+    const stale = createPendingApproval({ ...base, toolCallId: "stale", ttlMs: 60_000 });
     expect(getPendingForUser("user-a").length).toBe(1);
 
-    // Advance past the 120s TTL, then insert a fresh entry — the stale one
-    // must be purged and its promise denied, not left dangling.
-    nowSpy.mockReturnValue(now + 121_000);
+    nowSpy.mockReturnValue(now + 61_000);
     const fresh = createPendingApproval({ ...base, conversationId: "conv-2", toolCallId: "fresh" });
 
     const remaining = getPendingForUser("user-a");
@@ -61,11 +71,11 @@ describe("stale entry cleanup", () => {
     await expect(stale.promise).resolves.toBe("deny");
   });
 
-  it("keeps entries that are still within the TTL", () => {
+  it("keeps entries that are still within their explicit TTL", () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
 
-    const a = createPendingApproval({ ...base, toolCallId: "a" });
+    const a = createPendingApproval({ ...base, toolCallId: "a", ttlMs: 120_000 });
     nowSpy.mockReturnValue(now + 119_000);
     const b = createPendingApproval({ ...base, conversationId: "conv-2", toolCallId: "b" });
 
@@ -76,12 +86,12 @@ describe("stale entry cleanup", () => {
     expect(peekPendingApproval("user-a", b.id)).not.toBeNull();
   });
 
-  it("purges expired entries on read (list and peek) without a new approval", async () => {
+  it("purges expired entries on read (list and peek) when explicit TTL expires", async () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
 
-    const stale = createPendingApproval({ ...base, toolCallId: "stale-read" });
-    nowSpy.mockReturnValue(now + 121_000);
+    const stale = createPendingApproval({ ...base, toolCallId: "stale-read", ttlMs: 60_000 });
+    nowSpy.mockReturnValue(now + 61_000);
 
     expect(getPendingForUser("user-a")).toEqual([]);
     expect(peekPendingApproval("user-a", stale.id)).toBeNull();
@@ -90,39 +100,37 @@ describe("stale entry cleanup", () => {
 });
 
 describe("per-entry TTL", () => {
-  it("reports the default TTL in the DTO", () => {
+  it("reports the default TTL (null = no expiration) in the DTO", () => {
     const p = createPendingApproval({ ...base, toolCallId: "ttl-default" });
     expect(peekPendingApproval("user-a", p.id)?.ttlMs).toBe(PERMISSION_APPROVAL_TTL_MS);
   });
 
-  it("keeps a long-TTL (subagent) entry resolvable past the default window", async () => {
+  it("keeps an explicit-TTL entry resolvable while within its window", async () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const long = createPendingApproval({
       ...base,
       toolCallId: "ttl-long",
-      ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+      ttlMs: 300_000,
     });
-    expect(peekPendingApproval("user-a", long.id)?.ttlMs).toBe(
-      SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
-    );
+    expect(peekPendingApproval("user-a", long.id)?.ttlMs).toBe(300_000);
 
-    nowSpy.mockReturnValue(now + PERMISSION_APPROVAL_TTL_MS + 1_000);
+    nowSpy.mockReturnValue(now + 150_000);
     expect(peekPendingApproval("user-a", long.id)).not.toBeNull();
     expect(resolvePendingApproval("user-a", long.id, "allow")).toBe(true);
     await expect(long.promise).resolves.toBe("allow");
   });
 
-  it("purges a long-TTL entry once its own window closes", async () => {
+  it("purges an explicit-TTL entry once its window closes", async () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const long = createPendingApproval({
       ...base,
       toolCallId: "ttl-long-expire",
-      ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+      ttlMs: 60_000,
     });
 
-    nowSpy.mockReturnValue(now + SUBAGENT_PERMISSION_APPROVAL_TTL_MS + 1_000);
+    nowSpy.mockReturnValue(now + 61_000);
     expect(peekPendingApproval("user-a", long.id)).toBeNull();
     await expect(long.promise).resolves.toBe("deny");
   });
@@ -138,10 +146,10 @@ describe("resolution hardening", () => {
     expect(peekPendingApproval("user-a", pending.id)).not.toBeNull();
   });
 
-  it("rejects a decision arriving after the TTL and reports the entry as gone", async () => {
+  it("rejects a decision arriving after an explicit TTL and reports the entry as gone", async () => {
     const now = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
-    const pending = createPendingApproval({ ...base, toolCallId: "expired" });
+    const pending = createPendingApproval({ ...base, toolCallId: "expired", ttlMs: 120_000 });
 
     nowSpy.mockReturnValue(now + 121_000);
 

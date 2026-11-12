@@ -50,15 +50,14 @@ export const PERMISSION_ACTIONS: readonly PermissionAction[] = [
   "question.ask",
 ];
 
-/** How long a tool-approval prompt stays valid before auto-deny. */
-export const PERMISSION_APPROVAL_TTL_MS = 120_000;
-
 /**
- * Subagent approvals queue behind each other (parallel workers can each raise
- * one), so the user needs a far longer review window than the two minutes the
- * main agent's prompt allows.
+ * Tool-approval prompt TTL. `null` indicates no expiration (indefinite review window),
+ * matching high-level IDE conventions where permissions wait for user interaction.
  */
-export const SUBAGENT_PERMISSION_APPROVAL_TTL_MS = 30 * 60_000;
+export const PERMISSION_APPROVAL_TTL_MS: number | null = null;
+
+/** Subagent approvals queue without auto-expiring, matching the main agent behavior. */
+export const SUBAGENT_PERMISSION_APPROVAL_TTL_MS: number | null = null;
 
 /**
  * Default IDE permissions: auto-allows file reads/writes within workspace confinement,

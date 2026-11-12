@@ -571,4 +571,38 @@ describe("Subagent Session", () => {
       expect(resultObj.error).toContain("path");
     });
   });
+  describe("Long-Horizon Iteration Limits", () => {
+    it("MAX_SUBAGENT_ITERATIONS defaults to Infinity for autonomous long-horizon work", async () => {
+      const { MAX_SUBAGENT_ITERATIONS } = await import("./subagent-executor");
+      expect(MAX_SUBAGENT_ITERATIONS).toBe(Infinity);
+    });
+
+    it("preserves explicit maxIterations option on subagent session", () => {
+      const session = createTrackedSession({
+        name: "long-horizon-worker",
+        task: "Refactor architecture across 500 files",
+        systemPrompt: "worker",
+        allowedTools: ["read_file"],
+        provider: "anthropic",
+        model: "claude-3-7-sonnet",
+      });
+      updateSession(session.id, { maxIterations: 5000 });
+      expect(getSession(userId, session.id)?.maxIterations).toBe(5000);
+    });
+
+    it("chatRequestSchema validates and allows large long-horizon iteration counts", async () => {
+      const { chatRequestSchema } = await import("@/lib/validation");
+      const parsed = chatRequestSchema.safeParse({
+        conversationId: "conv-long",
+        message: "start overnight run",
+        provider: "anthropic",
+        model: "claude-3-7-sonnet",
+        maxIterations: 10_000,
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.maxIterations).toBe(10_000);
+      }
+    });
+  });
 });

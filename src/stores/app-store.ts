@@ -462,8 +462,8 @@ export interface PermissionPromptState {
   subagentName?: string;
   /** Created timestamp — used by the UI to render a countdown. */
   createdAt: number;
-  /** Server-provided auto-deny window; absent means the standard main-agent TTL. */
-  ttlMs?: number;
+  /** Server-provided auto-deny window; absent/null means no expiration. */
+  ttlMs?: number | null;
 }
 
 export interface QuestionItemState {
@@ -529,6 +529,9 @@ interface AppState {
   rightPanelTab: RightPanelTab;
   activeArtifactPath: string | null;
   artifactsList: string[];
+  artifactsByConversation: Record<string, string[]>;
+  activeArtifactByConversation: Record<string, string | null>;
+  rightPanelTabByConversation: Record<string, RightPanelTab>;
   /** Left sidebar collapsed to a narrow rail (shows icons only). */
   sidebarCollapsed: boolean;
   /** Selected project/workspace ID in the sidebar (null = show all). */
@@ -874,6 +877,8 @@ interface AppState {
     cacheReads?: number,
     /** True when `promptTokens` is a live estimate (see ChatStreamEvent.usage.estimated). */
     estimated?: boolean,
+    /** Server-resolved model context window limit. */
+    contextWindow?: number,
   ) => void;
   clearMessageUsage: (messageId: string, conversationId?: string) => void;
   setStreaming: (v: boolean, conversationId?: string) => void;
@@ -891,6 +896,7 @@ interface AppState {
   finalizeStreamingMessage: (messageId: string, conversationId?: string) => void;
   appendAssistantPlaceholder: (messageId: string, conversationId?: string) => void;
   appendUserMessage: (msg: MessageDTO, conversationId?: string) => void;
+  insertCompactionSummary: (msg: MessageDTO, conversationId?: string) => void;
   appendAssistantError: (messageId: string, message: string, conversationId?: string) => void;
   /** Record queued-turn ids the just-finished run answered (done event). */
   markQueuedAnswered: (conversationId: string, ids: string[]) => void;
@@ -900,10 +906,12 @@ interface AppState {
   /* UI controls */
   setRightPanelOpen: (v: boolean) => void;
   setRightPanelTab: (t: RightPanelTab) => void;
-  setActiveArtifactPath: (path: string | null) => void;
-  setArtifactsList: (paths: string[]) => void;
-  addArtifact: (path: string) => void;
-  removeArtifact: (path: string) => void;
+  setActiveArtifactPath: (path: string | null, conversationId?: string) => void;
+  setArtifactsList: (paths: string[], conversationId?: string) => void;
+  addArtifact: (path: string, conversationId?: string) => void;
+  removeArtifact: (path: string, conversationId?: string) => void;
+  loadConversationArtifacts: (conversationId: string) => Promise<void>;
+  generateConversationTitle: (conversationId: string, opts?: { force?: boolean }) => Promise<string | null>;
   setSettingsOpen: (v: boolean) => void;
   setSettingsTab: (t: string) => void;
   setCommandOpen: (v: boolean) => void;
@@ -1211,7 +1219,9 @@ function isPromptLive(
   now: number,
 ): prompt is PermissionPromptState {
   if (!prompt) return false;
-  return now - prompt.createdAt < (prompt.ttlMs ?? PERMISSION_APPROVAL_TTL_MS);
+  const ttl = prompt.ttlMs !== undefined ? prompt.ttlMs : PERMISSION_APPROVAL_TTL_MS;
+  if (ttl === null || !Number.isFinite(ttl)) return true;
+  return now - prompt.createdAt < ttl;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -1237,6 +1247,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   rightPanelTab: "files",
   activeArtifactPath: null,
   artifactsList: [],
+  artifactsByConversation: {},
+  activeArtifactByConversation: {},
+  rightPanelTabByConversation: {},
   activeTodosByConversation: {},
   sidebarCollapsed: true,
   selectedProjectId: null,
@@ -1549,6 +1562,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       // the previous session leaks into the next one.
       messagesByConversation: {},
       streamingStateByConversation: {},
+      artifactsList: [],
+      activeArtifactPath: null,
+      artifactsByConversation: {},
+      activeArtifactByConversation: {},
+      rightPanelTabByConversation: {},
       activeTodosByConversation: {},
       queuedAnsweredByConversation: {},
       // Drop lazy conversations and unsent drafts from the previous session.
@@ -2032,42 +2050,58 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         const detectedArtifacts: string[] = [];
         for (const m of merged) {
-          if (m.liveToolCalls && m.liveToolCalls.length > 0) {
-            for (const tc of m.liveToolCalls) {
-              const isArtifactCreateOrWrite = tc.name === "create_artifact" || tc.name === "write_file" || tc.name === "write_to_file";
-              const isArtifactEdit = tc.name === "edit_file" || tc.name === "multi_edit";
-              const r = typeof tc.result === "object" && tc.result ? (tc.result as Record<string, unknown>) : undefined;
-              const pathVal = (r?.path ?? tc.parsedArgs?.path ?? tc.parsedArgs?.targetFile ?? tc.parsedArgs?.TargetFile ?? r?.targetFile ?? "") as string;
-              const isArtifactEditHit = isArtifactEdit && r?.isArtifact === true && !!pathVal;
-              if (
-                (isArtifactCreateOrWrite && pathVal && (pathVal.endsWith(".md") || pathVal.endsWith(".markdown") || pathVal.includes("artifact") || pathVal.includes("implementation_plan") || pathVal.includes("walkthrough"))) ||
-                isArtifactEditHit
-              ) {
-                detectedArtifacts.push(pathVal);
-              }
+          const calls: any[] = [];
+          if (Array.isArray(m.liveToolCalls)) calls.push(...m.liveToolCalls);
+          if (Array.isArray(m.toolCalls)) calls.push(...m.toolCalls);
+          else if (typeof m.toolCalls === "string") {
+            try {
+              const parsed = JSON.parse(m.toolCalls);
+              if (Array.isArray(parsed)) calls.push(...parsed);
+            } catch {}
+          }
+          for (const tc of calls) {
+            const isArtifactCreateOrWrite = tc.name === "create_artifact" || tc.name === "write_file" || tc.name === "write_to_file";
+            const isArtifactEdit = tc.name === "edit_file" || tc.name === "multi_edit";
+            const r = typeof tc.result === "object" && tc.result ? (tc.result as Record<string, unknown>) : undefined;
+            const args = typeof tc.args === "object" && tc.args ? tc.args : (tc.parsedArgs ?? {});
+            const pathVal = (r?.path ?? args?.path ?? args?.targetFile ?? args?.TargetFile ?? r?.targetFile ?? "") as string;
+            const isArtifactEditHit = isArtifactEdit && r?.isArtifact === true && !!pathVal;
+            if (
+              (isArtifactCreateOrWrite && pathVal && (pathVal.endsWith(".md") || pathVal.endsWith(".markdown") || pathVal.includes("artifact") || pathVal.includes("implementation_plan") || pathVal.includes("walkthrough"))) ||
+              isArtifactEditHit
+            ) {
+              detectedArtifacts.push(pathVal);
             }
           }
-
         }
+
+        const currentConvArtifacts = s.artifactsByConversation[conversationId] ?? [];
+        const mergedArtifacts = Array.from(new Set([...currentConvArtifacts, ...detectedArtifacts]));
 
         const patch: Partial<AppState> = {
           messagesByConversation: {
             ...s.messagesByConversation,
             [conversationId]: merged,
           },
+          artifactsByConversation: {
+            ...s.artifactsByConversation,
+            [conversationId]: mergedArtifacts,
+          },
         };
 
         if (conversationId === s.activeConversationId) {
           patch.loadingMessages = false;
           patch.messages = merged;
-          if (detectedArtifacts.length > 0) {
-            const currentList = s.artifactsList ?? [];
-            const combined = Array.from(new Set([...detectedArtifacts, ...currentList]));
-            patch.artifactsList = combined;
-            if (!s.activeArtifactPath) {
-              patch.activeArtifactPath = detectedArtifacts[0];
-            }
-          }
+          patch.artifactsList = mergedArtifacts;
+          const currentActive = s.activeArtifactByConversation[conversationId];
+          const nextActive = currentActive && mergedArtifacts.includes(currentActive)
+            ? currentActive
+            : (mergedArtifacts[0] ?? null);
+          patch.activeArtifactPath = nextActive;
+          patch.activeArtifactByConversation = {
+            ...s.activeArtifactByConversation,
+            [conversationId]: nextActive,
+          };
         }
 
         return patch;
@@ -2141,6 +2175,18 @@ export const useAppStore = create<AppState>((set, get) => ({
             streamingMessageId: s.streamingMessageId,
           },
         },
+        artifactsByConversation: {
+          ...s.artifactsByConversation,
+          [prevId]: s.artifactsList,
+        },
+        activeArtifactByConversation: {
+          ...s.activeArtifactByConversation,
+          [prevId]: s.activeArtifactPath,
+        },
+        rightPanelTabByConversation: {
+          ...s.rightPanelTabByConversation,
+          [prevId]: s.rightPanelTab,
+        },
       }));
     }
 
@@ -2178,6 +2224,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
       }
+      const savedTab = get().rightPanelTabByConversation[id];
+      const nextTab = savedTab ?? get().rightPanelTab;
       set({
         activeConversationId: id,
         contextTrimmed: null,
@@ -2189,6 +2237,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         isStreaming: false,
         streamingMessageId: null,
         composerDraft: draft,
+        artifactsList: [],
+        activeArtifactPath: null,
+        rightPanelTab: nextTab,
       });
       return;
     }
@@ -2212,6 +2263,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const cached = get().messagesByConversation[id];
     const streamingState = get().streamingStateByConversation[id];
+    const convArtifacts = get().artifactsByConversation[id] ?? [];
+    const convActiveArtifact = get().activeArtifactByConversation[id] ?? (convArtifacts[0] ?? null);
+    const savedTab = get().rightPanelTabByConversation[id];
+    const nextTab = savedTab ?? get().rightPanelTab;
     set({
       messages: cached ?? [],
       isStreaming: streamingState?.isStreaming ?? false,
@@ -2219,7 +2274,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       composerDraft: get().composerDrafts[id] ?? "",
       permissionPrompt: get().permissionPromptsByConversation[id] ?? null,
       questionPrompt: get().questionPromptsByConversation[id] ?? null,
+      artifactsList: convArtifacts,
+      activeArtifactPath: convActiveArtifact,
+      rightPanelTab: nextTab,
     });
+    void get().loadConversationArtifacts(id);
 
     // Dismiss any active toast notifications for this conversation since the user has now focused it
     const activePerm = get().permissionPromptsByConversation[id];
@@ -2457,15 +2516,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { [id]: _pp, ...restPerms } = s.permissionPromptsByConversation;
         const { [id]: _pq, ...restPermQueue } = s.permissionPromptQueue;
         const { [id]: _qp, ...restQuests } = s.questionPromptsByConversation;
+        const { [id]: _art, ...restArtifacts } = s.artifactsByConversation;
+        const { [id]: _aart, ...restActiveArtifacts } = s.activeArtifactByConversation;
+        const { [id]: _rpt, ...restRightPanelTabs } = s.rightPanelTabByConversation;
         const isActive = s.activeConversationId === id;
         return {
           conversations: s.conversations.filter((c) => c.id !== id),
           activeConversationId: isActive ? null : s.activeConversationId,
           messages: isActive ? [] : s.messages,
+          artifactsList: isActive ? [] : s.artifactsList,
+          activeArtifactPath: isActive ? null : s.activeArtifactPath,
           checkpoints: isActive ? [] : s.checkpoints,
           subagents: isActive ? [] : s.subagents,
           questionPrompt: isActive ? null : s.questionPrompt,
           permissionPrompt: isActive ? null : s.permissionPrompt,
+          artifactsByConversation: restArtifacts,
+          activeArtifactByConversation: restActiveArtifacts,
+          rightPanelTabByConversation: restRightPanelTabs,
           permissionPromptsByConversation: restPerms,
           permissionPromptQueue: restPermQueue,
           questionPromptsByConversation: restQuests,
@@ -2518,6 +2585,38 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (msgs.some((m) => m.id === msg.id)) return s;
 
       const updated = [...msgs, { ...msg, streaming: false }];
+      updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      const patch: Partial<AppState> = {
+        messagesByConversation: { ...s.messagesByConversation, [convId]: updated },
+      };
+      if (convId === s.activeConversationId) patch.messages = updated;
+      return patch;
+    });
+  },
+
+  insertCompactionSummary: (msg, conversationId?) => {
+    set((s) => {
+      const convId = conversationId ?? s.activeConversationId ?? "";
+      const msgs = s.messagesByConversation[convId] ?? (convId === s.activeConversationId ? s.messages : []);
+      if (msgs.some((m) => m.id === msg.id)) return s;
+
+      const summaryDate = new Date(msg.createdAt).getTime();
+
+      const adjusted = msgs.map((m) => {
+        if (m.streaming || m.id === s.streamingMessageId) {
+          const mDate = new Date(m.createdAt).getTime();
+          if (mDate <= summaryDate) {
+            return {
+              ...m,
+              createdAt: new Date(summaryDate + 10).toISOString(),
+            };
+          }
+        }
+        return m;
+      });
+
+      const updated = [...adjusted, { ...msg, streaming: false }];
       updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
       const patch: Partial<AppState> = {
@@ -2691,11 +2790,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
       if (convId === s.activeConversationId) patch.messages = updated;
       if (detectedArtifactPath) {
-        patch.artifactsList = Array.from(new Set([detectedArtifactPath, ...(s.artifactsList ?? [])]));
+        const convArtifacts = s.artifactsByConversation[convId] ?? [];
+        const nextConvArtifacts = Array.from(new Set([detectedArtifactPath, ...convArtifacts]));
+        patch.artifactsByConversation = {
+          ...s.artifactsByConversation,
+          [convId]: nextConvArtifacts,
+        };
+        patch.activeArtifactByConversation = {
+          ...s.activeArtifactByConversation,
+          [convId]: detectedArtifactPath,
+        };
         if (convId === s.activeConversationId) {
+          patch.artifactsList = nextConvArtifacts;
           patch.activeArtifactPath = detectedArtifactPath;
           patch.rightPanelTab = "artifacts";
           patch.rightPanelOpen = true;
+          patch.rightPanelTabByConversation = {
+            ...s.rightPanelTabByConversation,
+            [convId]: "artifacts",
+          };
         }
       }
       if (detectedTodos) {
@@ -2880,6 +2993,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       cacheWrites?,
       cacheReads?,
       estimated?,
+      contextWindow?,
     ) => {
     set((s) => {
       const convId = conversationId ?? s.activeConversationId ?? "";
@@ -2893,7 +3007,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesByConversation: { ...s.messagesByConversation, [convId]: updated },
       };
       if (convId === s.activeConversationId) patch.messages = updated;
-      // Keep contextTrimmed set to preserve badge visibility
+      if (typeof contextWindow === "number" && contextWindow > 0) {
+        const provIdx = s.providers.findIndex((p) => p.id === provider);
+        if (provIdx >= 0) {
+          const prov = s.providers[provIdx];
+          const mIdx = prov.models.findIndex((m) => m.id === model);
+          if (mIdx >= 0) {
+            const currentM = prov.models[mIdx];
+            if (currentM.contextWindow !== contextWindow) {
+              const updatedModels = [...prov.models];
+              updatedModels[mIdx] = { ...currentM, contextWindow };
+              const updatedProviders = [...s.providers];
+              updatedProviders[provIdx] = { ...prov, models: updatedModels };
+              patch.providers = updatedProviders;
+            }
+          }
+        }
+      }
       return patch;
     });
   },
@@ -3045,9 +3175,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   setRateLimitRetry: (data) => set({ rateLimitRetry: data }),
 
   setRightPanelOpen: (v) => set({ rightPanelOpen: v }),
-  setRightPanelTab: (t) => set({ rightPanelTab: t, rightPanelOpen: true }),
-  setActiveArtifactPath: (path) => set({ activeArtifactPath: path }),
-  setArtifactsList: (paths) => {
+  setRightPanelTab: (t) =>
+    set((s) => {
+      const patch: Partial<AppState> = { rightPanelTab: t, rightPanelOpen: true };
+      if (s.activeConversationId) {
+        patch.rightPanelTabByConversation = {
+          ...s.rightPanelTabByConversation,
+          [s.activeConversationId]: t,
+        };
+      }
+      return patch;
+    }),
+  setActiveArtifactPath: (path, conversationId?) => {
+    set((s) => {
+      const convId = conversationId ?? s.activeConversationId;
+      const patch: Partial<AppState> = {};
+      if (convId) {
+        patch.activeArtifactByConversation = {
+          ...s.activeArtifactByConversation,
+          [convId]: path,
+        };
+      }
+      if (!convId || convId === s.activeConversationId) {
+        patch.activeArtifactPath = path;
+      }
+      return patch;
+    });
+  },
+  setArtifactsList: (paths, conversationId?) => {
     const seen = new Set<string>();
     const unique: string[] = [];
     for (const p of paths) {
@@ -3058,41 +3213,148 @@ export const useAppStore = create<AppState>((set, get) => ({
         unique.push(p);
       }
     }
-    set({ artifactsList: unique });
-  },
-  addArtifact: (path) =>
     set((s) => {
+      const convId = conversationId ?? s.activeConversationId;
+      const patch: Partial<AppState> = {};
+      if (convId) {
+        patch.artifactsByConversation = {
+          ...s.artifactsByConversation,
+          [convId]: unique,
+        };
+      }
+      if (!convId || convId === s.activeConversationId) {
+        patch.artifactsList = unique;
+      }
+      return patch;
+    });
+  },
+  addArtifact: (path, conversationId?) =>
+    set((s) => {
+      const convId = conversationId ?? s.activeConversationId;
       const key = (path ?? "").replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() || path;
-      const filtered = s.artifactsList.filter((p) => {
+      const targetList = convId ? (s.artifactsByConversation[convId] ?? []) : s.artifactsList;
+      const filtered = targetList.filter((p) => {
         const k = p.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() || p;
         return k !== key;
       });
-      return {
-        artifactsList: [path, ...filtered],
-        activeArtifactPath: path,
+      const nextList = [path, ...filtered];
+      const patch: Partial<AppState> = {
         rightPanelTab: "artifacts",
         rightPanelOpen: true,
       };
+      if (convId) {
+        patch.artifactsByConversation = {
+          ...s.artifactsByConversation,
+          [convId]: nextList,
+        };
+        patch.activeArtifactByConversation = {
+          ...s.activeArtifactByConversation,
+          [convId]: path,
+        };
+      }
+      if (!convId || convId === s.activeConversationId) {
+        patch.artifactsList = nextList;
+        patch.activeArtifactPath = path;
+        patch.rightPanelTab = "artifacts";
+        patch.rightPanelOpen = true;
+        if (convId) {
+          patch.rightPanelTabByConversation = {
+            ...s.rightPanelTabByConversation,
+            [convId]: "artifacts",
+          };
+        }
+      }
+      return patch;
     }),
-  removeArtifact: (path) =>
+  removeArtifact: (path, conversationId?) =>
     set((s) => {
+      const convId = conversationId ?? s.activeConversationId;
       const targetKey = (path ?? "").replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() || path;
-      const nextList = s.artifactsList.filter((p) => {
+      const targetList = convId ? (s.artifactsByConversation[convId] ?? []) : s.artifactsList;
+      const nextList = targetList.filter((p) => {
         const k = p.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase() || p;
         return k !== targetKey;
       });
-      const activeKey = (s.activeArtifactPath ?? "").replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase();
+      const currentActive = convId ? (s.activeArtifactByConversation[convId] ?? s.activeArtifactPath) : s.activeArtifactPath;
+      const activeKey = (currentActive ?? "").replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "").replace(/\\/g, "/").split("/").pop()?.toLowerCase();
       const nextActive =
         activeKey === targetKey
           ? nextList.length > 0
             ? nextList[0]
             : null
-          : s.activeArtifactPath;
-      return {
-        artifactsList: nextList,
-        activeArtifactPath: nextActive,
-      };
+          : currentActive;
+      const patch: Partial<AppState> = {};
+      if (convId) {
+        patch.artifactsByConversation = {
+          ...s.artifactsByConversation,
+          [convId]: nextList,
+        };
+        patch.activeArtifactByConversation = {
+          ...s.activeArtifactByConversation,
+          [convId]: nextActive,
+        };
+      }
+      if (!convId || convId === s.activeConversationId) {
+        patch.artifactsList = nextList;
+        patch.activeArtifactPath = nextActive;
+      }
+      return patch;
     }),
+  loadConversationArtifacts: async (conversationId: string) => {
+    if (isPendingConversationId(conversationId)) return;
+    try {
+      const res = await apiGet<{ artifacts?: Array<{ name: string; path: string }> }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/artifacts`,
+      );
+      if (Array.isArray(res?.artifacts)) {
+        const paths = res.artifacts.map((a) => a.path || a.name);
+        set((s) => {
+          const currentActive = s.activeArtifactByConversation[conversationId];
+          const nextActive = currentActive && paths.includes(currentActive)
+            ? currentActive
+            : (paths[0] ?? null);
+          const patch: Partial<AppState> = {
+            artifactsByConversation: {
+              ...s.artifactsByConversation,
+              [conversationId]: paths,
+            },
+            activeArtifactByConversation: {
+              ...s.activeArtifactByConversation,
+              [conversationId]: nextActive,
+            },
+          };
+          if (conversationId === s.activeConversationId) {
+            patch.artifactsList = paths;
+            patch.activeArtifactPath = nextActive;
+          }
+          return patch;
+        });
+      }
+    } catch (e) {
+      console.warn("[HermOS] loadConversationArtifacts failed:", e);
+    }
+  },
+  generateConversationTitle: async (conversationId: string, opts?: { force?: boolean }) => {
+    if (isPendingConversationId(conversationId)) return null;
+    try {
+      const res = await apiPost<{ title: string }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/generate-title`,
+        { force: opts?.force ?? false },
+      );
+      if (res?.title) {
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === conversationId ? { ...c, title: res.title } : c,
+          ),
+        }));
+        broadcastTabSync("refresh_conversations");
+        return res.title;
+      }
+    } catch (e) {
+      console.warn("[HermOS] generateConversationTitle failed:", e);
+    }
+    return null;
+  },
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   selectProject: async (id) => {
     if (!id) {
@@ -4258,10 +4520,21 @@ export const useAppStore = create<AppState>((set, get) => ({
             s.activeConversationId && idSet.has(s.activeConversationId)
               ? []
               : s.messages,
+          artifactsList:
+            s.activeConversationId && idSet.has(s.activeConversationId)
+              ? []
+              : s.artifactsList,
+          activeArtifactPath:
+            s.activeConversationId && idSet.has(s.activeConversationId)
+              ? null
+              : s.activeArtifactPath,
           selectedConversationIds: new Set<string>(),
           bulkSelectMode: false,
           messagesByConversation: cleanMap(s.messagesByConversation),
           streamingStateByConversation: cleanMap(s.streamingStateByConversation),
+          artifactsByConversation: cleanMap(s.artifactsByConversation),
+          activeArtifactByConversation: cleanMap(s.activeArtifactByConversation),
+          rightPanelTabByConversation: cleanMap(s.rightPanelTabByConversation),
           activeTodosByConversation: cleanMap(s.activeTodosByConversation),
           thinkingExpanded: cleanMap(s.thinkingExpanded),
           scrollPositions: cleanMap(s.scrollPositions),

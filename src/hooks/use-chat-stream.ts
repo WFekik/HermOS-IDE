@@ -420,10 +420,10 @@ export function useChatStream(): UseChatStreamReturn {
             : parsed.toolName || "action";
           // Live read: captured `store` goes stale on mid-run language switch.
           const lang = useAppStore.getState().language;
-          const remainingTtl = Math.max(
-            10_000,
-            (parsed.ttlMs ?? 120_000) - (Date.now() - parsed.createdAt),
-          );
+          const remainingTtl =
+            typeof parsed.ttlMs === "number" && Number.isFinite(parsed.ttlMs) && parsed.ttlMs > 0
+              ? Math.max(10_000, parsed.ttlMs - (Date.now() - parsed.createdAt))
+              : Infinity;
 
           toast(t("permission_requested", lang), {
             id: `perm-${parsed.approvalId}`,
@@ -494,7 +494,7 @@ export function useChatStream(): UseChatStreamReturn {
         flushPending();
         const id = messageIdFallback.id;
         if (id) {
-          store.applyUsage(id, evt.tokensIn, evt.tokensOut, evt.model, evt.provider, convId, evt.promptTokens, evt.cacheWrites, evt.cacheReads, evt.estimated);
+          store.applyUsage(id, evt.tokensIn, evt.tokensOut, evt.model, evt.provider, convId, evt.promptTokens, evt.cacheWrites, evt.cacheReads, evt.estimated, evt.contextWindow);
         }
         break;
       }
@@ -506,6 +506,17 @@ export function useChatStream(): UseChatStreamReturn {
         if (convId !== store.activeConversationId) break;
         const dropped = evt.dropped ?? 0;
         store.setContextTrimmed({ dropped, keptTokens: evt.keptTokens, activePromptTokens: evt.activePromptTokens });
+        if (evt.summaryMessage) {
+          store.insertCompactionSummary(
+            {
+              id: evt.summaryMessage.id,
+              role: evt.summaryMessage.role ?? "user",
+              content: evt.summaryMessage.content,
+              createdAt: evt.summaryMessage.createdAt,
+            },
+            convId,
+          );
+        }
         // The user-initiated /compact command already renders an inline
         // confirmation message — only toast on the automatic compaction paths.
         if (evt.via !== "command") {
@@ -783,11 +794,10 @@ export function useChatStream(): UseChatStreamReturn {
         st.conversations.find((c) => c.id === convId) ??
         st.pendingConversations.find((p) => p.id === convId);
       if (
-        conv &&
         !isPendingConversationId(convId) &&
-        (conv.title ?? "New conversation") === "New conversation"
+        (!conv || !conv.title || conv.title.trim().toLowerCase() === "new conversation")
       ) {
-        await apiPost(`/api/conversations/${encodeURIComponent(convId)}/generate-title`, {});
+        await finalSt.generateConversationTitle(convId);
       }
     } catch (e) { console.warn("[HermOS] post-stream title generation failed:", e); }
 
@@ -815,7 +825,11 @@ export function useChatStream(): UseChatStreamReturn {
         const tl = store.thinkingLevel;
         const res = await apiStream(
           `/api/conversations/${encodeURIComponent(conversationId)}/regenerate`,
-          { messageId, ...(tl ? { thinkingLevel: tl } : {}) },
+          {
+            messageId,
+            ...(tl ? { thinkingLevel: tl } : {}),
+            ...(store.language ? { uiLanguage: store.language } : {}),
+          },
           controller.signal,
         );
         await readStream(res, conversationId, fallback);

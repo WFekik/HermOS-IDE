@@ -1,6 +1,8 @@
 import { describe, test, expect, vi } from "vitest";
 import {
   isTransientStreamError,
+  isNetworkError,
+  isPermanentDnsError,
   getErrorStatusCode,
   parseRetryHeader,
   stripHtml,
@@ -11,9 +13,35 @@ import {
 
 describe("Retry & Fail-Fast — Latency Optimization & Retry Unification", () => {
   describe("shared agent retry ladder", () => {
-    test("gives 429s 15 attempts and other transients 3", () => {
+    test("gives 429s 15 attempts, network errors 10 attempts, and other transients 3", () => {
       expect(retryAttemptLimit(true)).toBe(15);
-      expect(retryAttemptLimit(false)).toBe(3);
+      expect(retryAttemptLimit(false, true)).toBe(10);
+      expect(retryAttemptLimit(false, false)).toBe(3);
+    });
+
+    test("a permanently unresolvable host aborts the agent retry ladder early", () => {
+      // NXDOMAIN does not heal between retries; the ladder would otherwise burn
+      // ~10 attempts and a minute of backoff on a typo'd base URL.
+      expect(retryAttemptLimit(false, true, true)).toBe(2);
+      expect(retryAttemptLimit(false, false, true)).toBe(2);
+      // Rate limits still win: a 429 from a reachable host is the real cause.
+      expect(retryAttemptLimit(true, true, true)).toBe(15);
+    });
+
+    test("classifies only NXDOMAIN-style resolver codes as permanent", () => {
+      expect(isPermanentDnsError(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }))).toBe(true);
+      expect(isPermanentDnsError(Object.assign(new Error("EAI_NONAME"), { code: "EAI_NONAME" }))).toBe(true);
+      expect(isPermanentDnsError(Object.assign(new Error("wrapped"), { cause: { code: "ENOTFOUND" } }))).toBe(true);
+      // Transient resolver outage: must keep the normal network ladder.
+      expect(isPermanentDnsError(Object.assign(new Error("EAI_AGAIN"), { code: "EAI_AGAIN" }))).toBe(false);
+      expect(isPermanentDnsError(Object.assign(new Error("ECONNRESET"), { code: "ECONNRESET" }))).toBe(false);
+      expect(isPermanentDnsError(new Error("socket hang up"))).toBe(false);
+      expect(isPermanentDnsError(null)).toBe(false);
+    });
+
+    test("transient backoff is capped at 30 seconds across late attempts", () => {
+      expect(retryBackoffMs(9, false, null)).toBe(30_000);
+      expect(retryBackoffMs(6, false, null)).toBe(30_000);
     });
 
     test("429 backoff honors Retry-After capped at two minutes", () => {
@@ -142,11 +170,16 @@ describe("Retry & Fail-Fast — Latency Optimization & Retry Unification", () =>
       expect(isTransientStreamError(new Error("Provider returned 429: Rate limit exceeded"))).toBe(true);
     });
 
-    test("retryable (true) for network dropouts and socket errors", () => {
+    test("retryable (true) for network dropouts, socket errors, and DNS resolution failures", () => {
       expect(isTransientStreamError(new Error("read ECONNRESET"))).toBe(true);
       expect(isTransientStreamError(new Error("connect ETIMEDOUT 1.1.1.1:443"))).toBe(true);
       expect(isTransientStreamError(new Error("TypeError: fetch failed"))).toBe(true);
       expect(isTransientStreamError(new Error("socket hang up"))).toBe(true);
+      expect(isTransientStreamError(new Error('DNS resolution failed for host "api.openai.com": network may be offline'))).toBe(true);
+      expect(isTransientStreamError(Object.assign(new Error("getaddrinfo ENOTFOUND api.anthropic.com"), { code: "ENOTFOUND" }))).toBe(true);
+      expect(isTransientStreamError(Object.assign(new Error("getaddrinfo EAI_AGAIN openrouter.ai"), { code: "EAI_AGAIN" }))).toBe(true);
+      expect(isNetworkError(new Error('DNS resolution failed for host "api.openai.com"'))).toBe(true);
+      expect(isNetworkError(Object.assign(new Error("network error"), { code: "ENOTFOUND" }))).toBe(true);
     });
   });
 

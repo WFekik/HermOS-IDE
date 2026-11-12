@@ -401,8 +401,38 @@ export async function gitDiff(
     args.push("--", opts.path);
   }
   const res = await gitExec(rootDir, args);
-  if (!res.ok) return emptyDiff();
-  return parseUnifiedDiff(res.stdout);
+  let parsed = res.ok ? parseUnifiedDiff(res.stdout) : emptyDiff();
+
+  if (opts?.path && parsed.files.length === 0) {
+    if (!opts.staged) {
+      const stagedRes = await gitExec(rootDir, ["diff", "--no-renames", "--no-color", "--staged", "--", opts.path]);
+      if (stagedRes.ok && stagedRes.stdout.trim().length > 0) {
+        parsed = parseUnifiedDiff(stagedRes.stdout);
+      }
+    } else {
+      const unstagedRes = await gitExec(rootDir, ["diff", "--no-renames", "--no-color", "--", opts.path]);
+      if (unstagedRes.ok && unstagedRes.stdout.trim().length > 0) {
+        parsed = parseUnifiedDiff(unstagedRes.stdout);
+      }
+    }
+
+    if (parsed.files.length === 0) {
+      const untrackedRes = await gitExec(rootDir, [
+        "diff",
+        "--no-renames",
+        "--no-color",
+        "--no-index",
+        "--",
+        "/dev/null",
+        opts.path,
+      ]);
+      if ((untrackedRes.ok || untrackedRes.exitCode === 1) && untrackedRes.stdout.trim().length > 0) {
+        parsed = parseUnifiedDiff(untrackedRes.stdout);
+      }
+    }
+  }
+
+  return parsed;
 }
 
 /**

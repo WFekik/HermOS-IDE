@@ -48,7 +48,7 @@ async function fetchAndPersistModels(
   try {
     const { apiPost, apiPatch } = await import("@/lib/api-client");
     const res = await apiPost<{
-      models?: Array<{ id: string; name?: string }>;
+      models?: Array<{ id: string; name?: string; contextWindow?: number }>;
       keptStale?: boolean;
     }>("/api/providers/models", { provider: providerId });
     if (res?.keptStale) {
@@ -65,6 +65,7 @@ async function fetchAndPersistModels(
         id: m.id,
         enabled: true,
         thinkingLevel: "default",
+        contextWindow: m.contextWindow,
       }));
       await apiPatch(`/api/providers/keys/${encodeURIComponent(providerId)}`, {
         models: modelsToSave,

@@ -10,7 +10,7 @@ import { scrubHistoryForWire, scrubPromptString } from "@/lib/security-scrub";
 import { PROVIDERS, resolveModel, getProvider, modelSupportsVision, requiresReasoningEcho, rememberReasoningEchoRequired } from "@/lib/ai/providers";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { peekModelInRegistry } from "@/lib/models-dev";
-import { refreshProviderModels } from "@/lib/provider-fetch";
+import { refreshProviderModels, resolveOllamaContextWindows } from "@/lib/provider-fetch";
 import {
   runTool,
   resolveWs,
@@ -116,6 +116,8 @@ import {
   stripHtml,
   parseRetryHeader,
   getErrorStatusCode,
+  isNetworkError,
+  isPermanentDnsError,
   isTransientStreamError,
   retryAttemptLimit,
   retryBackoffMs,
@@ -173,7 +175,7 @@ function throwProviderError(resp: Response, retryText: string, providerId?: stri
  *  silence timeout, and the ConvergenceDetector (identical-prose/cycle
  *  ladders). An operator who wants a hard ceiling sets it explicitly via
  *  the env var (honored verbatim, no silent re-clamping), and callers may
- *  pass per-request maxIterations (validated 1..500). Do NOT reintroduce a
+ *  pass per-request maxIterations (validated 1..100,000). Do NOT reintroduce a
  *  silent finite default here: stopping a legitimate long run early is a
  *  behavior break, not a safety feature. */
 const MAX_ITERATIONS: number = (() => {
@@ -719,21 +721,52 @@ function compactionSummaryText(content: string): string | null {
  * Applies compaction window: returns [task anchor, summary marker, ...recent rows]
  * to preserve original intent and maximize prompt cache hits.
  */
-function applyCompactionWindow<T extends { role: string; content: string }>(rows: T[]): T[] {
+export function applyCompactionWindow<T extends { role: string; content: string }>(rows: T[]): T[] {
   let summaryIdx = -1;
-  for (let i = 0; i < rows.length; i++) {
+  for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].role === "user" && isCompactionMarker(rows[i].content)) {
       summaryIdx = i;
+      break;
     }
   }
   if (summaryIdx < 0) return rows;
+
+  const summaryRow = rows[summaryIdx];
   const anchorIdx = rows.findIndex(
     (r) => r.role === "user" && !isCompactionMarker(r.content),
   );
-  if (anchorIdx >= 0 && anchorIdx < summaryIdx) {
-    return [rows[anchorIdx], ...rows.slice(summaryIdx)];
+
+  const afterSummary = rows.slice(summaryIdx + 1).filter((r) => !isCompactionMarker(r.content));
+  const beforeSummary = rows.slice(0, summaryIdx).filter((r) => !isCompactionMarker(r.content));
+
+  let recentTurns: T[] = [];
+  const hasUserInAfter = afterSummary.some((r) => r.role === "user");
+
+  if (hasUserInAfter) {
+    recentTurns = afterSummary;
+  } else {
+    // When compaction summary is placed at the current turn boundary, include the active user turn from beforeSummary.
+    let lastUserIdx = -1;
+    for (let i = beforeSummary.length - 1; i >= 0; i--) {
+      if (beforeSummary[i].role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    const priorActive = lastUserIdx >= 0 && lastUserIdx !== anchorIdx ? beforeSummary.slice(lastUserIdx) : [];
+    recentTurns = [...priorActive, ...afterSummary];
   }
-  return rows.slice(summaryIdx);
+
+  const out: T[] = [];
+  if (anchorIdx >= 0 && anchorIdx < summaryIdx) {
+    out.push(rows[anchorIdx]);
+  }
+  out.push(summaryRow);
+  for (const r of recentTurns) {
+    if (anchorIdx >= 0 && r === rows[anchorIdx]) continue;
+    out.push(r);
+  }
+  return out;
 }
 
 function mapHistory(rows: Array<{
@@ -2950,41 +2983,118 @@ async function getModelReasoningState(
   }
 }
 
-async function getModelContextWindow(
+export async function getModelContextWindow(
   userId: string,
   provider: ProviderId,
   model: string,
 ): Promise<number | undefined> {
-  const staticWindow = (getProvider(provider) ?? PROVIDERS[provider])?.models.find((m) => m.id === model)?.contextWindow;
-  if (typeof staticWindow === "number") return staticWindow;
+  let storedEntry: {
+    contextWindow?: number;
+    serverContextWindow?: number;
+    contextWindowSource?: string;
+  } | undefined;
+  let modelsList: Array<Record<string, unknown>> = [];
+  let row: { id: string; models: string | null; baseUrl: string | null } | null = null;
 
   try {
-    const row = await db.providerKey.findUnique({
+    row = await db.providerKey.findUnique({
       where: { userId_provider: { userId, provider } },
+      select: { id: true, models: true, baseUrl: true },
     });
     if (row?.models) {
       const parsed = JSON.parse(row.models);
       if (Array.isArray(parsed)) {
-        const entry = parsed.find(
+        modelsList = parsed as Array<Record<string, unknown>>;
+        const found = modelsList.find(
           (m: unknown) =>
             m && typeof m === "object" && "id" in m && (m as { id: string }).id === model,
         );
-        if (
-          entry &&
-          typeof entry === "object" &&
-          "contextWindow" in entry &&
-          typeof (entry as any).contextWindow === "number"
-        ) {
-          return (entry as any).contextWindow;
+        if (found && typeof found === "object") {
+          storedEntry = found as {
+            contextWindow?: number;
+            serverContextWindow?: number;
+            contextWindowSource?: string;
+          };
         }
       }
     }
   } catch {}
 
-  const reg = await peekModelInRegistry(model, provider, { core: true });
-  if (reg?.contextWindow !== undefined) return reg.contextWindow;
+  let serverCap =
+    typeof storedEntry?.serverContextWindow === "number" && storedEntry.serverContextWindow > 0
+      ? storedEntry.serverContextWindow
+      : undefined;
 
-  return lookupContextWindow(model);
+  // Dynamic probe for Ollama when server context length is not stored yet.
+  // The probe result is persisted best-effort with a compare-and-swap on the
+  // models column: a concurrent settings save must never be overwritten by
+  // this hot-path write (and the probe simply re-runs next turn if it loses).
+  if (provider === "ollama" && (!serverCap || serverCap <= 0)) {
+    try {
+      const baseUrl = resolveProviderBaseUrl("ollama", row?.baseUrl);
+      const probed = await resolveOllamaContextWindows(baseUrl, [model]);
+      const win = probed.get(model);
+      if (win && win > 0) {
+        serverCap = win;
+        if (row) {
+          const existingIdx = modelsList.findIndex((m) => m && typeof m === "object" && m.id === model);
+          const next = modelsList.map((m) => ({ ...m }));
+          if (existingIdx >= 0) {
+            const entry = next[existingIdx];
+            entry.serverContextWindow = win;
+            entry.contextWindow =
+              typeof entry.contextWindow === "number" ? Math.min(entry.contextWindow, win) : win;
+          } else {
+            next.push({
+              id: model,
+              enabled: true,
+              thinkingLevel: "default",
+              contextWindow: win,
+              serverContextWindow: win,
+            });
+          }
+          try {
+            await db.providerKey.updateMany({
+              where: { id: row.id, models: row.models },
+              data: { models: JSON.stringify(next) },
+            });
+          } catch {
+            /* concurrent save won — keep the probed cap for this run */
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // If server context is defined, it is prioritized and is the default one,
+  // and acts as the strict maximum cap for any user UI configuration.
+  if (typeof serverCap === "number" && serverCap > 0) {
+    if (storedEntry?.contextWindowSource === "user" && typeof storedEntry.contextWindow === "number" && storedEntry.contextWindow > 0) {
+      return Math.min(storedEntry.contextWindow, serverCap);
+    }
+    return serverCap;
+  }
+
+  if (typeof storedEntry?.contextWindow === "number" && storedEntry.contextWindow > 0) {
+    return storedEntry.contextWindow;
+  }
+
+  // Static catalog context window (for models that haven't been customized)
+  const staticWindow = (getProvider(provider) ?? PROVIDERS[provider])?.models.find((m) => m.id === model)?.contextWindow;
+  if (typeof staticWindow === "number" && staticWindow > 0) return staticWindow;
+
+  // Registry consult
+  const reg = await peekModelInRegistry(model, provider, { core: true });
+  if (typeof reg?.contextWindow === "number" && reg.contextWindow > 0) return reg.contextWindow;
+
+  // Embedded suffix heuristic (e.g. "llama-3-70b-8k" -> 8000)
+  const suffix = lookupContextWindow(model);
+  if (typeof suffix === "number" && suffix > 0) return suffix;
+
+  // Safe fallbacks for local providers when completely unconfigured
+  if (provider === "ollama" || provider === "lmstudio") return 4096;
+
+  return undefined;
 }
 
 /** Formats human-readable target summary for a pending permission prompt. */
@@ -3249,7 +3359,18 @@ async function handleCommand(opts: {
       const tailStart = selectCompactionTail(window, preserveBudget, {
         tailTurns: contextConfig.tailTurns ?? DEFAULT_CONTEXT_CONFIG.tailTurns,
       });
-      const cutIndex = tailStart === null ? 0 : tailStart;
+      let cutIndex = tailStart === null ? 0 : tailStart;
+      if (cutIndex <= 0) {
+        let lastTurnStart = -1;
+        for (let i = 0; i < window.length; i++) {
+          if (window[i].role === "user" && !isCompactionMarker(window[i].content)) {
+            lastTurnStart = i;
+          }
+        }
+        if (lastTurnStart > 0) {
+          cutIndex = lastTurnStart;
+        }
+      }
       const summarizeTarget = window.slice(0, cutIndex).filter((m) => !isCompactionMarker(m.content));
       if (summarizeTarget.length < 2) {
         confirmation =
@@ -3282,12 +3403,11 @@ async function handleCommand(opts: {
         0,
       );
       const summaryTokenEst = estimateMessageTokens({ content: summaryText });
-      const firstKept = tailStart !== null ? window[tailStart] : undefined;
 
       // Insert the summary as a user message (NOT delete old messages — they remain for history/undo).
-      // The summary is wrapped in a marker so it can be identified for undo.
-      // Backdated to sort between the summarized head and the preserved tail.
-      await db.message.create({
+      // The summary is created when the compaction ends at its real chronological place.
+      const summaryCreatedAt = new Date();
+      const created = await db.message.create({
         data: {
           conversationId,
           role: "user",
@@ -3295,7 +3415,7 @@ async function handleCommand(opts: {
           provider: req.provider,
           model: req.model,
           promptTokens: summaryTokenEst,
-          ...(firstKept ? { createdAt: new Date(firstKept.createdAt.getTime() - 1) } : {}),
+          createdAt: summaryCreatedAt,
         },
       });
 
@@ -3324,6 +3444,12 @@ async function handleCommand(opts: {
         keptTokens: postCompactTokens,
         activePromptTokens: postCompactTokens,
         via: "command",
+        summaryMessage: {
+          id: created.id,
+          role: "user",
+          content: created.content,
+          createdAt: created.createdAt.toISOString(),
+        },
       });
       break;
     }
@@ -3416,6 +3542,7 @@ async function handleCommand(opts: {
       tokensIn: 0,
       tokensOut,
       latencyMs: Date.now() - startedAt,
+      createdAt: new Date(),
     },
   });
 
@@ -3487,12 +3614,10 @@ async function summarizeTranscript(opts: {
       // getProvider() synthesizes named customs (requiresKey: true) so
       // compaction summarize works for saved custom endpoints too.
       const providerInfo = getProvider(provider as ProviderId) ?? PROVIDERS[provider as keyof typeof PROVIDERS];
-      const pkRow = !providerInfo?.requiresKey
-        ? null
-        : await db.providerKey.findUnique({
-            where: { userId_provider: { userId, provider: provider as any } },
-          });
-      let apiKey: string | null = "not-needed";
+      const pkRow = await db.providerKey.findUnique({
+        where: { userId_provider: { userId, provider: provider as any } },
+      }).catch(() => null);
+      let apiKey: string | null = providerInfo?.requiresKey ? null : "not-needed";
       if (pkRow?.encryptedKey) {
         try {
           apiKey = decrypt(pkRow.encryptedKey);
@@ -3501,7 +3626,7 @@ async function summarizeTranscript(opts: {
           apiKey = null;
         }
       }
-      const baseUrl = pkRow?.baseUrl ?? providerInfo?.baseUrl ?? "";
+      const baseUrl = resolveProviderBaseUrl(provider, pkRow?.baseUrl);
       if (apiKey !== null && baseUrl) {
         const reg = await peekModelInRegistry(model, provider, { core: true });
         const useResponses = isResponsesRequired(provider, baseUrl, model);
@@ -3724,6 +3849,23 @@ async function persistQueuedSubagentReports(
   return created;
 }
 
+/**
+ * Language & response rules block: the answer follows the language of the
+ * user's prompt, while internal thinking follows the app's selected UI
+ * language.
+ */
+export function buildLanguageRulesBlock(
+  uiLang: SupportedLanguage,
+  promptLanguageName: string,
+): string {
+  return (
+    `\n\n## Language & Response Rules\n` +
+    `- THINKING / REASONING: Always conduct your internal thinking and reasoning trace (<think> blocks, thoughts, and reasoning steps) in ${languageDisplayName(uiLang)} (${uiLang}) to match the application's selected language.\n` +
+    `- RESPONSE LANGUAGE: Always respond in the language the user uses in their prompt. Dynamically match the language of each prompt/message from the user — do NOT answer solely based on the system or interface language if the user is writing in another language (detected user prompt language: ${promptLanguageName}; code syntax and identifiers stay as-is unless translating comments/docs).\n` +
+    `- DIRECTORY TREES: Show directory structures ONLY as fenced "tree" code blocks with one entry per line — never inline with | separators or backticks.`
+  );
+}
+
 export async function executeChat(opts: ExecuteOptions): Promise<void> {
   const { user, req, emit, signal } = opts;
   const startedAt = Date.now();
@@ -3731,6 +3873,7 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
   // Context governance config — enterprise-tunable retention policies.
   // Override via user settings to customize prune window, compaction buffer, etc.
   const ctxConfig: Partial<ContextConfig> = req.contextConfig ?? {};
+  let cachedContextWindow: number | undefined;
 
   try {
     // 1. Load conversation (verify ownership). Only the fields consumed in
@@ -3886,7 +4029,11 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
     }
     await db.conversation.update({
       where: { id: conversation.id },
-      data: { updatedAt: new Date() },
+      data: {
+        updatedAt: new Date(),
+        ...(req.provider ? { provider: req.provider } : {}),
+        ...(req.model ? { model: req.model } : {}),
+      },
     });
 
     // 3. Create assistant message (empty content) — emit start
@@ -4019,18 +4166,13 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
       ? `\n\n## Original Request (Mission)\n${originalRequest.slice(0, 2000)}`
       : "";
 
-    // Response language follows the user's prompt (detected from message
-    // text, UI language as fallback). Recomputed per run; mid-run queued
-    // turns keep the run's language. Appended after custom base prompts, so
-    // it overrides any language baked into them.
+    // Response language dynamically follows the user's prompt (detected from message
+    // text, UI language as fallback). Internal thinking and reasoning traces are conducted
+    // in the application's selected language (uiLang).
     const uiLang = (req.uiLanguage as SupportedLanguage | undefined) ?? "en";
-    const runLanguage = detectPromptLanguage(req.message ?? "", uiLang);
-    const runLanguageName = languageDisplayName(runLanguage);
-    // Single response-rules line: language + tree format together, appended
-    // after every base prompt (including custom ones), so it always applies.
-    const languageBlock =
-      `\n\n## Response Rules\n- Always respond ENTIRELY in ${runLanguageName} unless the user explicitly asks for another language (code identifiers stay as-is). ` +
-      `Show directory structures ONLY as fenced "tree" code blocks with one entry per line — never inline with | separators or backticks.`;
+    let runLanguage = detectPromptLanguage(req.message ?? "", uiLang);
+
+    let languageBlock = buildLanguageRulesBlock(uiLang, languageDisplayName(runLanguage));
 
     /** Re-assemble the prompt with a different base (native → text fallback). */
     const recompose = (base: string, minimal = false): string =>
@@ -4287,7 +4429,6 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
       // cannot change mid-run) — resolved once, reused by every iteration.
       let cachedReasoningState: Awaited<ReturnType<typeof getModelReasoningState>> | null = null;
       let cachedByok: Awaited<ReturnType<typeof resolveByok>> | null = null;
-      let cachedContextWindow: number | undefined;
       let cachedMaxOutput: number | undefined;
       const getRunModelContextWindow = async (): Promise<number | undefined> => {
         if (cachedContextWindow === undefined) {
@@ -4313,7 +4454,18 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
             estimateMessageTokensFn: tokenOf,
           });
           // Skip compaction if insufficient history beyond current turns is preserveable.
-          const cutIndex = tailStart ?? 0;
+          let cutIndex = tailStart ?? 0;
+          if (cutIndex <= 0) {
+            let lastTurnStart = -1;
+            for (let i = 0; i < window.length; i++) {
+              if (window[i].role === "user" && !isCompactionMarker(window[i].content)) {
+                lastTurnStart = i;
+              }
+            }
+            if (lastTurnStart > 0) {
+              cutIndex = lastTurnStart;
+            }
+          }
           if (cutIndex <= 0) return false;
           const firstKept = window[cutIndex];
           const droppedMsgs = window
@@ -4343,7 +4495,8 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
           });
 
           if (summaryText) {
-            // Insert backdated summary message without deleting raw historical records.
+            // Insert summary message at its real place when compaction ends (not before the message).
+            const summaryCreatedAt = new Date();
             const created = await db.message.create({
               data: {
                 conversationId: conversation.id,
@@ -4351,19 +4504,79 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
                 content: `<context_summary compacted="true">\n${summaryText}\n</context_summary>`,
                 provider: req.provider,
                 model: req.model,
-                createdAt: new Date(firstKept.createdAt.getTime() - 1),
+                createdAt: summaryCreatedAt,
               },
             });
-            // Mirror backdated summary into in-memory cache to ensure cursor-based visibility.
-            const keepIdx = cachedRows.findIndex((r) => r.id === firstKept.id);
-            const row = toCachedRow(created);
-            if (keepIdx >= 0) {
-              cachedRows.splice(keepIdx, 0, row);
+
+            // Ensure the assistant answer for this turn sorts strictly after the compaction summary in real time.
+            const assistantCreatedAt = new Date(summaryCreatedAt.getTime() + 10);
+            if (fullContent.trim() || fullThinking.trim() || segments.length > 0) {
+              try {
+                await db.message.update({
+                  where: { id: assistantMsg.id },
+                  data: {
+                    content: fullContent,
+                    thinking: fullThinking || null,
+                    toolCalls: allToolCalls.length ? JSON.stringify(allToolCalls) : null,
+                    segments: segments.length ? JSON.stringify(segments) : null,
+                    tokensIn: 0,
+                    tokensOut: 0,
+                    latencyMs: 0,
+                    promptTokens: 0,
+                    cacheWrites: 0,
+                    cacheReads: 0,
+                  },
+                });
+              } catch {}
+              try { emit({ type: "done", messageId: assistantMsg.id }); } catch {}
+              const rotated = await db.message.create({
+                data: {
+                  conversationId: conversation.id,
+                  role: "assistant",
+                  content: "",
+                  provider: req.provider,
+                  model: req.model,
+                  createdAt: assistantCreatedAt,
+                },
+              });
+              assistantMsg = rotated;
+              fullContent = "";
+              fullThinking = "";
+              segments.length = 0;
+              allToolCalls = [];
+              try { emit({ type: "start", messageId: rotated.id }); } catch {}
             } else {
-              cachedRows.push(row);
+              try {
+                await db.message.update({
+                  where: { id: assistantMsg.id },
+                  data: { createdAt: assistantCreatedAt },
+                });
+              } catch {}
+              assistantMsg.createdAt = assistantCreatedAt;
             }
+
+            // Mirror summary and updated assistant row into in-memory cache to ensure cursor-based visibility.
+            const asstIdx = cachedRows.findIndex((c) => c.id === assistantMsg.id);
+            if (asstIdx >= 0) {
+              cachedRows[asstIdx].createdAt = assistantCreatedAt;
+            } else {
+              cachedRows.push(toCachedRow(assistantMsg));
+            }
+
+            const summaryRow = toCachedRow(created);
+            const sumIdx = cachedRows.findIndex((c) => c.id === created.id);
+            if (sumIdx >= 0) cachedRows.splice(sumIdx, 1);
+            const insIdx = cachedRows.findIndex(
+              (c) => c.createdAt > summaryRow.createdAt
+                || (c.createdAt.getTime() === summaryRow.createdAt.getTime() && c.id > summaryRow.id),
+            );
+            if (insIdx === -1) cachedRows.push(summaryRow);
+            else cachedRows.splice(insIdx, 0, summaryRow);
+            tokenMemo.delete(created.id);
+            tokenMemo.delete(assistantMsg.id);
+
             console.log(`[context] auto-compact complete: ${droppedMsgs.length} messages → 1 summary (history preserved)`);
-            // Emit context_trimmed event with accurate post-compact token counts.
+            // Emit context_trimmed event with accurate post-compact token counts and the summary message payload.
             const summaryEstTokens = estimateTokens(summaryText);
             const tailTokens = window.slice(cutIndex).reduce((s, m) => s + tokenOf(m), 0);
             const anchorTokens = window[0] ? tokenOf(window[0]) : 0;
@@ -4374,6 +4587,12 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
               keptTokens: postCompactTokens,
               activePromptTokens: systemTokens + postCompactTokens,
               via: "auto",
+              summaryMessage: {
+                id: created.id,
+                role: "user",
+                content: created.content,
+                createdAt: created.createdAt.toISOString(),
+              },
             });
             return true;
           }
@@ -4452,6 +4671,17 @@ export async function executeChat(opts: ExecuteOptions): Promise<void> {
         // Real-time queuing rotation: if new queued turns were JUST received (queuedNow.length > 0) AND this run has already produced content,
         // we rotate to a new row ONCE so the model's subsequent answer streams directly below the queued turns in real time.
         if (queuedNow.length > 0) {
+          const latestQueuedUser = cachedRows
+            .filter((r) => r.role === "user" && queuedNow.includes(r.id))
+            .pop();
+          if (latestQueuedUser?.content) {
+            const nextLang = detectPromptLanguage(latestQueuedUser.content, uiLang);
+            if (nextLang !== runLanguage) {
+              runLanguage = nextLang;
+              languageBlock = buildLanguageRulesBlock(uiLang, languageDisplayName(runLanguage));
+              systemPrompt = recompose(baseSystemPrompt);
+            }
+          }
           if (fullContent.trim() || fullThinking.trim() || segments.length > 0) {
             try {
               await db.message.update({
@@ -4685,6 +4915,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             type: "usage",
             ...windowTokens(),
             promptTokens: lastPromptTokens,
+            contextWindow: modelContextWindow,
             cacheWrites: measuredCacheWrites,
             cacheReads: measuredCacheReads,
             model: req.model,
@@ -5072,6 +5303,7 @@ const thinkInstruction = thinkPlan.kind === "params"
                 type: "usage",
                 ...windowTokens(),
                 promptTokens: lastPromptTokens,
+                contextWindow: modelContextWindow,
                 cacheWrites: measuredCacheWrites,
                 cacheReads: measuredCacheReads,
                 model: req.model,
@@ -5301,8 +5533,9 @@ const thinkInstruction = thinkPlan.kind === "params"
             }
 
             const is429 = status === 429 || /429|rate limit|too many requests/i.test(msg);
+            const isNet = isNetworkError(err);
             const isTransient = isTransientStreamError(err);
-            const maxAttempts = retryAttemptLimit(is429);
+            const maxAttempts = retryAttemptLimit(is429, isNet, isPermanentDnsError(err));
             if (!isTransient || streamAttempt >= maxAttempts - 1) {
               // Non-retryable, or retries exhausted — fall through to emit + break.
               streamSucceeded = false;
@@ -5992,6 +6225,7 @@ const thinkInstruction = thinkPlan.kind === "params"
             workspace: toolWs ?? undefined,
             userAllowedOutsideWorkspace: entry.userAllowedOutsideWorkspace,
             agentMode: mode,
+            uiLanguage: uiLang,
             onProgress: (text) => {
               emit({ type: "command_output", toolCallId: entry.toolCallId, text, running: true });
             },
@@ -6768,6 +7002,7 @@ const thinkInstruction = thinkPlan.kind === "params"
         tokensIn: effTokensIn,
         tokensOut: effTokensOut,
         promptTokens: effPromptTokens,
+        contextWindow: cachedContextWindow || undefined,
         cacheWrites: measuredCacheWrites,
         cacheReads: measuredCacheReads,
         model: req.model,

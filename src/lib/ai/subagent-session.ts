@@ -18,8 +18,8 @@ export interface SubagentPendingPermission {
   action: string | null;
   target: string;
   createdAt: number;
-  /** Auto-deny window (subagents get a far longer review window than the main agent). */
-  ttlMs: number;
+  /** Auto-deny window, or null for indefinite (no expiration). */
+  ttlMs: number | null;
 }
 
 export interface SubagentSessionMessage {
@@ -67,6 +67,8 @@ export interface SubagentSession {
   lastRunStartedAt?: number;
   /** Non-null while the worker is blocked on a user permission decision. */
   pendingPermission?: SubagentPendingPermission;
+  /** UI language for localized thinking and reporting. */
+  uiLanguage?: string;
   /**
    * Set when a transcript rollback discarded this session's work. The session
    * is kept (so the delivery watcher can tell "rolled back" from "evicted")
@@ -92,6 +94,8 @@ export interface SubagentSession {
   model: string;
   checkpointId?: string;
   thinkingLevel?: string;
+  /** Optional max iterations cap for this subagent session (default: uncapped / HERMOS_MAX_SUBAGENT_ITERATIONS). */
+  maxIterations?: number;
   formattedResultCache?: { messageCount: number; text: string | undefined };
 }
 
@@ -163,6 +167,8 @@ export function createSession(
     checkpointId?: string;
     thinkingLevel?: string;
     agentMode?: AgentMode;
+    maxIterations?: number;
+    uiLanguage?: string;
   },
 ): SubagentSession {
   const existing = listSessionsByConversation(conversationId);
@@ -206,7 +212,9 @@ export function createSession(
     model: opts.model,
     checkpointId: opts.checkpointId,
     thinkingLevel: opts.thinkingLevel,
+    maxIterations: opts.maxIterations,
     agentMode: opts.agentMode ?? "agent",
+    uiLanguage: opts.uiLanguage,
   };
   registry.set(session.id, session);
   return session;

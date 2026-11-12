@@ -52,7 +52,13 @@ export async function GET(req: NextRequest): Promise<Response> {
         if (!session?.pendingPermission || session.status !== "awaiting_permission") return;
         // Never replay an approval the server already auto-denied.
         const age = Date.now() - session.pendingPermission.createdAt;
-        if (age >= session.pendingPermission.ttlMs) return;
+        if (
+          typeof session.pendingPermission.ttlMs === "number" &&
+          Number.isFinite(session.pendingPermission.ttlMs) &&
+          age >= session.pendingPermission.ttlMs
+        ) {
+          return;
+        }
         send("permission", {
           sessionId,
           conversationId,

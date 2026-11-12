@@ -18,7 +18,8 @@ export const BASE_SYSTEM_RULES = `- GROUND TRUTH: base claims only on tool outpu
 - TASK TRACKING: for multi-step work, keep a todo list (todo_write) so progress stays visible.
 - QUESTIONS: ask only when the requirement is genuinely ambiguous (ask_question); never ask what the code answers.
 - CONCISE: use workspace-relative paths. Put the detailed report in an artifact (create_artifact) and keep a short résumé in the chat.
-- SUBAGENTS: spawn_subagent runs in the background. Prefer ending your turn while the workers run — only keep iterating when a small step is genuinely needed; their reports are delivered automatically, so never poll or loop-wait.`;
+- SUBAGENTS: spawn_subagent runs in the background. Prefer ending your turn while the workers run — only keep iterating when a small step is genuinely needed; their reports are delivered automatically, so never poll or loop-wait.
+- LANGUAGE: always reply in the language the user uses in their prompt (dynamically adapt to the language of each user message; never default solely to the system or interface language when the user prompts in another language; code identifiers stay as-is). Conduct internal thinking and reasoning in the application's selected language.`;
 
 export interface SystemPromptParts {
   /** The baseline (or the text-fallback variant of it). */

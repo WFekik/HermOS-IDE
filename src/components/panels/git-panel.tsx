@@ -21,6 +21,7 @@ import {
   ExternalLink,
   GitGraph,
   ListTree,
+  FileCode,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,7 @@ export function GitPanel() {
   const [diffOpen, setDiffOpen] = React.useState(false);
   const [diffLoading, setDiffLoading] = React.useState(false);
   const [diffText, setDiffText] = React.useState("");
+  const [selectedDiffFile, setSelectedDiffFile] = React.useState<string | null>(null);
   const [worktreeDialogOpen, setWorktreeDialogOpen] = React.useState(false);
   const [showAllCommits, setShowAllCommits] = React.useState(false);
 
@@ -112,14 +114,18 @@ export function GitPanel() {
     void refreshGitStatus();
   };
 
-  const handleViewDiff = async () => {
+  const handleViewDiff = async (filePath?: string, isStaged?: boolean) => {
+    setSelectedDiffFile(filePath ?? null);
     setDiffOpen(true);
     setDiffLoading(true);
     try {
+      const url = filePath
+        ? `/api/git/diff?path=${encodeURIComponent(filePath)}${isStaged ? "&staged=true" : ""}`
+        : "/api/git/diff";
       const res = await apiGet<{
         isRepo: boolean;
         diff: { files: Array<{ path: string; patch: string }> };
-      }>("/api/git/diff").catch(() => null);
+      }>(url).catch(() => null);
       if (res?.diff?.files?.length) {
         setDiffText(res.diff.files.map((f) => f.patch).join("\n"));
       } else {
@@ -177,9 +183,11 @@ export function GitPanel() {
     }
   };
 
-  const handleFileClick = (path: string) => {
-    // Open the file in the Files tab (the workspace panel listens for
-    // `hermos:open-file` events).
+  const handleFileClick = (path: string, isStaged?: boolean) => {
+    void handleViewDiff(path, isStaged);
+  };
+
+  const handleOpenInTree = (path: string) => {
     window.dispatchEvent(
       new CustomEvent("hermos:open-file", { detail: { path } }),
     );
@@ -283,7 +291,8 @@ export function GitPanel() {
               files={staged}
               dotColor="bg-brand"
               emptyHint={t("git_no_staged")}
-              onFileClick={handleFileClick}
+              onFileClick={(p) => handleFileClick(p, true)}
+              onOpenInTree={handleOpenInTree}
               defaultOpen
             />
             <FileListSection
@@ -291,7 +300,8 @@ export function GitPanel() {
               files={modified}
               dotColor="bg-amber-500"
               emptyHint={t("git_no_modified")}
-              onFileClick={handleFileClick}
+              onFileClick={(p) => handleFileClick(p, false)}
+              onOpenInTree={handleOpenInTree}
               defaultOpen
             />
             <FileListSection
@@ -299,7 +309,8 @@ export function GitPanel() {
               files={untracked}
               dotColor="bg-muted-foreground/50"
               emptyHint={t("git_no_untracked")}
-              onFileClick={handleFileClick}
+              onFileClick={(p) => handleFileClick(p, false)}
+              onOpenInTree={handleOpenInTree}
               defaultOpen={untracked.length > 0}
             />
 
@@ -371,19 +382,49 @@ export function GitPanel() {
       {/* Diff dialog */}
       <Dialog open={diffOpen} onOpenChange={setDiffOpen}>
         <DialogContent className="sm:max-w-4xl max-h-[85vh] h-[80vh] flex flex-col p-0 overflow-hidden">
-          <DialogHeader className="px-5 py-4 border-b shrink-0">
-            <DialogTitle>{t("working_tree_diff")}</DialogTitle>
-            <DialogDescription>
-              {totalChanges > 0
-                ? `${totalChanges} change${totalChanges === 1 ? "" : "s"} across ${
+          <DialogHeader className="px-5 py-4 border-b shrink-0 flex flex-row items-center justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <DialogTitle className="truncate font-mono text-sm">
+                {selectedDiffFile ? selectedDiffFile : t("working_tree_diff")}
+              </DialogTitle>
+              <DialogDescription className="truncate">
+                {selectedDiffFile ? (
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleViewDiff()}
+                      className="text-xs text-brand hover:underline font-sans cursor-pointer"
+                    >
+                      ← {t("view_full_diff")} ({totalChanges})
+                    </button>
+                  </span>
+                ) : totalChanges > 0 ? (
+                  `${totalChanges} change${totalChanges === 1 ? "" : "s"} across ${
                     new Set([
                       ...staged.map((f) => f.path),
                       ...modified.map((f) => f.path),
                       ...untracked.map((f) => f.path),
                     ]).size
                   } file${totalChanges === 1 ? "" : "s"}.`
-                : t("working_tree_clean")}
-            </DialogDescription>
+                ) : (
+                  t("working_tree_clean")
+                )}
+              </DialogDescription>
+            </div>
+            {selectedDiffFile && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5 shrink-0"
+                onClick={() => {
+                  handleOpenInTree(selectedDiffFile);
+                  setDiffOpen(false);
+                }}
+              >
+                <FileCode className="size-3.5" />
+                <span>{t("editor")}</span>
+              </Button>
+            )}
           </DialogHeader>
           <div className="flex-1 min-h-0 p-4 overflow-hidden">
             {diffLoading ? (
@@ -484,6 +525,7 @@ function FileListSection({
   dotColor,
   emptyHint,
   onFileClick,
+  onOpenInTree,
   defaultOpen,
 }: {
   title: string;
@@ -491,6 +533,7 @@ function FileListSection({
   dotColor: string;
   emptyHint: string;
   onFileClick: (path: string) => void;
+  onOpenInTree?: (path: string) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = React.useState(defaultOpen ?? true);
@@ -530,6 +573,7 @@ function FileListSection({
                 file={f}
                 dotColor={dotColor}
                 onClick={() => onFileClick(f.path)}
+                onOpenInTree={onOpenInTree ? () => onOpenInTree(f.path) : undefined}
               />
             ))}
           </ul>
@@ -543,10 +587,12 @@ function FileRow({
   file,
   dotColor,
   onClick,
+  onOpenInTree,
 }: {
   file: GitFileChange;
   dotColor: string;
   onClick: () => void;
+  onOpenInTree?: () => void;
 }) {
   const StatusIcon =
     file.status === "A"
@@ -557,11 +603,11 @@ function FileRow({
           ? ArrowRightLeft
           : FilePen;
   return (
-    <li>
+    <li className="group flex w-full items-center rounded-md hover:bg-accent/50 transition-colors">
       <button
         type="button"
         onClick={onClick}
-        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-start hover:bg-accent/50 transition-colors"
+        className="flex flex-1 min-w-0 items-center gap-1.5 px-2 py-1 text-start"
         title={file.path}
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", dotColor)} />
@@ -589,6 +635,19 @@ function FileRow({
           {file.status === "?" ? "U" : file.status}
         </span>
       </button>
+      {onOpenInTree && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenInTree();
+          }}
+          className="opacity-0 group-hover:opacity-100 p-1 me-1 text-muted-foreground hover:text-foreground transition-opacity"
+          title="Open file in editor"
+        >
+          <FileCode className="size-3" />
+        </button>
+      )}
     </li>
   );
 }

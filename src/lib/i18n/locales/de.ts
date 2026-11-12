@@ -265,6 +265,7 @@ export const de: Record<string, string> = {
   "connect": "Verbinden",
   "connected": "Verbunden",
   "context": "Kontext",
+  "context_compacted": "Kontext komprimiert",
   "context_governance": "Kontext-Verwaltung",
   "context_governance_desc": "Verwaltet das Kontextfenster des Agenten.",
   "context_left": "({remaining} übrig)",

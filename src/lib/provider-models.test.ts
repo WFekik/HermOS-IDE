@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ProviderModelConfig } from "./provider-models";
+import { parseModelsColumn, mergeReasoningCapability, resolveModelContextWindow, shouldPersistFetchedModels, type ProviderModelConfig } from "./provider-models";
 
 describe("shouldPersistFetchedModels (never wipe stored config on empty fetch)", () => {
   it("persists when the fetch listed models", () => {
@@ -210,5 +210,63 @@ describe("mergeReasoningCapability", () => {
     // facts and must not disturb persisted caps.
     const prev = { interleavedField: "reasoning_content" as const };
     expect(mergeReasoningCapability(undefined, prev, { contextWindow: 262144 })).toEqual(prev);
+  });
+});
+
+describe("resolveModelContextWindow", () => {
+  it("enforces server context as max cap when user override exceeds it", () => {
+    const prev: ProviderModelConfig = {
+      id: "my-model",
+      enabled: true,
+      thinkingLevel: "default",
+      contextWindow: 65536,
+      contextWindowSource: "user",
+    };
+    const res = resolveModelContextWindow(prev, 32768, [128000, 4096]);
+    // Server context (32768) must cap the user's 65536 config
+    expect(res).toEqual({ contextWindow: 32768, serverContextWindow: 32768, contextWindowSource: undefined });
+  });
+
+  it("preserves explicit user override when lower than server context cap", () => {
+    const prev: ProviderModelConfig = {
+      id: "my-model",
+      enabled: true,
+      thinkingLevel: "default",
+      contextWindow: 16384,
+      contextWindowSource: "user",
+    };
+    const res = resolveModelContextWindow(prev, 32768, [128000, 4096]);
+    expect(res).toEqual({ contextWindow: 16384, serverContextWindow: 32768, contextWindowSource: "user" });
+  });
+
+  it("prioritizes freshly detected server context as default when user did not set override", () => {
+    const prev: ProviderModelConfig = {
+      id: "my-model",
+      enabled: true,
+      thinkingLevel: "default",
+      contextWindow: 8192,
+    };
+    const res = resolveModelContextWindow(prev, 32768, [4096]);
+    expect(res).toEqual({ contextWindow: 32768, serverContextWindow: 32768, contextWindowSource: undefined });
+  });
+
+  it("preserves previously stored window when live detection returns undefined", () => {
+    const prev: ProviderModelConfig = {
+      id: "my-model",
+      enabled: true,
+      thinkingLevel: "default",
+      contextWindow: 16384,
+    };
+    const res = resolveModelContextWindow(prev, undefined, [8192]);
+    expect(res).toEqual({ contextWindow: 16384, contextWindowSource: undefined });
+  });
+
+  it("falls back to the first positive fallback when no prev or detected window exists", () => {
+    const res = resolveModelContextWindow(undefined, undefined, [undefined, 0, 8192, 16384]);
+    expect(res).toEqual({ contextWindow: 8192 });
+  });
+
+  it("returns empty object when no window can be resolved", () => {
+    expect(resolveModelContextWindow(undefined, undefined, [undefined, 0])).toEqual({});
   });
 });

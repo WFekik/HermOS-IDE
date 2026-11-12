@@ -65,11 +65,16 @@ export interface ModelRow {
   name: string;
   enabled: boolean;
   thinkingLevel: ThinkingLevel;
+  contextWindow?: number;
+  serverContextWindow?: number;
+  contextWindowSource?: "user";
 }
 
 interface RemoteModel {
   id: string;
   name?: string;
+  contextWindow?: number;
+  serverContextWindow?: number;
   /**
    * Live per-model reasoning capabilities (OpenRouter `/models`
    * `reasoning` metadata, normalized by the reasoning module). Absent
@@ -87,6 +92,8 @@ interface RemoteModel {
 interface CatalogModel {
   id: string;
   name: string;
+  contextWindow?: number;
+  serverContextWindow?: number;
   reasoning?: ModelReasoningCapabilities;
 }
 
@@ -111,7 +118,7 @@ interface ModelsResponse {
  */
 export function normalizeSavedModels(
   raw: ProviderKeyDTO["models"] | ProviderKeyDTO["modelsConfig"],
-): { id: string; enabled?: boolean; thinkingLevel?: ThinkingLevel }[] {
+): { id: string; enabled: boolean; thinkingLevel: ThinkingLevel; contextWindow?: number; serverContextWindow?: number; contextWindowSource?: "user" }[] {
   if (!raw) return [];
   if (typeof raw === "string") {
     try {
@@ -124,26 +131,30 @@ export function normalizeSavedModels(
     }
   }
   if (Array.isArray(raw)) {
-    return raw.flatMap((item) => {
+    const out: { id: string; enabled: boolean; thinkingLevel: ThinkingLevel; contextWindow?: number; serverContextWindow?: number; contextWindowSource?: "user" }[] = [];
+    for (const item of raw as readonly unknown[]) {
       if (typeof item === "string") {
-        return [{ id: item, enabled: true, thinkingLevel: normalizeThinkingLevel(undefined) }];
-      }
-      if (item && typeof item === "object" && "id" in item) {
+        out.push({ id: item, enabled: true, thinkingLevel: normalizeThinkingLevel(undefined) });
+      } else if (item && typeof item === "object" && "id" in item) {
         const obj = item as {
           id: string;
           enabled?: boolean;
           thinkingLevel?: ThinkingLevel;
+          contextWindow?: number;
+          serverContextWindow?: number;
+          contextWindowSource?: "user";
         };
-        return [
-          {
-            id: String(obj.id),
-            enabled: obj.enabled ?? true,
-            thinkingLevel: normalizeThinkingLevel(obj.thinkingLevel),
-          },
-        ];
+        out.push({
+          id: String(obj.id),
+          enabled: obj.enabled !== false,
+          thinkingLevel: normalizeThinkingLevel(obj.thinkingLevel),
+          contextWindow: typeof obj.contextWindow === "number" && obj.contextWindow > 0 ? obj.contextWindow : undefined,
+          serverContextWindow: typeof obj.serverContextWindow === "number" && obj.serverContextWindow > 0 ? obj.serverContextWindow : undefined,
+          contextWindowSource: obj.contextWindowSource === "user" ? "user" : undefined,
+        });
       }
-      return [];
-    });
+    }
+    return out;
   }
   return [];
 }
@@ -167,13 +178,34 @@ async function patchProviderModels(
         id: m.id,
         enabled: m.enabled,
         thinkingLevel: m.thinkingLevel,
+        contextWindow: m.contextWindow,
+        serverContextWindow: m.serverContextWindow,
       })),
     },
   );
 }
 
+/**
+ * Map the provider catalog to the merge input.
+ *
+ * `serverContextWindow` must survive: it is the provider's real maximum, while
+ * `contextWindow` is already capped by the user's saved override. Dropping it
+ * would make `mergeModels` derive the cap from the capped value and silently
+ * lock the model at a window that can never be raised again.
+ */
+export function catalogModelsForMerge(
+  models: readonly CatalogModel[] | undefined,
+): { id: string; name: string; contextWindow?: number; serverContextWindow?: number }[] {
+  return (models ?? []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    contextWindow: m.contextWindow,
+    serverContextWindow: m.serverContextWindow,
+  }));
+}
+
 function mergeModels(
-  catalogIds: { id: string; name: string }[],
+  catalogIds: { id: string; name: string; contextWindow?: number; serverContextWindow?: number }[],
   saved: ReturnType<typeof normalizeSavedModels>,
   fetched?: RemoteModel[],
 ): ModelRow[] {
@@ -187,11 +219,28 @@ function mergeModels(
       if (!m?.id || seen.has(m.id)) continue;
       seen.add(m.id);
       const s = savedMap.get(m.id);
+      const serverCap = m.serverContextWindow ?? m.contextWindow;
+      let targetCw: number | undefined;
+      if (typeof serverCap === "number" && serverCap > 0) {
+        // Server context is prioritized as the default and is the max cap for UI config
+        targetCw =
+          s?.contextWindowSource === "user" && typeof s.contextWindow === "number"
+            ? Math.min(s.contextWindow, serverCap)
+            : serverCap;
+      } else {
+        targetCw = s?.contextWindow ?? m.contextWindow;
+      }
       rows.push({
         id: m.id,
         name: m.name ?? m.id,
         enabled: s?.enabled ?? true,
         thinkingLevel: s?.thinkingLevel ?? "default",
+        contextWindow: targetCw,
+        serverContextWindow: serverCap,
+        contextWindowSource:
+          targetCw !== undefined && serverCap !== undefined && targetCw < serverCap
+            ? "user"
+            : undefined,
       });
     }
     return rows;
@@ -202,21 +251,32 @@ function mergeModels(
     if (seen.has(s.id)) continue;
     seen.add(s.id);
     const cat = catalogIds.find((c) => c.id === s.id);
+    const serverCap = s.serverContextWindow ?? cat?.serverContextWindow ?? cat?.contextWindow;
+    let targetCw = s.contextWindow ?? serverCap;
+    if (typeof targetCw === "number" && typeof serverCap === "number" && serverCap > 0) {
+      targetCw = Math.min(targetCw, serverCap);
+    }
     rows.push({
       id: s.id,
       name: cat?.name ?? s.id,
       enabled: s.enabled ?? true,
       thinkingLevel: s.thinkingLevel ?? "default",
+      contextWindow: targetCw,
+      serverContextWindow: serverCap,
+      contextWindowSource: s.contextWindowSource,
     });
   }
   for (const c of catalogIds) {
     if (seen.has(c.id)) continue;
     seen.add(c.id);
+    const serverCap = c.serverContextWindow ?? c.contextWindow;
     rows.push({
       id: c.id,
       name: c.name,
       enabled: true,
       thinkingLevel: "default",
+      contextWindow: serverCap,
+      serverContextWindow: serverCap,
     });
   }
   return rows;
@@ -288,8 +348,7 @@ export function ProviderModels({
       initialized.current = true;
       return;
     }
-    const catalogModels =
-      catalog?.models.map((m) => ({ id: m.id, name: m.name })) ?? [];
+    const catalogModels = catalogModelsForMerge(catalog?.models);
     const saved = normalizeSavedModels(keyInfo?.modelsConfig || keyInfo?.models);
     const initial = mergeModels(catalogModels, saved);
     setRows(initial);
@@ -315,8 +374,7 @@ export function ProviderModels({
       } else {
         toast.success(t("models_loaded_count", { count: fetched.length }));
       }
-      const catalogModels =
-        catalog?.models.map((m) => ({ id: m.id, name: m.name })) ?? [];
+      const catalogModels = catalogModelsForMerge(catalog?.models);
       const saved = normalizeSavedModels(keyInfo?.modelsConfig || keyInfo?.models);
       // Merge the live fetched list's `reasoning` capabilities into the
       // catalog map so freshly-fetched models that the catalog didn't
@@ -337,7 +395,13 @@ export function ProviderModels({
         return merged.map((r) => {
           const c = curMap.get(r.id);
           return c
-            ? { ...r, enabled: c.enabled, thinkingLevel: c.thinkingLevel }
+            ? {
+                ...r,
+                enabled: c.enabled,
+                thinkingLevel: c.thinkingLevel,
+                contextWindow: c.contextWindowSource === "user" ? c.contextWindow : (c.contextWindow ?? r.contextWindow),
+                contextWindowSource: c.contextWindowSource,
+              }
             : r;
         });
       });
@@ -390,6 +454,7 @@ export function ProviderModels({
   };
 
   const [customModelId, setCustomModelId] = React.useState("");
+  const [customContextWindow, setCustomContextWindow] = React.useState("");
 
   const handleAddModel = () => {
     const clean = customModelId.trim();
@@ -398,11 +463,21 @@ export function ProviderModels({
       toast.error(t("model_already_exists", { id: clean }));
       return;
     }
+    const parsedCtx = parseInt(customContextWindow.trim(), 10);
+    const validCtx = Number.isFinite(parsedCtx) && parsedCtx > 0 ? parsedCtx : undefined;
     setRows((cur) => [
       ...cur,
-      { id: clean, name: clean, enabled: true, thinkingLevel: "default" },
+      {
+        id: clean,
+        name: clean,
+        enabled: true,
+        thinkingLevel: "default",
+        contextWindow: validCtx,
+        contextWindowSource: validCtx ? "user" : undefined,
+      },
     ]);
     setCustomModelId("");
+    setCustomContextWindow("");
     setDirty(true);
   };
 
@@ -413,6 +488,24 @@ export function ProviderModels({
 
   const setRowEnabled = (id: string, enabled: boolean) => {
     setRows((cur) => cur.map((r) => (r.id === id ? { ...r, enabled } : r)));
+    setDirty(true);
+  };
+
+  const setRowContextWindow = (id: string, contextWindow?: number) => {
+    setRows((cur) =>
+      cur.map((r) => {
+        if (r.id !== id) return r;
+        const capped =
+          typeof contextWindow === "number" && typeof r.serverContextWindow === "number" && r.serverContextWindow > 0
+            ? Math.min(contextWindow, r.serverContextWindow)
+            : contextWindow;
+        return {
+          ...r,
+          contextWindow: capped,
+          contextWindowSource: capped !== undefined && capped !== r.serverContextWindow ? "user" : undefined,
+        };
+      }),
+    );
     setDirty(true);
   };
 
@@ -555,6 +648,7 @@ export function ProviderModels({
                   row={row}
                   levels={levelsFor(row)}
                   onToggleEnabled={(v) => setRowEnabled(row.id, v)}
+                  onChangeContextWindow={(cw) => setRowContextWindow(row.id, cw)}
                   onChangeThinking={(tl) => setRowThinking(row.id, tl)}
                   onDelete={() => handleRemoveModel(row.id)}
                 />
@@ -569,6 +663,21 @@ export function ProviderModels({
               onChange={(e) => setCustomModelId(e.target.value)}
               placeholder={t("add_custom_model_id")}
               className="h-7 text-[11px] font-mono flex-1"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAddModel();
+                }
+              }}
+            />
+            <Input
+              type="number"
+              min={1024}
+              step={1024}
+              value={customContextWindow}
+              onChange={(e) => setCustomContextWindow(e.target.value)}
+              placeholder="tokens"
+              className="h-7 text-[11px] font-mono w-24 text-end"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -624,12 +733,14 @@ function ModelRowView({
   row,
   levels,
   onToggleEnabled,
+  onChangeContextWindow,
   onChangeThinking,
   onDelete,
 }: {
   row: ModelRow;
   levels: ThinkingLevelOption[];
   onToggleEnabled: (v: boolean) => void;
+  onChangeContextWindow?: (cw: number | undefined) => void;
   onChangeThinking?: (tl: ThinkingLevel) => void;
   onDelete: () => void;
 }) {
@@ -663,6 +774,31 @@ function ModelRowView({
         <div className="truncate text-[10px] text-muted-foreground" title={row.id}>
           {row.id}
         </div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <Input
+          type="number"
+          min={1024}
+          max={row.serverContextWindow}
+          step={1024}
+          value={row.contextWindow ?? (row.serverContextWindow ?? "")}
+          onChange={(e) => {
+            const raw = parseInt(e.target.value, 10);
+            if (!Number.isFinite(raw) || raw <= 0) {
+              onChangeContextWindow?.(undefined);
+              return;
+            }
+            const capped = row.serverContextWindow ? Math.min(raw, row.serverContextWindow) : raw;
+            onChangeContextWindow?.(capped);
+          }}
+          placeholder={row.serverContextWindow ? String(row.serverContextWindow) : "context"}
+          className="h-6 w-20 text-[11px] font-mono px-1.5 text-end"
+          title={
+            row.serverContextWindow
+              ? `${t("context_window", { defaultValue: "Context window size in tokens" })} (server cap: ${row.serverContextWindow.toLocaleString()} tokens)`
+              : t("context_window", { defaultValue: "Context window size in tokens" })
+          }
+        />
       </div>
       {levels.length > 0 && (
         <Select

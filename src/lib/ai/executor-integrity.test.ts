@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildCompletionIntegrityNudge, streamOpenAICompatible } from "@/lib/ai/executor";
+import { buildCompletionIntegrityNudge, streamOpenAICompatible, applyCompactionWindow } from "@/lib/ai/executor";
 import type { ToolCall } from "@/lib/types";
+
+vi.mock("@/lib/ssrf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ssrf")>();
+  return {
+    ...actual,
+    assertUrlAllowed: vi.fn(async () => {}),
+  };
+});
 
 function call(partial: Partial<ToolCall>): ToolCall {
   return {
@@ -164,5 +172,51 @@ describe("streamOpenAICompatible - Responses API deduplication", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("applyCompactionWindow - Chronological Placement and Context Retention", () => {
+  it("returns rows verbatim when no compaction summary exists", () => {
+    const rows = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ];
+    expect(applyCompactionWindow(rows)).toEqual(rows);
+  });
+
+  it("preserves task anchor, summary, and recent user prompt when summary is at turn boundary", () => {
+    const rows = [
+      { role: "user", content: "Build a web dashboard" }, // anchor
+      { role: "assistant", content: "Working on it" },
+      { role: "user", content: "Make it dark mode" },
+      { role: "assistant", content: "Dark mode added" },
+      { role: "user", content: "continue" }, // active user prompt
+      { role: "user", content: '<context_summary compacted="true">\nSummary of past actions\n</context_summary>' }, // summary placed after continue
+      { role: "assistant", content: "" }, // streaming assistant placeholder
+    ];
+
+    const result = applyCompactionWindow(rows);
+    expect(result).toHaveLength(4);
+    expect(result[0].content).toBe("Build a web dashboard");
+    expect(result[1].content).toContain("<context_summary");
+    expect(result[2].content).toBe("continue");
+    expect(result[3].role).toBe("assistant");
+  });
+
+  it("handles multi-turn conversation following an earlier compaction", () => {
+    const rows = [
+      { role: "user", content: "Root goal" },
+      { role: "user", content: '<context_summary compacted="true">\nOld summary\n</context_summary>' },
+      { role: "user", content: "New question 1" },
+      { role: "assistant", content: "Answer 1" },
+      { role: "user", content: "New question 2" },
+      { role: "assistant", content: "Answer 2" },
+    ];
+
+    const result = applyCompactionWindow(rows);
+    expect(result[0].content).toBe("Root goal");
+    expect(result[1].content).toContain("<context_summary");
+    expect(result[2].content).toBe("New question 1");
+    expect(result[result.length - 1].content).toBe("Answer 2");
   });
 });

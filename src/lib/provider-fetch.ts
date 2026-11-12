@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { decrypt, encrypt } from "@/lib/encryption";
 import { PROVIDERS, getProvider } from "@/lib/ai/providers";
-import { parseModelsColumn, mergeReasoningCapability, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
+import { parseModelsColumn, mergeReasoningCapability, resolveModelContextWindow, shouldPersistFetchedModels, type ModelRate, type ProviderModelConfig } from "@/lib/provider-models";
 import { lookupContextWindow } from "@/lib/model-context-windows";
 import { lookupModelInRegistry } from "@/lib/models-dev";
 import type { ProviderId } from "@/lib/types";
@@ -42,6 +42,7 @@ export function extractCapabilities(
     m.context_window, m.contextWindow, m.context_length,
     m.contextLength, m.max_context_length, m.max_position_embeddings,
     m.max_model_len, m.max_seq_len, m.max_tokens, m.maxTokens,
+    m.loaded_context_length, m.loadedContextLength, m.context_window_size,
   ];
   let contextWindow: number | undefined;
   for (const val of ctxCandidates) {
@@ -73,6 +74,84 @@ export function extractCapabilities(
 /** Extracts per-model reasoning capabilities from live provider metadata. */
 export function extractReasoningCapabilities(m: any): ModelReasoningCapabilities | undefined {
   return parseModelReasoningCapabilities(m?.reasoning);
+}
+
+/**
+ * Parses a model's context length out of an Ollama `/api/show` payload.
+ * The native listing is the only place Ollama reports it: `model_info`
+ * carries a `<architecture>.context_length` key (e.g. `llama.context_length`),
+ * and a `num_ctx` Modelfile parameter — when set — is the effective serving
+ * context and wins.
+ */
+export function extractOllamaContextLength(show: unknown): number | undefined {
+  if (!show || typeof show !== "object") return undefined;
+  const s = show as { context_length?: unknown; parameters?: unknown; model_info?: unknown };
+  const params = typeof s.parameters === "string" ? s.parameters : "";
+  const numCtx = params.match(/(?:^|\n)\s*num_ctx\s+(\d+)\s*$/im);
+  if (numCtx) {
+    const n = Number.parseInt(numCtx[1], 10);
+    if (n > 0) return n;
+  }
+  const topLevel =
+    typeof s.context_length === "number" && s.context_length > 0 ? s.context_length : undefined;
+  if (topLevel) return topLevel;
+  if (s.model_info && typeof s.model_info === "object") {
+    for (const [k, v] of Object.entries(s.model_info as Record<string, unknown>)) {
+      if (
+        (k.endsWith(".context_length") || k.endsWith("_context_length") || k === "context_length") &&
+        typeof v === "number" &&
+        v > 0
+      ) {
+        return v;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves context lengths for Ollama models via the native `/api/show`
+ * endpoint — `/v1/models` never reports them, and without a known window the
+ * executors cannot truncate or auto-compact. Per-model failures resolve to
+ * "unknown" (the caller falls back to registry/suffix/user overrides).
+ */
+export async function resolveOllamaContextWindows(
+  baseUrl: string,
+  ids: readonly string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!baseUrl || ids.length === 0) return out;
+  let origin: string;
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    return out;
+  }
+  // Probe in small batches: a local Ollama can list hundreds of models, and an
+  // unbounded fan-out would open a socket per model at once.
+  const BATCH = 8;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    await Promise.all(
+      ids.slice(i, i + BATCH).map(async (id) => {
+        try {
+          // SSRF: same user-editable baseUrl as the /models fetch — fetchWithSsrf
+          // validates it (loopback + port 11434 are policy-allowed for Ollama).
+          const resp = await fetchWithSsrf(`${origin}/api/show`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ model: id }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!resp.ok) return;
+          const win = extractOllamaContextLength(await resp.json());
+          if (win) out.set(id, win);
+        } catch {
+          /* model stays unknown */
+        }
+      }),
+    );
+  }
+  return out;
 }
 
 /** Fetches and persists the available model list for a provider to the database. */
@@ -147,6 +226,9 @@ export async function refreshProviderModels(
       return existing;
     }
     const existingById = new Map(existing.map((m) => [m.id, m]));
+    // Ollama reports context lengths only on its native /api/show endpoint —
+    // probe them so truncation and auto-compact have a real window to work with.
+    const ollamaWins = provider === "ollama" ? await resolveOllamaContextWindows(baseUrl, deduped) : undefined;
 
     const merged: ProviderModelConfig[] = await Promise.all(
       deduped.map(async (id) => {
@@ -155,11 +237,17 @@ export async function refreshProviderModels(
         const prev = existingById.get(id);
         // Persist only core capacity facts (contextWindow/maxOutput) from registry; reasoning facts are scoped separately.
         const reg = await lookupModelInRegistry(id, provider, { core: true });
+        const { contextWindow, contextWindowSource } = resolveModelContextWindow(
+          prev,
+          caps.contextWindow ?? ollamaWins?.get(id),
+          [reg.contextWindow, lookupContextWindow(id)],
+        );
         return {
           id,
           enabled: prev ? prev.enabled : true,
           thinkingLevel: normalizeThinkingLevel(prev?.thinkingLevel),
-          contextWindow: caps.contextWindow ?? reg.contextWindow ?? lookupContextWindow(id),
+          contextWindow,
+          contextWindowSource,
           maxOutput: caps.maxOutput ?? reg.maxOutput,
           pricing: extractPricing(item) ?? prev?.pricing,
           reasoning: mergeReasoningCapability(

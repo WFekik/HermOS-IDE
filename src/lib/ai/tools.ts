@@ -950,6 +950,7 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
         task: { type: "string", description: "The task to complete. Be specific about what files to examine, what to produce." },
         systemPrompt: { type: "string", description: "Optional system prompt override. Defaults to a focused worker personality." },
         allowedTools: { type: "array", items: { type: "string" }, description: "Tools the subagent may use (e.g. ['read_file', 'glob', 'grep', 'run_command']). Defaults to all tools (read-only in architect mode)." },
+        maxIterations: { type: "integer", description: "Optional max iterations cap. Defaults to uncapped for long-horizon work." },
       },
       required: ["name", "task"],
     },
@@ -1405,6 +1406,7 @@ export const spawnSubagentSchema = z.object({
   task: z.string().trim().min(1).max(32_000),
   systemPrompt: z.string().trim().max(16_000).optional(),
   allowedTools: z.array(z.string()).optional(),
+  maxIterations: z.number().int().min(1).max(100_000).optional(),
 });
 const getSubagentSchema = z.object({
   id: z.string().trim().min(1).max(120),
@@ -1652,6 +1654,8 @@ export type ToolCtx = {
   userAllowedOutsideWorkspace?: boolean;
   /** Mode of the invoking agent; architect mode keeps spawned subagents read-only. */
   agentMode?: "agent" | "chat" | "architect";
+  /** UI language of the invoking agent for subagent localized thinking and reporting. */
+  uiLanguage?: string;
 };
 // Canonical types live in ./tool-registry (imported as `import type` there);
 // this definition is kept in sync intentionally for backward-compat imports.
@@ -2455,11 +2459,12 @@ async function runToolImpl(
               };
             }
           }
-          if (!created && isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          const isEligible = isWorkspaceTarget(target) || target.isArtifact;
+          if (!created && isEligible) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
           const locked = undoLockError(ctx);
           if (locked) return locked;
           const r = await writeFileWs(ctx.userId, ws.name, target.rel, parsed.data.content, target.rootDir);
-          if (created && isWorkspaceTarget(target)) {
+          if (created && isEligible) {
             const absCreated = path.resolve(target.rootDir, target.rel);
             await trackNewFile(ctx.userId, convScope(ctx), ctx.checkpointId!, absCreated);
           }
@@ -2514,6 +2519,9 @@ async function runToolImpl(
         const content = coerceFileContent(rawContent) ?? "";
         if (!ctx?.userId) return { ok: false, result: { error: "No user context." } };
 
+        const locked = undoLockError(ctx);
+        if (locked) return locked;
+
         const filename = path.basename(rawPath);
         const convId = convScope(ctx) || "global";
         const artifactDir = path.join(/* turbopackIgnore: true */ ARTIFACTS_DIR, ctx.userId, convId);
@@ -2521,17 +2529,24 @@ async function runToolImpl(
         try {
           await fs.mkdir(/* turbopackIgnore: true */ artifactDir, { recursive: true });
           const absPath = path.join(/* turbopackIgnore: true */ artifactDir, filename);
+          const alreadyExists = await existsAsync(absPath);
+          if (alreadyExists && ctx.checkpointId) {
+            await snapshotBeforeEdit(ctx, artifactDir, filename);
+          }
           await fs.writeFile(absPath, content, "utf8");
+          if (!alreadyExists && ctx.checkpointId) {
+            await trackNewFile(ctx.userId, convScope(ctx), ctx.checkpointId, absPath);
+          }
           const bytes = Buffer.byteLength(content, "utf8");
           return {
             ok: true,
             result: {
               path: absPath,
               bytes,
-              created: true,
+              created: !alreadyExists,
               isArtifact: true,
               newContent: capContent(content),
-              message: `Created artifact ${filename}`,
+              message: alreadyExists ? `Updated artifact ${filename}` : `Created artifact ${filename}`,
             },
           };
         } catch (e) {
@@ -2565,7 +2580,7 @@ async function runToolImpl(
               },
             };
           }
-          if (isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          if (isWorkspaceTarget(target) || target.isArtifact) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
           const lockedEdit = undoLockError(ctx);
           if (lockedEdit) return lockedEdit;
           const r = await editFileWs(
@@ -3304,6 +3319,8 @@ async function runToolImpl(
             checkpointId: ctx.checkpointId,
             thinkingLevel: ctx.thinkingLevel,
             agentMode: ctx.agentMode ?? "agent",
+            maxIterations: parsed.data.maxIterations,
+            uiLanguage: ctx.uiLanguage,
           });
           return {
             ok: true,
@@ -3458,7 +3475,7 @@ async function runToolImpl(
         const twGuard = truncationWriteGuard(target);
         if (twGuard) return twGuard;
         try {
-          if (isWorkspaceTarget(target)) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
+          if (isWorkspaceTarget(target) || target.isArtifact) await snapshotBeforeEdit(ctx, target.rootDir, target.rel);
           const lockedMulti = undoLockError(ctx);
           if (lockedMulti) return lockedMulti;
           const r = await multiEditWs(ctx.userId, ws.name, target.rel, parsed.data.edits, target.rootDir);

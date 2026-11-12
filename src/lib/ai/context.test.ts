@@ -13,6 +13,9 @@ import {
   pruneForOverflow,
   truncateHistory,
   compactConversation,
+  isCompactionMarker,
+  extractCompactionSummary,
+  resolvePreserveRecentBudget,
   TOOL_OUTPUT_CLEARED,
   DEFAULT_CONTEXT_CONFIG,
   type CompactionCutMessage,
@@ -125,6 +128,31 @@ describe("isContextOverflow — OpenCode-compatible formula", () => {
     // 100_000 fits, 105_000 overflows.
     expect(isContextOverflow(100_000, 128_000, 4_096)).toBe(false);
     expect(isContextOverflow(105_000, 128_000, 4_096)).toBe(true);
+  });
+
+  it("scales compaction buffer for small context windows (local models)", () => {
+    // For 8192 context window, 20k buffer would leave 0 usable space.
+    // Dynamic buffer clamps to 20% (1638 tokens), leaving ~6554 usable tokens.
+    expect(isContextOverflow(4_000, 8_192, 0)).toBe(false);
+    expect(isContextOverflow(7_000, 8_192, 0)).toBe(true);
+  });
+});
+
+describe("resolvePreserveRecentBudget", () => {
+  it("returns MAX_PRESERVE_RECENT_TOKENS for empty/zero budget", () => {
+    expect(resolvePreserveRecentBudget(0)).toBe(8000);
+    expect(resolvePreserveRecentBudget(-100)).toBe(8000);
+  });
+
+  it("scales between 2,000 and 8,000 for standard budgets", () => {
+    expect(resolvePreserveRecentBudget(100_000)).toBe(8000);
+    expect(resolvePreserveRecentBudget(20_000)).toBe(5000);
+    expect(resolvePreserveRecentBudget(10_000)).toBe(2500);
+  });
+
+  it("scales floor down gracefully for small budgets (local models)", () => {
+    // For 3000 budget, 25% is 750, min floor is 1200
+    expect(resolvePreserveRecentBudget(3_000)).toBe(1200);
   });
 });
 
@@ -673,5 +701,20 @@ describe("selectCompactionTail — opencode-compatible preserved tail", () => {
     expect(
       selectCompactionTail([sized("user", 12), sized("assistant", 1500)], 1000, { estimateMessageTokensFn: tokenOf }),
     ).toBeNull();
+  });
+});
+
+describe("isCompactionMarker & extractCompactionSummary", () => {
+  it("detects well-formed context_summary tags", () => {
+    expect(isCompactionMarker('<context_summary compacted="true">\nSummary text\n</context_summary>')).toBe(true);
+    expect(isCompactionMarker('<context_summary>Simple</context_summary>')).toBe(true);
+    expect(isCompactionMarker("Regular user message without tags")).toBe(false);
+  });
+
+  it("extracts summary content cleanly without XML tags", () => {
+    const raw = '<context_summary compacted="true">\nObjective:\nUser greeted.\n</context_summary>';
+    expect(extractCompactionSummary(raw)).toBe("Objective:\nUser greeted.");
+    expect(extractCompactionSummary("No tags here")).toBe("No tags here");
+    expect(extractCompactionSummary("")).toBe("");
   });
 });

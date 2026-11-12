@@ -259,6 +259,7 @@ export const en: Record<string, string> = {
   "connect": "Connect",
   "connected": "Connected",
   "context": "Context",
+  "context_compacted": "Context Compacted",
   "context_governance": "Context governance",
   "context_governance_desc": "Retention policies control how the agent manages its context window. Higher values preserve more history at the cost of token usage.",
   "context_left": "({remaining} left)",

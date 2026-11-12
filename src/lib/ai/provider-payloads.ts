@@ -25,7 +25,7 @@ export const ANTHROPIC_SDK_DEFAULT_MAX_TOKENS = 4096;
 export const FALLBACK_OUTPUT_TOKEN_CAP = 4096;
 
 /** Output budget for one-shot conversation-title generations. */
-export const TITLE_MAX_OUTPUT_TOKENS = 20;
+export const TITLE_MAX_OUTPUT_TOKENS = 80;
 
 /** Minimal output budget for provider connectivity probes ("ping" prompts). */
 export const PROVIDER_PING_MAX_OUTPUT_TOKENS = 4;

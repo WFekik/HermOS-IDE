@@ -1236,7 +1236,8 @@ describe("useAppStore Unit Test Suite", () => {
               conversationId: "conv-1",
               action: "write_file",
               target: "b.ts",
-              createdAt: now - PERMISSION_APPROVAL_TTL_MS - 5_000,
+              createdAt: now - 65_000,
+              ttlMs: 60_000,
             },
           ],
         },
@@ -1252,9 +1253,9 @@ describe("useAppStore Unit Test Suite", () => {
       expect(useAppStore.getState().permissionPromptsByConversation["conv-1"]?.id).toBe("perm-head");
     });
 
-    it("honors the longer subagent TTL so parallel review windows survive the default expiry", () => {
+    it("honors custom TTL so entries survive while expired ones are pruned", () => {
       const now = Date.now();
-      const aged = now - PERMISSION_APPROVAL_TTL_MS - 60_000;
+      const aged = now - 180_000;
       useAppStore.setState({
         activeConversationId: "conv-1",
         permissionPrompt: null,
@@ -1265,19 +1266,19 @@ describe("useAppStore Unit Test Suite", () => {
             action: "command.run",
             target: "npm test",
             createdAt: aged,
-            ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+            ttlMs: null,
           },
         },
         permissionPromptQueue: {
           "conv-1": [
-            { id: "perm-stale", conversationId: "conv-1", action: "write_file", target: "b.ts", createdAt: aged },
+            { id: "perm-stale", conversationId: "conv-1", action: "write_file", target: "b.ts", createdAt: aged, ttlMs: 60_000 },
             {
               id: "perm-long-queued",
               conversationId: "conv-1",
               action: "command.run",
               target: "npm build",
               createdAt: aged,
-              ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+              ttlMs: null,
             },
           ],
         },
@@ -1289,7 +1290,7 @@ describe("useAppStore Unit Test Suite", () => {
           action: "command.run",
           target: "npm test",
           createdAt: aged,
-          ttlMs: SUBAGENT_PERMISSION_APPROVAL_TTL_MS,
+          ttlMs: null,
         },
         "conv-1",
       );
@@ -1657,6 +1658,64 @@ describe("useAppStore Unit Test Suite", () => {
 
       useAppStore.getState().setActiveOfficeTheme("emerald");
       expect(useAppStore.getState().activeOfficeDoc?.theme).toBe("emerald");
+    });
+  });
+
+  describe("Realtime Compaction Summary Placement", () => {
+    it("inserts compaction summary before active streaming assistant placeholder and adjusts assistant timestamp", () => {
+      useAppStore.setState({
+        activeConversationId: "conv-compact",
+        streamingMessageId: "asst-streaming-1",
+        messages: [
+          {
+            id: "user-msg-1",
+            role: "user",
+            content: "continue",
+            createdAt: new Date(1000).toISOString(),
+          },
+          {
+            id: "asst-streaming-1",
+            role: "assistant",
+            content: "",
+            createdAt: new Date(1100).toISOString(),
+            streaming: true,
+          },
+        ],
+        messagesByConversation: {
+          "conv-compact": [
+            {
+              id: "user-msg-1",
+              role: "user",
+              content: "continue",
+              createdAt: new Date(1000).toISOString(),
+            },
+            {
+              id: "asst-streaming-1",
+              role: "assistant",
+              content: "",
+              createdAt: new Date(1100).toISOString(),
+              streaming: true,
+            },
+          ],
+        },
+      });
+
+      useAppStore.getState().insertCompactionSummary(
+        {
+          id: "summary-msg-1",
+          role: "user",
+          content: '<context_summary compacted="true">\nSummary text\n</context_summary>',
+          createdAt: new Date(5000).toISOString(),
+        },
+        "conv-compact",
+      );
+
+      const msgs = useAppStore.getState().messages;
+      expect(msgs).toHaveLength(3);
+      expect(msgs[0].id).toBe("user-msg-1");
+      expect(msgs[1].id).toBe("summary-msg-1");
+      expect(msgs[2].id).toBe("asst-streaming-1");
+      expect(new Date(msgs[2].createdAt).getTime()).toBeGreaterThan(new Date(msgs[1].createdAt).getTime());
     });
   });
 });

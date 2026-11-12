@@ -7,7 +7,7 @@ import { registerAgentAbort, unregisterAgentAbort } from "@/lib/agent-abort";
 import { cancelPendingForConversation } from "@/lib/permissions-prompt";
 import { cancelPendingQuestionsForConversation } from "@/lib/question-prompt";
 import { db } from "@/lib/db";
-import { thinkingLevelSchema } from "@/lib/validation";
+import { thinkingLevelSchema, uiLanguageSchema } from "@/lib/validation";
 import type {
   ChatRequest,
   ChatStreamEvent,
@@ -56,6 +56,7 @@ export const maxDuration = 3600; // 1 hour — let the agent work as long as nee
 const bodySchema = z.object({
   messageId: z.string().trim().min(1).max(64),
   thinkingLevel: thinkingLevelSchema.optional(),
+  uiLanguage: uiLanguageSchema.optional(),
 });
 
 export async function POST(
@@ -86,7 +87,7 @@ export async function POST(
       details: parsed.error.flatten(),
     });
   }
-  const { messageId, thinkingLevel } = parsed.data;
+  const { messageId, thinkingLevel, uiLanguage } = parsed.data;
 
   // Load conversation + verify ownership.
   const conv = await db.conversation.findUnique({
@@ -164,6 +165,7 @@ export async function POST(
     mode: conv.mode as AgentMode,
     ...(conv.systemPrompt ? { systemPrompt: conv.systemPrompt } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(uiLanguage ? { uiLanguage } : {}),
   };
 
   // Server-side AbortController for this conversation session.

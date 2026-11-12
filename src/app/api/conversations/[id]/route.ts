@@ -45,6 +45,7 @@ export const GET = withErrorHandler(
       },
     });
     if (!row || row.userId !== user.id) return notFound("Conversation not found");
+
     const res = ok({ conversation: toConversationDTO(row) });
     res.headers.set("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
     return res;

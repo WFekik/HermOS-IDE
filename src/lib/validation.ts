@@ -113,7 +113,7 @@ export const chatRequestSchema = z.object({
   attachmentIds: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
   editMessageId: z.string().trim().min(1).max(64).optional(),
   messageId: z.string().trim().min(1).max(64).optional(),
-  maxIterations: z.number().int().min(1).max(500).optional(),
+  maxIterations: z.number().int().min(1).max(100_000).optional(),
   autoWake: z.boolean().optional(),
   uiLanguage: uiLanguageSchema.optional(),
   contextConfig:   z.object({
@@ -242,6 +242,8 @@ export const providerModelEntrySchema = z.object({
   id: z.string().trim().min(1).max(200),
   enabled: z.boolean().optional(),
   thinkingLevel: thinkingLevelSchema.optional(),
+  contextWindow: z.number().int().positive().optional(),
+  serverContextWindow: z.number().int().positive().optional(),
 });
 
 export const saveKeySchema = z

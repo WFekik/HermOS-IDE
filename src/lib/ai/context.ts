@@ -57,9 +57,10 @@ export const MAX_PRESERVE_RECENT_TOKENS = 8_000;
 /** Resolves preserve-recent budget (25% of usable budget clamped between 2,000 and 8,000 tokens). */
 export function resolvePreserveRecentBudget(usableBudget: number): number {
   if (!(usableBudget > 0)) return MAX_PRESERVE_RECENT_TOKENS;
+  const minFloor = Math.min(MIN_PRESERVE_RECENT_TOKENS, Math.max(500, Math.round(usableBudget * 0.4)));
   return Math.min(
     MAX_PRESERVE_RECENT_TOKENS,
-    Math.max(MIN_PRESERVE_RECENT_TOKENS, Math.round(usableBudget * 0.25)),
+    Math.max(minFloor, Math.round(usableBudget * 0.25)),
   );
 }
 
@@ -140,6 +141,15 @@ export function estimateMessageTokens(
  */
 export function isCompactionMarker(content: string): boolean {
   return /<context_summary(?:\s+[^>]*)?>/i.test(content);
+}
+
+/** Extracts raw markdown content from within a `<context_summary>...</context_summary>` block. */
+export function extractCompactionSummary(content: string | null | undefined): string {
+  if (!content) return "";
+  return content
+    .replace(/<context_summary(?:\s+[^>]*)?>/gi, "")
+    .replace(/<\/context_summary>/gi, "")
+    .trim();
 }
 
 interface CompactionTurn {
@@ -386,10 +396,14 @@ export function isContextOverflow(
   maxOutputTokens = 0,
   config?: Partial<ContextConfig>,
 ): boolean {
-  if (!contextWindow) return false;
+  if (!contextWindow || contextWindow <= 0) return false;
   const { compactionBuffer, outputTokenCap } = { ...DEFAULT_CONTEXT_CONFIG, ...config };
   const reservedOutput = Math.min(maxOutputTokens, outputTokenCap);
-  const usable = Math.max(0, contextWindow - reservedOutput - compactionBuffer);
+  const effectiveBuffer =
+    contextWindow >= 1000 && config?.compactionBuffer === undefined
+      ? Math.min(compactionBuffer, Math.max(500, Math.round(contextWindow * 0.2)))
+      : compactionBuffer;
+  const usable = Math.max(0, contextWindow - reservedOutput - effectiveBuffer);
   return inputTokens > usable;
 }
 
@@ -515,7 +529,11 @@ export function truncateHistory<T extends HistoryMessage>(
   const systemTokens = options.systemTokens ?? estimateTokens(systemPrompt);
   const maxOutputTokens = options.maxOutputTokens ?? 0;
   const reservedOutput = Math.min(maxOutputTokens, cfg.outputTokenCap);
-  const usableBudget = Math.max(0, contextWindow - systemTokens - reservedOutput - cfg.compactionBuffer);
+  const effectiveBuffer =
+    contextWindow >= 1000 && options.contextConfig?.compactionBuffer === undefined
+      ? Math.min(cfg.compactionBuffer, Math.max(500, Math.round(contextWindow * 0.2)))
+      : cfg.compactionBuffer;
+  const usableBudget = Math.max(0, contextWindow - systemTokens - reservedOutput - effectiveBuffer);
 
   // OpenCode: preserve tailTurns (default 2) of user+assistant pairs
   const tailTurns = Math.max(1, options.tailTurns ?? cfg.tailTurns);
