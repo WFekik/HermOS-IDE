@@ -117,3 +117,5 @@ HermOS is single-user, bound to the OS account that installed it.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+[![M8ven Score](https://m8ven.ai/badge/mcp/wfekik-hermos-ide-st2c84?v=90e09dde4cb985be0ac085061b1ca705)](https://m8ven.ai/mcp/wfekik-hermos-ide-st2c84?s=readme)
