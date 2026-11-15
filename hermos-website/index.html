@@ -12,14 +12,14 @@
 
   <!-- Primary SEO Metadata -->
   <title>HermOS — Open Source Local AI IDE | Cursor Alternative</title>
-  <meta name="description" content="Free, open-source, local-first AI coding IDE. Run autonomous subagent trees that edit code, execute terminal commands, and browse the web directly on your machine. 100% private, zero cloud telemetry, works offline with Ollama." />
-  <meta name="keywords" content="Cursor alternative, open source Cursor alternative, local AI IDE, local-first code editor, AI coding agent, Ollama IDE, Model Context Protocol, MCP IDE, free AI code editor, private AI programming, Tauri AI IDE, autonomous subagents" />
+  <meta name="description" content="Free, open-source, local-first AI coding IDE. Run autonomous subagent trees that edit code, execute terminal commands, and test browsers natively on your machine. 100% private, zero cloud telemetry, works offline with Ollama." />
+  <meta name="keywords" content="Cursor alternative, open source Cursor alternative, local AI IDE, local-first code editor, AI coding agent, Ollama IDE, Model Context Protocol, MCP IDE, free AI code editor, private AI programming, Tauri AI IDE, autonomous subagents, AI research workbench" />
   <meta name="author" content="HermOS IDE Contributors" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#050A05" />
+  <meta name="theme-color" content="#040705" />
   <link rel="canonical" href="https://hermos.is-a.dev/" />
 
   <!-- AI Agent & LLM Discovery Standards -->
@@ -48,9 +48,12 @@
   <meta name="twitter:image" content="https://hermos.is-a.dev/og.png" />
   <meta name="twitter:image:alt" content="HermOS IDE — Local-First AI Agent IDE Interface" />
 
-  <!-- Favicons -->
+  <!-- Google Search Favicon Guidelines (Multiples of 48px square + SVG + Apple Touch) -->
+  <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
+  <link rel="icon" type="image/png" sizes="96x96" href="favicon-96.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000000'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='%230FD765' stroke-width='2.8' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='24.5' r='2' fill='%2338EF7D'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
+  <link rel="shortcut icon" href="favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
 
   <!-- High-Performance Typography -->
@@ -67,11 +70,34 @@
     "@context": "https://schema.org",
     "@graph": [
       {
+        "@type": "Organization",
+        "@id": "https://hermos.is-a.dev/#organization",
+        "name": "HermOS Project",
+        "url": "https://hermos.is-a.dev/",
+        "logo": "https://hermos.is-a.dev/logo.png",
+        "image": "https://hermos.is-a.dev/logo.png",
+        "sameAs": [
+          "https://github.com/WFekik/HermOS-IDE"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hermos.is-a.dev/#website",
+        "url": "https://hermos.is-a.dev/",
+        "name": "HermOS IDE",
+        "description": "The open-source, local-first AI agent IDE for autonomous software development and agentic research.",
+        "publisher": {
+          "@id": "https://hermos.is-a.dev/#organization"
+        },
+        "image": "https://hermos.is-a.dev/logo.png"
+      },
+      {
         "@type": "SoftwareApplication",
         "@id": "https://hermos.is-a.dev/#software",
         "name": "HermOS IDE",
         "url": "https://hermos.is-a.dev/",
-        "image": "https://hermos.is-a.dev/og.png",
+        "image": "https://hermos.is-a.dev/logo.png",
+        "logo": "https://hermos.is-a.dev/logo.png",
         "description": "Free, open-source, local-first AI agent IDE where autonomous subagents edit code, execute terminal commands, and automate browsers natively with zero cloud telemetry.",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Windows 10+, macOS 12+, Linux (Ubuntu, Debian, Fedora, Arch)",
@@ -87,27 +113,15 @@
         "featureList": [
           "100% Local-first desktop execution with zero cloud telemetry",
           "Autonomous subagent tree orchestration for parallel tasks",
+          "Local air-gapped benchmarking and evals with Ollama",
           "Model Context Protocol (MCP) client integration",
+          "Sandboxed headless browser and DOM verification",
           "Visual Git split diff review and atomic checkpoint rollbacks",
           "Client-side AES-256-GCM encrypted API key storage",
           "Universal BYOK model support including Claude 3.7, Groq, NVIDIA NIM, and offline Ollama"
         ],
         "author": {
-          "@type": "Organization",
-          "name": "HermOS Project",
-          "url": "https://github.com/WFekik/HermOS-IDE"
-        }
-      },
-      {
-        "@type": "WebSite",
-        "@id": "https://hermos.is-a.dev/#website",
-        "url": "https://hermos.is-a.dev/",
-        "name": "HermOS IDE",
-        "description": "The open-source, local-first AI agent IDE for autonomous software development.",
-        "publisher": {
-          "@type": "Organization",
-          "name": "HermOS Project",
-          "url": "https://github.com/WFekik/HermOS-IDE"
+          "@id": "https://hermos.is-a.dev/#organization"
         }
       },
       {
@@ -148,6 +162,14 @@
           },
           {
             "@type": "Question",
+            "name": "How do autonomous subagents work in HermOS?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "HermOS can spawn background worker subagents that operate concurrently across different task domains. Subagents run in isolated workspace worktrees, allowing them to research codebases, run unit tests, and inspect browser DOM nodes without blocking your active editor."
+            }
+          },
+          {
+            "@type": "Question",
             "name": "What models and providers does HermOS support?",
             "acceptedAnswer": {
               "@type": "Answer",
@@ -162,46 +184,56 @@
 
   <style>
     /* ==========================================================================
-       DESIGN SYSTEM & PROFESSIONAL TOKENS (Linear / Cursor Sleek Aesthetic)
+       DESIGN SYSTEM & OBSIDIAN EMERALD TOKENS (BLACK WITH NEAR-GREEN UNDERTONE)
        ========================================================================== */
     :root {
-      /* AMOLED Dark System (#050A05) */
-      --bg-base: #050A05;
-      --bg-surface: #0B130B;
-      --bg-surface-raised: #121B12;
-      --bg-surface-elevated: #172417;
-      --bg-surface-hover: #1F2E1F;
+      /* Obsidian Near-Green Foundation */
+      --bg-base: #040705;
+      --bg-surface: #090E0A;
+      --bg-surface-raised: #0E1610;
+      --bg-surface-elevated: #142017;
+      --bg-surface-hover: #1A2A1E;
 
-      --border-subtle: rgba(255, 255, 255, 0.07);
-      --border-default: rgba(255, 255, 255, 0.12);
-      --border-strong: rgba(255, 255, 255, 0.22);
-      --border-brand: rgba(15, 215, 101, 0.35);
+      /* Architectural Hairline Borders & Glass Sheen */
+      --border-subtle: rgba(255, 255, 255, 0.05);
+      --border-default: rgba(255, 255, 255, 0.09);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --border-highlight: rgba(255, 255, 255, 0.25);
+      --border-brand: rgba(15, 215, 101, 0.32);
+      --glass-sheen: inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+      --glass-sheen-strong: inset 0 1px 0 0 rgba(255, 255, 255, 0.14);
 
-      /* Brand Accent (#0FD765) */
+      /* HermOS Emerald Brand Accent System */
       --brand-primary: #0FD765;
-      --brand-bright: #0FD765;
-      --brand-light: #38EF7D;
+      --brand-bright: #38EF7D;
       --brand-dark: #0BB554;
-      --brand-glow: rgba(15, 215, 101, 0.20);
+      --brand-glow: rgba(15, 215, 101, 0.16);
       --brand-tint: rgba(15, 215, 101, 0.08);
+      --brand-tint-strong: rgba(15, 215, 101, 0.15);
+      --accent-emerald: #10B981;
+      --accent-emerald-tint: rgba(16, 185, 129, 0.08);
 
-      --text-primary: #ffffff;
-      --text-secondary: #a1a1aa;
-      --text-muted: #71717a;
-      --text-dim: #52525b;
+      /* High-Contrast Titanium Typography (Pure Non-Blue Neutral) */
+      --text-primary: #F5F8F6;
+      --text-secondary: #9EA8A1;
+      --text-muted: #68746D;
+      --text-dim: #47524B;
 
       --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 
+      --radius-xs: 4px;
       --radius-sm: 6px;
       --radius-md: 10px;
       --radius-lg: 14px;
       --radius-xl: 20px;
       --radius-full: 9999px;
 
-      --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.6);
-      --shadow-md: 0 12px 32px -4px rgba(0, 0, 0, 0.85);
-      --shadow-lg: 0 24px 64px -12px rgba(0, 0, 0, 0.98);
+      /* Multi-Layer Depth Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+      --shadow-md: 0 12px 30px -4px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --shadow-brand: 0 0 24px -4px rgba(15, 215, 101, 0.22);
     }
 
     *, *::before, *::after {
@@ -233,27 +265,40 @@
 
     ::selection {
       background: rgba(15, 215, 101, 0.25);
-      color: #ffffff;
+      color: var(--text-primary);
     }
 
     a {
       color: inherit;
       text-decoration: none;
-      transition: color 0.15s ease;
+      transition: color 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* AMOLED Subtle Grid Background (Pure Black, Crisp Precision) */
+    /* Ambient Celestial Sheen & Precision Grid */
+    .site-bg-glow {
+      position: fixed;
+      top: -160px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1000px;
+      height: 520px;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(ellipse at 50% 35%, rgba(15, 215, 101, 0.07) 0%, rgba(16, 185, 129, 0.03) 45%, transparent 72%);
+      filter: blur(50px);
+    }
+
     .site-bg-grid {
       position: fixed;
       inset: 0;
       pointer-events: none;
       z-index: 0;
-      background-image: 
-        linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-      background-size: 40px 40px;
-      mask-image: radial-gradient(circle at 50% 12%, black 25%, transparent 75%);
-      -webkit-mask-image: radial-gradient(circle at 50% 12%, black 25%, transparent 75%);
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.024) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, black 25%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, black 25%, transparent 80%);
     }
 
     .container {
@@ -269,6 +314,50 @@
       .container { padding: 0 2rem; }
     }
 
+    /* Scroll Reveal & Dynamic Physics */
+    .reveal-on-scroll {
+      opacity: 0;
+      transform: translateY(14px);
+      transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+
+    .reveal-on-scroll.is-revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Interactive Spotlight Sheen on Cards */
+    .spotlight-card {
+      position: relative;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+      transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .spotlight-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(450px circle at var(--mouse-x, -1000px) var(--mouse-y, -1000px), rgba(15, 215, 101, 0.07), transparent 45%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      z-index: 1;
+    }
+
+    .spotlight-card:hover::after {
+      opacity: 1;
+    }
+
+    .spotlight-card:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
+    }
+
     /* ==========================================================================
        HEADER & NAVIGATION
        ========================================================================== */
@@ -276,10 +365,11 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(5, 10, 5, 0.85);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+      background: rgba(4, 7, 5, 0.85);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--border-subtle);
+      transition: border-color 0.2s ease;
     }
 
     .nav {
@@ -300,16 +390,29 @@
       color: var(--text-primary);
     }
 
-    .brand-icon {
+    .brand-icon-wrap {
       width: 2.1rem;
       height: 2.1rem;
       border-radius: 8px;
-      background: var(--bg-surface);
+      background: var(--bg-surface-raised);
       border: 1px solid var(--border-default);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+      overflow: hidden;
+      transition: border-color 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .nav-brand:hover .brand-icon-wrap {
+      border-color: var(--border-strong);
+      transform: scale(1.04);
+    }
+
+    .brand-icon-wrap img {
+      width: 1.35rem;
+      height: 1.35rem;
+      display: block;
     }
 
     .brand-version {
@@ -319,18 +422,22 @@
       font-weight: 500;
       margin-left: 0.35rem;
       letter-spacing: -0.01em;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      padding: 0.15rem 0.45rem;
+      border-radius: var(--radius-sm);
     }
 
     .nav-links {
       display: none;
       align-items: center;
-      gap: 2rem;
+      gap: 1.75rem;
       font-size: 0.875rem;
       font-weight: 500;
       color: var(--text-secondary);
     }
 
-    @media (min-width: 860px) {
+    @media (min-width: 960px) {
       .nav-links { display: flex; }
     }
 
@@ -359,7 +466,7 @@
       cursor: pointer;
     }
 
-    @media (max-width: 859px) {
+    @media (max-width: 959px) {
       .nav-toggle { display: inline-flex; }
       .nav-links {
         position: absolute;
@@ -369,9 +476,9 @@
         flex-direction: column;
         align-items: stretch;
         gap: 0.25rem;
-        background: rgba(5, 10, 5, 0.98);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        background: rgba(4, 7, 5, 0.98);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
         border-bottom: 1px solid var(--border-subtle);
         box-shadow: var(--shadow-lg);
         padding: 1rem 1.5rem 1.5rem;
@@ -380,12 +487,12 @@
       .nav-links a { padding: 0.65rem 0; font-size: 0.9375rem; }
     }
 
-    /* Buttons */
+    /* Titanium High-Precision Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
+      gap: 0.55rem;
       font-family: var(--font-sans);
       font-weight: 600;
       font-size: 0.875rem;
@@ -393,37 +500,49 @@
       border-radius: var(--radius-md);
       cursor: pointer;
       text-decoration: none;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       white-space: nowrap;
       user-select: none;
+      position: relative;
     }
 
     .btn-primary {
-      background: #0FD765;
-      color: #000000;
-      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: #F5F8F6;
+      color: #040705;
+      border: 1px solid rgba(255, 255, 255, 0.85);
       font-weight: 700;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.9);
     }
 
     .btn-primary:hover {
-      background: #38EF7D;
+      background: #FFFFFF;
       color: #000000;
       transform: translateY(-1px);
-      box-shadow: 0 4px 18px rgba(15, 215, 101, 0.35);
+      box-shadow: 0 8px 24px -4px rgba(255, 255, 255, 0.22), 0 2px 6px rgba(0, 0, 0, 0.5);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0) scale(0.99);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
     }
 
     .btn-secondary {
       background: var(--bg-surface);
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      box-shadow: var(--glass-sheen);
     }
 
     .btn-secondary:hover {
       background: var(--bg-surface-raised);
-      border-color: rgba(255, 255, 255, 0.25);
-      color: #ffffff;
+      border-color: var(--border-strong);
+      color: #FFFFFF;
       transform: translateY(-1px);
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+    }
+
+    .btn-secondary:active {
+      transform: translateY(0) scale(0.99);
     }
 
     .btn-sm {
@@ -433,8 +552,8 @@
     }
 
     .btn-lg {
-      height: 3rem;
-      padding: 0 1.65rem;
+      height: 3.1rem;
+      padding: 0 1.75rem;
       font-size: 0.9375rem;
       border-radius: var(--radius-lg);
     }
@@ -446,10 +565,106 @@
     }
 
     /* ==========================================================================
-       HERO SECTION (High-Converting, Engineering Focus)
+       STICKY FLOATING DOWNLOAD PILL / MINI-BAR (CRO)
+       ========================================================================== */
+    .sticky-download-pill {
+      position: fixed;
+      bottom: 1.75rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(120%);
+      opacity: 0;
+      visibility: hidden;
+      z-index: 60;
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease, visibility 0.25s;
+      pointer-events: none;
+    }
+
+    .sticky-download-pill.visible {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .sticky-pill-inner {
+      display: flex;
+      align-items: center;
+      gap: 1.15rem;
+      background: rgba(13, 15, 20, 0.82);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-default);
+      box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.9), var(--glass-sheen);
+      padding: 0.55rem 0.85rem 0.55rem 1.15rem;
+      border-radius: var(--radius-full);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .sticky-pill-inner:hover {
+      border-color: var(--border-strong);
+      box-shadow: 0 20px 48px -6px rgba(0, 0, 0, 0.95), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+    }
+
+    .sticky-pill-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .sticky-pill-brand img {
+      width: 1.25rem;
+      height: 1.25rem;
+      display: block;
+    }
+
+    .sticky-pill-title {
+      font-weight: 700;
+      font-size: 0.875rem;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    .sticky-pill-version {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--brand-bright);
+      background: var(--brand-tint);
+      border: 1px solid var(--border-brand);
+      padding: 0.1rem 0.45rem;
+      border-radius: var(--radius-full);
+      font-weight: 600;
+    }
+
+    .sticky-pill-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .sticky-pill-btn {
+      height: 2.15rem;
+      padding: 0 1rem;
+      font-size: 0.8125rem;
+      border-radius: var(--radius-full);
+    }
+
+    .sticky-pill-other {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      padding: 0 0.45rem;
+      transition: color 0.15s ease;
+    }
+
+    .sticky-pill-other:hover {
+      color: var(--brand-bright);
+    }
+
+    /* ==========================================================================
+       HERO SECTION
        ========================================================================== */
     .hero {
-      padding-top: 5rem;
+      padding-top: 4.5rem;
       padding-bottom: 5.5rem;
       text-align: center;
       position: relative;
@@ -457,41 +672,31 @@
 
     @media (min-width: 1024px) {
       .hero {
-        padding-top: 6.5rem;
+        padding-top: 6rem;
         padding-bottom: 7rem;
       }
-    }
-
-    .hero-kicker {
-      font-family: var(--font-mono);
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      margin-bottom: 1.5rem;
     }
 
     .hero h1 {
       font-size: 2.5rem;
       font-weight: 800;
-      line-height: 1.12;
-      letter-spacing: -0.04em;
+      line-height: 1.1;
+      letter-spacing: -0.045em;
       max-width: 58rem;
       margin: 0 auto 1.35rem;
       color: var(--text-primary);
     }
 
     @media (min-width: 640px) {
-      .hero h1 { font-size: 3.5rem; }
+      .hero h1 { font-size: 3.75rem; }
     }
 
     @media (min-width: 1024px) {
-      .hero h1 { font-size: 4.25rem; }
+      .hero h1 { font-size: 4.5rem; }
     }
 
     .hero h1 .highlight-text {
-      background: linear-gradient(180deg, #ffffff 30%, #d4d4d8 100%);
+      background: linear-gradient(180deg, #FFFFFF 20%, #9EA8A1 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       display: inline;
@@ -536,6 +741,7 @@
     .hero-os-hint a {
       color: var(--text-secondary);
       text-decoration: underline;
+      transition: color 0.15s ease;
     }
 
     .hero-os-hint a:hover {
@@ -548,13 +754,14 @@
       flex-wrap: wrap;
       align-items: center;
       justify-content: center;
-      gap: 2rem 2.5rem;
-      max-width: 58rem;
+      gap: 1.75rem 2.25rem;
+      max-width: 62rem;
       margin: 0 auto 4.5rem;
-      padding: 1.25rem 1.5rem;
+      padding: 1.15rem 1.75rem;
       background: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
+      border: 1px solid var(--border-default);
       border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
     }
 
     .trust-item {
@@ -564,16 +771,19 @@
       font-size: 0.8125rem;
       color: var(--text-secondary);
       font-weight: 500;
+      transition: color 0.15s ease;
+    }
+
+    .trust-item:hover {
+      color: var(--text-primary);
     }
 
     .trust-item svg {
-      color: var(--brand-bright);
+      color: var(--brand-primary);
       flex-shrink: 0;
     }
 
-    /* ==========================================================================
-       HERO PRODUCT VIEWPORT STAGE (High-Resolution IDE Frame)
-       ========================================================================== */
+    /* Hero Product Viewport Stage */
     .hero-viewport-stage {
       position: relative;
       margin: 0 auto;
@@ -602,8 +812,9 @@
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       white-space: nowrap;
+      box-shadow: var(--glass-sheen);
     }
 
     .view-tab:hover {
@@ -614,9 +825,13 @@
 
     .view-tab.active {
       background: var(--bg-surface-raised);
+      color: #FFFFFF;
+      border-color: var(--border-brand);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), var(--glass-sheen-strong);
+    }
+
+    .view-tab.active svg {
       color: var(--brand-bright);
-      border-color: rgba(15, 215, 101, 0.35);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
     }
 
     .floating-viewport-frame {
@@ -624,10 +839,17 @@
       border-radius: var(--radius-xl);
       background: var(--bg-surface);
       border: 1px solid var(--border-default);
-      box-shadow: var(--shadow-lg);
+      box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.04);
       overflow: hidden;
       cursor: pointer;
       text-align: left;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .floating-viewport-frame:hover {
+      border-color: var(--border-strong);
+      box-shadow: 0 28px 70px -12px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      transform: translateY(-2px);
     }
 
     .frame-titlebar {
@@ -649,8 +871,13 @@
       width: 0.65rem;
       height: 0.65rem;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.14);
+      transition: background 0.15s ease;
     }
+
+    .floating-viewport-frame:hover .frame-dot:nth-child(1) { background: #EF4444; }
+    .floating-viewport-frame:hover .frame-dot:nth-child(2) { background: #F59E0B; }
+    .floating-viewport-frame:hover .frame-dot:nth-child(3) { background: #10B981; }
 
     .frame-title-badge {
       font-family: var(--font-mono);
@@ -664,10 +891,20 @@
     .frame-live-indicator {
       font-family: var(--font-mono);
       font-size: 0.6875rem;
-      color: var(--text-muted);
+      color: var(--brand-bright);
       display: flex;
       align-items: center;
       gap: 0.45rem;
+      font-weight: 600;
+    }
+
+    .frame-live-indicator::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--brand-bright);
+      box-shadow: 0 0 8px var(--brand-bright);
     }
 
     .frame-image-wrap {
@@ -684,15 +921,15 @@
       height: auto;
       object-fit: cover;
       object-position: top;
-      transition: opacity 0.2s ease;
+      transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .zoom-hint-overlay {
       position: absolute;
       bottom: 1rem;
       right: 1rem;
-      background: rgba(11, 19, 11, 0.9);
-      backdrop-filter: blur(8px);
+      background: rgba(13, 15, 20, 0.88);
+      backdrop-filter: blur(10px);
       border: 1px solid var(--border-default);
       padding: 0.4rem 0.85rem;
       border-radius: var(--radius-sm);
@@ -703,6 +940,7 @@
       align-items: center;
       gap: 0.4rem;
       pointer-events: none;
+      box-shadow: var(--shadow-sm);
     }
 
     /* ==========================================================================
@@ -756,77 +994,199 @@
     }
 
     /* ==========================================================================
-       COMPETITIVE COMPARISON MATRIX (Huge SEO & Developer Marketing Conversion)
+       AGENTIC RESEARCH SECTION (Tailored for AI Researchers & Agentic Engineers)
        ========================================================================== */
-    .comparison-wrap {
-      overflow-x: auto;
+    .research-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-bottom: 3.5rem;
+    }
+
+    @media (min-width: 768px) {
+      .research-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .research-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .research-card:nth-child(1),
+      .research-card:nth-child(2) {
+        grid-column: span 1;
+      }
+    }
+
+    .research-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 1.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+      position: relative;
+      transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+    }
+
+    .research-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(15, 215, 101, 0.5), transparent);
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .research-card:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
+    }
+
+    .research-card:hover::before {
+      opacity: 1;
+    }
+
+    .research-card-icon {
+      width: 2.75rem;
+      height: 2.75rem;
+      border-radius: var(--radius-md);
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-default);
+      color: var(--brand-bright);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--glass-sheen);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+    }
+
+    .research-card:hover .research-card-icon {
+      transform: scale(1.05);
+      border-color: var(--border-brand);
+    }
+
+    .research-card-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .research-tag {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      color: var(--brand-bright);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .research-card h3 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.3;
+    }
+
+    .research-card p {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      flex: 1;
+    }
+
+    .research-spec-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .research-spec-badge {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      background: var(--bg-surface-raised);
+      border: 1px solid var(--border-subtle);
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-sm);
+    }
+
+    /* Research Comparison Matrix */
+    .research-matrix-card {
       background: var(--bg-surface);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-md);
+      padding: 2.5rem;
+      box-shadow: var(--shadow-md), var(--glass-sheen);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
     }
 
-    .comparison-table {
+    @media (min-width: 960px) {
+      .research-matrix-card {
+        grid-template-columns: 1.1fr 1fr;
+        align-items: center;
+      }
+    }
+
+    .research-matrix-info h3 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-bottom: 0.75rem;
+    }
+
+    .research-matrix-info p {
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
+      margin-bottom: 1.5rem;
+    }
+
+    .research-table-wrap {
+      overflow-x: auto;
+    }
+
+    .research-table {
       width: 100%;
-      min-width: 700px;
       border-collapse: collapse;
+      font-size: 0.8125rem;
       text-align: left;
-      font-size: 0.875rem;
     }
 
-    .comparison-table th,
-    .comparison-table td {
-      padding: 1.15rem 1.35rem;
+    .research-table th,
+    .research-table td {
+      padding: 0.85rem 1rem;
       border-bottom: 1px solid var(--border-subtle);
     }
 
-    .comparison-table th {
-      font-size: 0.8125rem;
+    .research-table th {
       font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: var(--text-muted);
-      background: var(--bg-surface-raised);
     }
 
-    .comparison-table th.col-hermos {
-      color: var(--brand-bright);
-      background: rgba(15, 215, 101, 0.08);
-      border-left: 1px solid rgba(15, 215, 101, 0.28);
-      border-right: 1px solid rgba(15, 215, 101, 0.28);
-      border-top: 2px solid var(--brand-bright);
-    }
-
-    .comparison-table td.col-hermos {
-      background: rgba(15, 215, 101, 0.035);
-      border-left: 1px solid rgba(15, 215, 101, 0.28);
-      border-right: 1px solid rgba(15, 215, 101, 0.28);
+    .research-table td:first-child {
       font-weight: 600;
       color: var(--text-primary);
     }
 
-    .comparison-table tr:last-child td {
-      border-bottom: none;
-    }
-
-    .table-badge-yes {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
+    .research-table td.hermos-val {
       color: var(--brand-bright);
-      font-weight: 600;
-      font-size: 0.8125rem;
-    }
-
-    .table-badge-neutral {
-      color: var(--text-secondary);
-      font-size: 0.8125rem;
-      font-weight: 500;
-    }
-
-    .table-badge-no {
-      color: var(--text-muted);
-      font-size: 0.8125rem;
+      font-family: var(--font-mono);
     }
 
     /* ==========================================================================
@@ -917,9 +1277,15 @@
       border-radius: var(--radius-lg);
       background: var(--bg-surface);
       border: 1px solid var(--border-default);
-      box-shadow: var(--shadow-md);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
       overflow: hidden;
       cursor: pointer;
+      transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .feature-glass-frame:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
     }
 
     .feature-glass-frame img {
@@ -927,7 +1293,7 @@
       width: 100%;
       height: auto;
       object-fit: cover;
-      transition: transform 0.25s ease;
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .feature-glass-frame:hover img {
@@ -935,13 +1301,87 @@
     }
 
     /* ==========================================================================
-       MODEL PROVIDER MATRIX (Clean Monochromatic Interface)
+       COMPETITIVE COMPARISON MATRIX
+       ========================================================================== */
+    .comparison-wrap {
+      overflow-x: auto;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
+    }
+
+    .comparison-table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 1.15rem 1.35rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .comparison-table th {
+      font-size: 0.8125rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      background: var(--bg-surface-raised);
+    }
+
+    .comparison-table th.col-hermos {
+      color: var(--brand-bright);
+      background: rgba(15, 215, 101, 0.07);
+      border-left: 1px solid rgba(15, 215, 101, 0.25);
+      border-right: 1px solid rgba(15, 215, 101, 0.25);
+      border-top: 2px solid var(--brand-primary);
+    }
+
+    .comparison-table td.col-hermos {
+      background: rgba(15, 215, 101, 0.035);
+      border-left: 1px solid rgba(15, 215, 101, 0.25);
+      border-right: 1px solid rgba(15, 215, 101, 0.25);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .comparison-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .table-badge-yes {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--brand-bright);
+      font-weight: 600;
+      font-size: 0.8125rem;
+    }
+
+    .table-badge-neutral {
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
+
+    .table-badge-no {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+    }
+
+    /* ==========================================================================
+       MODEL PROVIDER MATRIX
        ========================================================================== */
     .model-engine-console {
       background: var(--bg-surface);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-md);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
       overflow: hidden;
       display: grid;
       grid-template-columns: 1fr;
@@ -983,7 +1423,7 @@
       font-weight: 600;
       cursor: pointer;
       text-align: left;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .engine-item-btn:hover {
@@ -993,8 +1433,9 @@
 
     .engine-item-btn.active {
       background: var(--bg-surface-raised);
-      border-color: rgba(15, 215, 101, 0.3);
-      color: #ffffff;
+      border-color: var(--border-brand);
+      color: #FFFFFF;
+      box-shadow: var(--glass-sheen);
     }
 
     .engine-name {
@@ -1075,6 +1516,12 @@
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+      box-shadow: var(--glass-sheen);
+      transition: border-color 0.2s ease;
+    }
+
+    .arch-spec-box:hover {
+      border-color: var(--border-strong);
     }
 
     .arch-spec-box-title {
@@ -1114,14 +1561,14 @@
     }
 
     /* ==========================================================================
-       DOWNLOAD & NATIVE INSTALLERS SECTION
+       DOWNLOAD & NATIVE INSTALLERS (CRO)
        ========================================================================== */
     .download-panel {
       background: var(--bg-surface);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-xl);
       padding: 3.5rem 1.5rem;
-      box-shadow: var(--shadow-lg);
+      box-shadow: var(--shadow-lg), var(--glass-sheen);
       text-align: center;
     }
 
@@ -1138,35 +1585,44 @@
     }
 
     @media (min-width: 768px) {
-      .dl-cards-grid { grid-template-columns: repeat(3, 1fr); }
+      .dl-cards-grid {
+        grid-template-columns: repeat(3, 1fr);
+        align-items: stretch;
+      }
     }
 
     .os-card {
-      background: var(--bg-surface-raised);
+      background: var(--bg-surface);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-lg);
       padding: 1.75rem;
       display: flex;
       flex-direction: column;
-      gap: 1.25rem;
-      transition: all 0.15s ease;
+      height: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+      position: relative;
     }
 
     .os-card:hover {
-      border-color: var(--border-brand);
+      border-color: var(--border-strong);
       transform: translateY(-2px);
-      box-shadow: var(--shadow-md);
+      box-shadow: var(--shadow-md), var(--glass-sheen);
     }
 
     .os-card.detected-os {
       border-color: var(--border-brand);
-      background: var(--bg-surface-elevated);
+      background: var(--bg-surface-raised);
+      box-shadow: var(--shadow-sm), var(--shadow-brand), var(--glass-sheen);
     }
 
     .os-card-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      min-height: 2.5rem;
+      margin-bottom: 1.25rem;
     }
 
     .os-card-icon {
@@ -1176,41 +1632,90 @@
       align-items: center;
       justify-content: center;
       background: var(--bg-surface-elevated);
-      border: 1px solid var(--border-subtle);
+      border: 1px solid var(--border-default);
       border-radius: var(--radius-md);
       color: var(--brand-bright);
+      box-shadow: var(--glass-sheen);
+      flex-shrink: 0;
     }
 
     .detected-badge {
       font-family: var(--font-mono);
       font-size: 0.6875rem;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--brand-bright);
+      background: var(--brand-tint-strong);
+      border: 1px solid var(--border-brand);
+      padding: 0.2rem 0.6rem;
+      border-radius: var(--radius-full);
       text-transform: uppercase;
       letter-spacing: 0.06em;
+      line-height: 1;
+    }
+
+    .os-card-info {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      margin-bottom: 1.5rem;
     }
 
     .os-card-info h3 {
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       font-weight: 700;
       color: var(--text-primary);
+      margin-bottom: 0.35rem;
+      line-height: 1.2;
     }
 
     .os-card-info p {
       font-size: 0.75rem;
       font-family: var(--font-mono);
       color: var(--text-muted);
-      margin-top: 0.25rem;
+      line-height: 1.5;
+      min-height: 2.5rem;
+      margin: 0;
+    }
+
+    .os-card-actions {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+    }
+
+    .os-card-actions .btn {
+      height: 2.5rem;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+
+    .os-card-actions .btn.btn-has-secondary {
+      flex: 1 1 auto;
+      width: auto;
+    }
+
+    .os-card-actions .btn-secondary-dl {
+      flex: 0 0 auto;
+      width: auto;
+      padding: 0 0.85rem;
     }
 
     .terminal-box {
-      max-width: 46rem;
+      max-width: 48rem;
       margin: 0 auto;
       background: var(--bg-base);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md);
       overflow: hidden;
       text-align: left;
+      box-shadow: var(--shadow-sm), var(--glass-sheen);
+      transition: border-color 0.2s ease;
+    }
+
+    .terminal-box:hover {
+      border-color: var(--border-strong);
     }
 
     .terminal-header {
@@ -1242,7 +1747,7 @@
     }
 
     .terminal-cmd .prompt-sym {
-      color: var(--brand-bright);
+      color: var(--brand-primary);
       margin-right: 0.45rem;
       user-select: none;
     }
@@ -1261,17 +1766,20 @@
       align-items: center;
       gap: 0.35rem;
       flex-shrink: 0;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: var(--glass-sheen);
     }
 
     .copy-btn:hover {
       background: var(--bg-surface-hover);
-      color: #ffffff;
+      border-color: var(--border-strong);
+      color: #FFFFFF;
+      transform: translateY(-1px);
     }
 
     .copy-btn.copied {
       background: var(--brand-tint);
-      border-color: var(--brand-bright);
+      border-color: var(--brand-primary);
       color: var(--brand-bright);
     }
 
@@ -1291,11 +1799,13 @@
       border-radius: var(--radius-md);
       background: var(--bg-surface);
       overflow: hidden;
-      transition: border-color 0.15s ease;
+      transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: var(--glass-sheen);
     }
 
     .faq-block[open] {
-      border-color: var(--border-brand);
+      border-color: var(--border-strong);
+      background: var(--bg-surface-raised);
     }
 
     .faq-block summary {
@@ -1317,7 +1827,7 @@
       font-size: 1.15rem;
       font-weight: 400;
       color: var(--text-muted);
-      transition: transform 0.15s ease;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s ease;
     }
 
     .faq-block[open] .faq-toggle-icon {
@@ -1344,8 +1854,8 @@
       position: fixed;
       inset: 0;
       z-index: 100;
-      background: rgba(5, 10, 5, 0.96);
-      backdrop-filter: blur(16px);
+      background: rgba(4, 7, 5, 0.96);
+      backdrop-filter: blur(20px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -1385,6 +1895,13 @@
       justify-content: center;
       cursor: pointer;
       font-size: 1.25rem;
+      transition: all 0.15s ease;
+    }
+
+    .lightbox-close:hover {
+      background: var(--bg-surface-hover);
+      border-color: var(--border-strong);
+      transform: scale(1.05);
     }
 
     /* ==========================================================================
@@ -1437,7 +1954,7 @@
       font-weight: 500;
     }
 
-    .footer-nav-links a { color: var(--text-secondary); }
+    .footer-nav-links a { color: var(--text-secondary); transition: color 0.15s ease; }
     .footer-nav-links a:hover { color: var(--brand-bright); }
 
     .footer-sub-bar {
@@ -1464,39 +1981,61 @@
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
       }
+      .reveal-on-scroll {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
     }
   </style>
 </head>
 <body>
 
-  <!-- Subtle Architectural Grid Background (Clean & High Performance) -->
+  <!-- Atmospheric Grid & Celestial Sheen Background -->
+  <div class="site-bg-glow" aria-hidden="true"></div>
   <div class="site-bg-grid" aria-hidden="true"></div>
 
-  <!-- Fullscreen Screenshot Lightbox -->
+  <!-- Fullscreen Screenshot Lightbox Modal -->
   <div class="lightbox-modal" id="lightbox-modal" role="dialog" aria-modal="true" aria-label="HermOS screenshot preview" aria-hidden="true" hidden>
     <button class="lightbox-close" id="lightbox-close" aria-label="Close Preview">&times;</button>
     <img id="lightbox-image" class="lightbox-img" src="" alt="HermOS Fullscreen Preview" width="1600" height="1000" tabindex="0" />
   </div>
 
+  <!-- Sticky Floating Download Mini-Bar (CRO) -->
+  <div class="sticky-download-pill" id="sticky-download-pill" aria-hidden="true" role="region" aria-label="Quick download navigation">
+    <div class="sticky-pill-inner">
+      <div class="sticky-pill-brand">
+        <img src="logo.svg" alt="" width="20" height="20" aria-hidden="true" />
+        <span class="sticky-pill-title">HermOS</span>
+        <span class="sticky-pill-version" id="sticky-pill-version">v1.1.4</span>
+      </div>
+      <div class="sticky-pill-actions">
+        <a class="btn btn-sm btn-primary sticky-pill-btn" id="sticky-download-btn" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+          <span id="sticky-download-label">Download .exe</span>
+        </a>
+        <a class="sticky-pill-other" href="#download" title="View all installer packages">All OS</a>
+      </div>
+    </div>
+  </div>
+
   <!-- ======================================================================
-       HEADER
+       HEADER & NAVIGATION
        ====================================================================== -->
   <header class="site-header">
     <div class="container">
       <div class="nav">
         <a class="nav-brand" href="#top" aria-label="HermOS Home">
-          <div class="brand-icon">
-            <svg width="18" height="18" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M10 8v16M22 8v16M10 16h12" stroke="#0FD765" stroke-width="2.8" stroke-linecap="round" />
-              <circle cx="16" cy="24.5" r="2" fill="#38EF7D" />
-            </svg>
+          <div class="brand-icon-wrap">
+            <img src="logo.svg" alt="HermOS Logo" width="22" height="22" />
           </div>
           <span>HermOS</span>
-          <span class="brand-version" id="brand-version"></span>
+          <span class="brand-version" id="brand-version">v1.1.4</span>
         </a>
 
         <nav class="nav-links" id="primary-nav" aria-label="Primary Navigation">
           <a href="#features">Architecture</a>
+          <a href="#research">Agentic Research</a>
           <a href="#comparison">Compare</a>
           <a href="#providers">Providers</a>
           <a href="#download">Downloads</a>
@@ -1524,12 +2063,10 @@
 
   <main id="top">
     <!-- ======================================================================
-         HERO SECTION (High-Impact Value Proposition)
+         HERO SECTION (High-Converting, Engineering Focus)
          ====================================================================== -->
     <section class="hero" id="hero-section">
       <div class="container">
-        <p class="hero-kicker">100% Local-First · Zero Telemetry · MIT Open Source</p>
-
         <h1>The Open Source, Local-First <span class="highlight-text">AI Agent IDE</span></h1>
 
         <p class="hero-sub">
@@ -1577,7 +2114,6 @@
 
         <!-- Monumental Floating Viewport Stage -->
         <div class="hero-viewport-stage">
-          <!-- Viewport Tab Navigation -->
           <div class="viewport-nav-bar" role="group" aria-label="IDE View Switcher">
             <button class="view-tab active" data-img="hermos1.webp" data-title="hermos-ide — main workspace &amp; code editor" aria-pressed="true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
@@ -1597,7 +2133,6 @@
             </button>
           </div>
 
-          <!-- High-Resolution Sleek Dark IDE Frame -->
           <div class="floating-viewport-frame" id="hero-frame" title="Click to view full resolution" tabindex="0" role="button" aria-haspopup="dialog" aria-label="Zoom screenshot: HermOS Main Workspace Interface">
             <div class="frame-titlebar">
               <div class="frame-dots">
@@ -1627,79 +2162,69 @@
     </section>
 
     <!-- ======================================================================
-         COMPETITIVE COMPARISON (High-Intent SEO & Developer Trust)
+         AGENTIC RESEARCH & BENCHMARKING SECTION
          ====================================================================== -->
-    <section id="comparison">
+    <section id="research">
       <div class="container">
         <div class="section-header">
-          <span class="section-lead-tag">Architectural Comparison</span>
-          <h2>Why Developers Choose HermOS over Cloud AI Editors</h2>
-          <p>Full autonomy, zero telemetry, and true local ownership. Compare HermOS directly against closed alternatives.</p>
+          <span class="section-lead-tag">Engineered For AI Research &amp; Agentic Systems</span>
+          <h2>The Local Workbench for Autonomous Agent Research</h2>
+          <p>Built for ML researchers, AI systems engineers, and agent authors. Conduct reproducible evaluations, test speculative tree explorations, and verify tool execution in an isolated air-gapped harness.</p>
         </div>
 
-        <div class="comparison-wrap">
-          <table class="comparison-table">
-            <thead>
-              <tr>
-                <th style="width:28%;">Feature / Capability</th>
-                <th class="col-hermos" style="width:24%;">HermOS IDE</th>
-                <th style="width:16%;">Cursor</th>
-                <th style="width:16%;">Windsurf</th>
-                <th style="width:16%;">GitHub Copilot</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>Code Privacy &amp; Telemetry</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ 0 Bytes Telemetry</span></td>
-                <td><span class="table-badge-no">Cloud Logging (Opt-out)</span></td>
-                <td><span class="table-badge-no">Remote Telemetry</span></td>
-                <td><span class="table-badge-no">Cloud Proxied</span></td>
-              </tr>
-              <tr>
-                <td><strong>Pricing &amp; Subscriptions</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ 100% Free (MIT)</span></td>
-                <td><span class="table-badge-no">$20 / month</span></td>
-                <td><span class="table-badge-no">$20 / month</span></td>
-                <td><span class="table-badge-no">$10 - $19 / mo</span></td>
-              </tr>
-              <tr>
-                <td><strong>Offline &amp; Air-Gapped Inference</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ Native Ollama / vLLM</span></td>
-                <td><span class="table-badge-no">✕ Internet Required</span></td>
-                <td><span class="table-badge-no">✕ Internet Required</span></td>
-                <td><span class="table-badge-no">✕ Internet Required</span></td>
-              </tr>
-              <tr>
-                <td><strong>Autonomous Subagent Trees</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ Native Multi-Worker Forks</span></td>
-                <td><span class="table-badge-no">Single Session</span></td>
-                <td><span class="table-badge-no">Single Agent Flow</span></td>
-                <td><span class="table-badge-no">✕ Inline Chat Only</span></td>
-              </tr>
-              <tr>
-                <td><strong>API Key Storage Security</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ Local AES-256-GCM</span></td>
-                <td><span class="table-badge-no">Cloud Account Auth</span></td>
-                <td><span class="table-badge-no">Cloud Account Auth</span></td>
-                <td><span class="table-badge-no">Cloud Subscription</span></td>
-              </tr>
-              <tr>
-                <td><strong>Model Context Protocol (MCP)</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ Full Native Client</span></td>
-                <td><span class="table-badge-neutral">Supported</span></td>
-                <td><span class="table-badge-no">Limited</span></td>
-                <td><span class="table-badge-no">✕ Proprietary Tools</span></td>
-              </tr>
-              <tr>
-                <td><strong>Open Source License</strong></td>
-                <td class="col-hermos"><span class="table-badge-yes">✓ MIT License (Full Access)</span></td>
-                <td><span class="table-badge-no">✕ Closed Source</span></td>
-                <td><span class="table-badge-no">✕ Closed Source</span></td>
-                <td><span class="table-badge-no">✕ Closed Source</span></td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- 5 Core Research Pillars (Data-driven rendered) -->
+        <div class="research-grid" id="research-pillars-container"></div>
+
+        <!-- Research Comparison Matrix vs Legacy AI Chatbots -->
+        <div class="research-matrix-card spotlight-card reveal-on-scroll">
+          <div class="research-matrix-info">
+            <span class="research-tag">SYSTEMS ARCHITECTURE</span>
+            <h3>Deterministic Execution vs Black-Box Cloud AI</h3>
+            <p>Traditional AI coding assistants proxy prompts through opaque middleman servers. HermOS executes agents as deterministic local processes on your machine with continuous worktree isolation, verifiable tool logs, and strict process sandboxing.</p>
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+              <a class="btn btn-sm btn-primary" href="#download">Get HermOS IDE</a>
+              <a class="btn btn-sm btn-secondary" href="https://github.com/WFekik/HermOS-IDE" target="_blank" rel="noopener noreferrer">View Research Source</a>
+            </div>
+          </div>
+
+          <div class="research-table-wrap">
+            <table class="research-table">
+              <thead>
+                <tr>
+                  <th>Capability</th>
+                  <th>HermOS Agent Core</th>
+                  <th>Cloud AI Editors</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Memory Topology</td>
+                  <td class="hermos-val">Continuous AST + Worktree Cache</td>
+                  <td>Truncated Chat Session</td>
+                </tr>
+                <tr>
+                  <td>Tool Protocol</td>
+                  <td class="hermos-val">Model Context Protocol (RFC)</td>
+                  <td>Proprietary Server Actions</td>
+                </tr>
+                <tr>
+                  <td>Agent Concurrency</td>
+                  <td class="hermos-val">Parallel Subagent Trees (DAG)</td>
+                  <td>Single Linear Turn</td>
+                </tr>
+                <tr>
+                  <td>Inference Location</td>
+                  <td class="hermos-val">100% Offline (Ollama / vLLM)</td>
+                  <td>Mandatory Cloud Only</td>
+                </tr>
+                <tr>
+                  <td>Verification Layer</td>
+                  <td class="hermos-val">Headless DOM + Unit Test Loop</td>
+                  <td>Blind Text Generation</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -1710,15 +2235,15 @@
     <section id="features">
       <div class="container">
         <div class="section-header">
-          <span class="section-lead-tag">Engineered For Autonomy</span>
-          <h2>Autonomous capabilities that run on your machine</h2>
-          <p>Everything runs as native child processes on your workstation with zero telemetry and full sandboxing.</p>
+          <span class="section-lead-tag">Autonomous Runtime</span>
+          <h2>Native Capabilities Engineered for Your Machine</h2>
+          <p>Everything runs as native child processes on your workstation with zero telemetry, sandboxed file I/O, and full privacy.</p>
         </div>
 
         <!-- Showcase 1: Agent & Subagents -->
-        <article class="feature-showcase-row">
+        <article class="feature-showcase-row reveal-on-scroll">
           <div class="feature-showcase-text">
-            <span class="feature-num">01 / AUTONOMOUS WORKERS</span>
+            <span class="feature-num">01 / PARALLEL WORKERS</span>
             <h3>Subagent tree orchestration for parallel missions</h3>
             <p>
               When tackling complex refactors or multi-file features, HermOS decomposes the problem and forks background subagents. One agent investigates schemas while another writes unit tests and verifies fixes concurrently.
@@ -1729,7 +2254,7 @@
                 <span>Independent forks</span>
               </div>
               <div class="feature-metric-item">
-                <strong>MCP</strong>
+                <strong>MCP Native</strong>
                 <span>Tool integration</span>
               </div>
               <div class="feature-metric-item">
@@ -1747,9 +2272,9 @@
         </article>
 
         <!-- Showcase 2: Usage Analytics & Telemetry -->
-        <article class="feature-showcase-row reversed">
+        <article class="feature-showcase-row reversed reveal-on-scroll">
           <div class="feature-showcase-text">
-            <span class="feature-num">02 / LOCAL TELEMETRY</span>
+            <span class="feature-num">02 / EMBEDDED TELEMETRY</span>
             <h3>Real-time token analytics stored in local SQLite</h3>
             <p>
               Monitor token consumption, prompt cache hit ratios, and model execution latency without a single byte of telemetry leaving your computer. All metrics are rendered directly from your workstation's embedded SQLite database.
@@ -1778,7 +2303,7 @@
         </article>
 
         <!-- Showcase 3: Visual Git Diff Review -->
-        <article class="feature-showcase-row">
+        <article class="feature-showcase-row reveal-on-scroll">
           <div class="feature-showcase-text">
             <span class="feature-num">03 / ATOMIC CHECKPOINTS</span>
             <h3>Line-by-line visual diffs with 1-click rollback</h3>
@@ -1811,6 +2336,34 @@
     </section>
 
     <!-- ======================================================================
+         COMPETITIVE COMPARISON (High-Intent SEO & Developer Trust)
+         ====================================================================== -->
+    <section id="comparison">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-lead-tag">Architectural Comparison</span>
+          <h2>Why Developers Choose HermOS over Closed Cloud Editors</h2>
+          <p>Full autonomy, zero telemetry, and true local ownership. Compare HermOS directly against closed alternatives.</p>
+        </div>
+
+        <div class="comparison-wrap spotlight-card reveal-on-scroll">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th style="width:28%;">Feature / Capability</th>
+                <th class="col-hermos" style="width:24%;">HermOS IDE</th>
+                <th style="width:16%;">Cursor</th>
+                <th style="width:16%;">Windsurf</th>
+                <th style="width:16%;">GitHub Copilot</th>
+              </tr>
+            </thead>
+            <tbody id="comparison-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
          REAL-TIME ARCHITECTURE & MODEL PROVIDER MATRIX
          ====================================================================== -->
     <section id="providers">
@@ -1821,7 +2374,7 @@
           <p>Zero vendor markup. Bring your own keys or run 100% offline and air-gapped on your local hardware.</p>
         </div>
 
-        <div class="model-engine-console">
+        <div class="model-engine-console spotlight-card reveal-on-scroll">
           <!-- Provider Switcher -->
           <div class="engine-list" role="group" aria-label="Model Engine Selector">
             <button class="engine-item-btn active" data-provider="ollama" aria-pressed="true">
@@ -1922,20 +2475,20 @@
     </section>
 
     <!-- ======================================================================
-         DOWNLOAD & NATIVE INSTALLERS
+         DOWNLOAD & NATIVE INSTALLERS (CRO)
          ====================================================================== -->
     <section id="download">
       <div class="container">
-        <div class="download-panel">
+        <div class="download-panel spotlight-card reveal-on-scroll">
           <div class="section-header" style="margin-bottom:2.5rem;">
             <span class="section-lead-tag">Native Desktop Installers</span>
             <h2>Download HermOS Free</h2>
-            <p>Runs natively on Windows, macOS, and Linux with no account required.</p>
+            <p>Runs natively on Windows, macOS, and Linux with no account or subscription required.</p>
           </div>
 
           <div class="dl-cards-grid">
-            <!-- Windows -->
-            <div class="os-card" id="card-win">
+            <!-- Windows Card -->
+            <div class="os-card spotlight-card reveal-on-scroll" id="card-win">
               <div class="os-card-header">
                 <div class="os-card-icon" aria-hidden="true">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
@@ -1946,18 +2499,18 @@
                 <h3>Windows</h3>
                 <p>Windows 10 / 11 · 64-bit .exe &amp; .msi</p>
               </div>
-              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                <a class="btn btn-sm btn-primary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe" target="_blank" rel="noopener noreferrer" style="flex:1;">
+              <div class="os-card-actions">
+                <a class="btn btn-sm btn-primary btn-has-secondary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe" target="_blank" rel="noopener noreferrer">
                   Download .exe
                 </a>
-                <a class="btn btn-sm btn-secondary" data-dl="win-msi" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
+                <a class="btn btn-sm btn-secondary btn-secondary-dl" data-dl="win-msi" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
                   .msi
                 </a>
               </div>
             </div>
 
-            <!-- macOS -->
-            <div class="os-card" id="card-mac">
+            <!-- macOS Card -->
+            <div class="os-card spotlight-card reveal-on-scroll" id="card-mac">
               <div class="os-card-header">
                 <div class="os-card-icon" aria-hidden="true">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
@@ -1968,13 +2521,15 @@
                 <h3>macOS</h3>
                 <p>Apple Silicon &amp; Intel · Universal .dmg</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_universal.dmg" target="_blank" rel="noopener noreferrer">
-                Download .dmg
-              </a>
+              <div class="os-card-actions">
+                <a class="btn btn-sm btn-primary" data-dl="mac" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_universal.dmg" target="_blank" rel="noopener noreferrer">
+                  Download .dmg
+                </a>
+              </div>
             </div>
 
-            <!-- Linux -->
-            <div class="os-card" id="card-linux">
+            <!-- Linux Card -->
+            <div class="os-card spotlight-card reveal-on-scroll" id="card-linux">
               <div class="os-card-header">
                 <div class="os-card-icon" aria-hidden="true">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg>
@@ -1985,9 +2540,11 @@
                 <h3>Linux</h3>
                 <p>Ubuntu / Debian / Fedora · .deb &amp; AppImage</p>
               </div>
-              <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_amd64.deb" target="_blank" rel="noopener noreferrer">
-                Download .deb
-              </a>
+              <div class="os-card-actions">
+                <a class="btn btn-sm btn-primary" data-dl="linux" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_amd64.deb" target="_blank" rel="noopener noreferrer">
+                  Download .deb
+                </a>
+              </div>
             </div>
           </div>
 
@@ -2028,69 +2585,7 @@
           <p>Everything you need to know about privacy, local models, and open source licensing.</p>
         </div>
 
-        <div class="faq-stack">
-          <details class="faq-block" open>
-            <summary>
-              <span>Is HermOS really 100% free and open source?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              Yes. HermOS is MIT-licensed open source software with no subscriptions, paywalls, or gated "Pro" tiers. All code is public on GitHub. You can inspect the source, audit the security model, and build it locally.
-            </div>
-          </details>
-
-          <details class="faq-block">
-            <summary>
-              <span>How does HermOS protect my code and privacy?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              HermOS operates with zero telemetry and has no login servers. AI requests route directly from your workstation to your chosen model provider via direct HTTPS using your local API key. Your code never passes through intermediate servers.
-            </div>
-          </details>
-
-          <details class="faq-block">
-            <summary>
-              <span>Can I use local LLMs like Ollama without an internet connection?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              Yes. HermOS natively connects to local inference runtimes including Ollama, vLLM, and LM Studio. When paired with local models (e.g. Qwen 2.5 Coder, DeepSeek R1, Llama 3.3), HermOS functions 100% offline and air-gapped with zero internet connectivity required.
-            </div>
-          </details>
-
-          <details class="faq-block">
-            <summary>
-              <span>How are API keys secured on my workstation?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              API keys are encrypted locally with AES-256-GCM. The encryption key is generated per install on your machine and never leaves your device. They are decrypted in memory only when issuing direct requests to model APIs.
-            </div>
-          </details>
-
-          <details class="faq-block">
-            <summary>
-              <span>How do autonomous subagents work in HermOS?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              HermOS can spawn background worker subagents that operate concurrently across different task domains. Subagents run in isolated workspace worktrees, allowing them to research codebases, run unit tests, and inspect browser DOM nodes without blocking your active editor.
-            </div>
-          </details>
-
-          <details class="faq-block">
-            <summary>
-              <span>Where can I report bugs or suggest features?</span>
-              <span class="faq-toggle-icon">+</span>
-            </summary>
-            <div class="faq-drawer">
-              HermOS is developed in the open. Bug reports and feature requests go to
-              <a href="https://github.com/WFekik/HermOS-IDE/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>, and architectural discussions happen in
-              <a href="https://github.com/WFekik/HermOS-IDE/discussions" target="_blank" rel="noopener noreferrer">GitHub Discussions</a>.
-            </div>
-          </details>
-        </div>
+        <div class="faq-stack" id="faq-container"></div>
       </div>
     </section>
   </main>
@@ -2103,11 +2598,8 @@
       <div class="footer-flex">
         <div class="footer-brand-meta">
           <div class="footer-brand-title">
-            <div class="brand-icon" style="width:1.65rem;height:1.65rem;">
-              <svg width="13" height="13" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M10 8v16M22 8v16M10 16h12" stroke="#0FD765" stroke-width="2.8" stroke-linecap="round" />
-              <circle cx="16" cy="24.5" r="2" fill="#38EF7D" />
-              </svg>
+            <div class="brand-icon-wrap" style="width:1.65rem;height:1.65rem;">
+              <img src="logo.svg" alt="HermOS Logo" width="16" height="16" />
             </div>
             <span>HermOS IDE</span>
           </div>
@@ -2116,6 +2608,7 @@
 
         <nav class="footer-nav-links" aria-label="Footer Navigation">
           <a href="#features">Architecture</a>
+          <a href="#research">Research</a>
           <a href="#comparison">Compare</a>
           <a href="#providers">Providers</a>
           <a href="#download">Downloads</a>
@@ -2159,147 +2652,106 @@
       };
 
       // ----------------------------------------------------------------------
-      // Platform / OS Auto-Detection
+      // DECOUPLED DATA STRUCTURES (Clean, Maintainable & Safe DOM Rendering)
       // ----------------------------------------------------------------------
-      function detectUserOS() {
-        var ua = window.navigator.userAgent || "";
-        var platform = window.navigator.platform || "";
-        if (/Win/i.test(ua) || /Win/i.test(platform)) return "win";
-        if (/Mac/i.test(ua) || /Mac/i.test(platform)) return "mac";
-        if (/Linux/i.test(ua) || /Linux/i.test(platform)) return "linux";
-        return "win";
-      }
-
-      var detectedPlatform = detectUserOS();
-
-      // Highlight detected OS card and configure primary hero button
-      function highlightDetectedPlatform() {
-        var card = document.getElementById("card-" + detectedPlatform);
-        var badge = document.getElementById("badge-" + detectedPlatform);
-        if (card) card.classList.add("detected-os");
-        if (badge) badge.style.display = "inline-block";
-
-        var heroBtn = document.getElementById("hero-primary-download-btn");
-        var heroLabel = document.getElementById("hero-download-label");
-
-        if (heroBtn && heroLabel) {
-          heroBtn.href = DOWNLOAD_URLS[detectedPlatform] || CONFIG.releases;
-          if (detectedPlatform === "win") {
-            heroLabel.textContent = "Download for Windows (x64)";
-          } else if (detectedPlatform === "mac") {
-            heroLabel.textContent = "Download for macOS (Universal)";
-          } else if (detectedPlatform === "linux") {
-            heroLabel.textContent = "Download for Linux (.deb)";
-          }
+      var RESEARCH_PILLARS = [
+        {
+          tag: "Parallel DAG Exploration",
+          title: "Autonomous Subagent Swarms & Tree Orchestration",
+          desc: "Decomposes complex problems into directed acyclic graph (DAG) worker trees. Background subagents investigate schemas, write unit tests, and resolve compiler diagnostics concurrently in isolated worktrees without editor thread lock.",
+          specs: ["DAG Worktrees", "Non-Blocking Worker Forks", "Shared Scratchpad", "Inter-Agent Protocol"],
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><line x1="12" y1="8" x2="5" y2="16"/><line x1="12" y1="8" x2="19" y2="16"/></svg>'
+        },
+        {
+          tag: "100% Reproducible & Private",
+          title: "Local Air-Gapped Benchmarking & Research Evals",
+          desc: "Run SWE-bench harnesses and iterative evaluation loops completely on-device using local Ollama, vLLM, or LM Studio. Zero prompt telemetry, deterministic seed generation, and mathematically zero external data leakage.",
+          specs: ["Air-Gapped Offline", "SWE-Bench Compatible", "Zero Network Egress", "SQLite Trace Logs"],
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle cx="12" cy="11" r="3"/></svg>'
+        },
+        {
+          tag: "RFC-Compliant Protocol",
+          title: "Model Context Protocol & Deterministic Tool Execution",
+          desc: "Native client implementation of the Model Context Protocol. Connect local language servers, filesystem servers, sqlite databases, and custom research MCP endpoints with strict JSON-RPC schema validation and sandboxed boundaries.",
+          specs: ["Native MCP Client", "JSON-RPC 2.0 Schemas", "Stdio & SSE Transports", "Sandbox Confinement"],
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
+        },
+        {
+          tag: "Multimodal Grounding",
+          title: "Sandboxed Headless Browser & DOM Verification",
+          desc: "Integrated headless browser runner capable of inspecting DOM node hierarchies, evaluating CSS layouts, and verifying client accessibility trees to validate visual frontend changes before git commit.",
+          specs: ["DOM Tree Inspection", "Visual Regression Diff", "Isolated Chromium Sandbox", "Accessibility Tree Evals"],
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="m9 16 3-3 3 3"/></svg>'
+        },
+        {
+          tag: "Speculative Branching",
+          title: "Atomic Git Checkpoints & Rollback Isolation",
+          desc: "Every subagent mutation creates an atomic git checkpoint with line-by-line syntax-highlighted diffs. Test speculative refactoring trees with instant 1-click rollback, guaranteeing zero loss of uncommitted local state.",
+          specs: ["Atomic Checkpoint Trees", "Split Syntax Diffs", "1-Click Instant Rollback", "Zero Uncommitted Risk"],
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>'
         }
-      }
+      ];
 
-      function updateDownloadLinks() {
-        var els = document.querySelectorAll('a[data-dl]');
-        for (var i = 0; i < els.length; i++) {
-          var platform = els[i].getAttribute('data-dl');
-          els[i].href = DOWNLOAD_URLS[platform] || CONFIG.releases;
+      var COMPARISON_DATA = [
+        {
+          feature: "Code Privacy & Telemetry",
+          hermos: "✓ 0 Bytes Telemetry",
+          cursor: "Cloud Logging (Opt-out)",
+          windsurf: "Remote Telemetry",
+          copilot: "Cloud Proxied",
+          hermosState: "yes"
+        },
+        {
+          feature: "Pricing & Subscriptions",
+          hermos: "✓ 100% Free (MIT)",
+          cursor: "$20 / month",
+          windsurf: "$20 / month",
+          copilot: "$10 - $19 / mo",
+          hermosState: "yes"
+        },
+        {
+          feature: "Offline & Air-Gapped Inference",
+          hermos: "✓ Native Ollama / vLLM",
+          cursor: "✕ Internet Required",
+          windsurf: "✕ Internet Required",
+          copilot: "✕ Internet Required",
+          hermosState: "yes"
+        },
+        {
+          feature: "Autonomous Subagent Trees",
+          hermos: "✓ Native Multi-Worker Forks",
+          cursor: "Single Session",
+          windsurf: "Single Agent Flow",
+          copilot: "✕ Inline Chat Only",
+          hermosState: "yes"
+        },
+        {
+          feature: "API Key Storage Security",
+          hermos: "✓ Local AES-256-GCM",
+          cursor: "Cloud Account Auth",
+          windsurf: "Cloud Account Auth",
+          copilot: "Cloud Subscription",
+          hermosState: "yes"
+        },
+        {
+          feature: "Model Context Protocol (MCP)",
+          hermos: "✓ Full Native Client",
+          cursor: "Supported",
+          windsurf: "Limited",
+          copilot: "✕ Proprietary Tools",
+          hermosState: "yes"
+        },
+        {
+          feature: "Open Source License",
+          hermos: "✓ MIT License (Full Access)",
+          cursor: "✕ Closed Source",
+          windsurf: "✕ Closed Source",
+          copilot: "✕ Closed Source",
+          hermosState: "yes"
         }
-        highlightDetectedPlatform();
-      }
+      ];
 
-      // Nav badge renders from CONFIG.version — never hardcoded, so it tracks
-      // version.mjs lockstep and the live GitHub tag sync below.
-      function updateBrandVersion() {
-        var badge = document.getElementById("brand-version");
-        if (badge && /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(CONFIG.version)) {
-          badge.textContent = "v" + CONFIG.version;
-        }
-      }
-
-      // Safe GitHub Release sync with regex validation
-      fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
-        .then(function(res) { return res.ok ? res.json() : null; })
-        .then(function(data) {
-          if (!data || !Array.isArray(data.assets) || !data.assets.length) return;
-          var rawTag = String(data.tag_name || "").trim().replace(/^v/, "");
-          if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(rawTag)) return;
-          CONFIG.version = rawTag;
-
-          // Safely update JSON-LD version
-          try {
-            var ldJson = document.querySelector('script[type="application/ld+json"]');
-            if (ldJson) {
-              var parsed = JSON.parse(ldJson.textContent);
-              if (parsed && parsed["@graph"]) {
-                var app = parsed["@graph"].find(function(item) { return item["@type"] === "SoftwareApplication"; });
-                if (app) app.softwareVersion = rawTag;
-                ldJson.textContent = JSON.stringify(parsed);
-              }
-            }
-          } catch(e) {}
-
-          var isAllowedUrl = function(url) {
-            return typeof url === "string" && url.indexOf("https://github.com/WFekik/HermOS-IDE/releases/") === 0;
-          };
-
-          for (var j = 0; j < data.assets.length; j++) {
-            var asset = data.assets[j];
-            var name = asset.name || "";
-            var url = asset.browser_download_url;
-            if (!isAllowedUrl(url)) continue;
-
-            if (name.endsWith("-setup.exe") || (name.endsWith(".exe") && !name.endsWith(".msi"))) {
-              DOWNLOAD_URLS.win = url;
-            } else if (name.endsWith(".msi")) {
-              DOWNLOAD_URLS["win-msi"] = url;
-            } else if (name.endsWith(".dmg")) {
-              DOWNLOAD_URLS.mac = url;
-            } else if (name.endsWith(".deb")) {
-              DOWNLOAD_URLS.linux = url;
-            }
-          }
-          updateDownloadLinks();
-          updateBrandVersion();
-        })
-        .catch(function() { /* Graceful fallback */ });
-
-      updateDownloadLinks();
-      updateBrandVersion();
-
-      // ----------------------------------------------------------------------
-      // HERO VIEWPORT TAB SWITCHER
-      // ----------------------------------------------------------------------
-      var heroTabs = document.querySelectorAll(".viewport-nav-bar .view-tab");
-      var heroImg = document.getElementById("hero-main-img");
-      var heroTitle = document.getElementById("hero-title-text");
-
-      heroTabs.forEach(function (tab) {
-        tab.addEventListener("click", function () {
-          heroTabs.forEach(function (t) {
-            t.classList.remove("active");
-            t.setAttribute("aria-pressed", "false");
-          });
-          tab.classList.add("active");
-          tab.setAttribute("aria-pressed", "true");
-
-          var targetImg = tab.getAttribute("data-img");
-          var targetTitle = tab.getAttribute("data-title");
-
-          if (heroImg && targetImg) {
-            heroImg.style.opacity = "0.4";
-            setTimeout(function () {
-              heroImg.src = targetImg;
-              heroImg.style.opacity = "1";
-            }, 80);
-          }
-
-          if (heroTitle && targetTitle) {
-            var span = heroTitle.querySelector("span");
-            if (span) span.textContent = targetTitle;
-          }
-        });
-      });
-
-      // ----------------------------------------------------------------------
-      // MODEL PROVIDER DATA MATRIX (Safe DOM Creation)
-      // ----------------------------------------------------------------------
-      var providerData = {
+      var PROVIDER_DATA = {
         ollama: {
           title: "Local Offline Inference (Ollama / vLLM / SGLang)",
           sub: "Air-gapped local inference. Zero API costs, zero internet required.",
@@ -2362,6 +2814,330 @@
         }
       };
 
+      var FAQ_DATA = [
+        {
+          q: "Is HermOS really 100% free and open source?",
+          a: "Yes. HermOS is MIT-licensed open source software with no subscriptions, paywalls, or gated 'Pro' tiers. All code is public on GitHub. You can inspect the source, audit the security model, and build it locally."
+        },
+        {
+          q: "How does HermOS protect my code and privacy?",
+          a: "HermOS operates with zero telemetry and has no login servers. AI requests route directly from your workstation to your chosen model provider via direct HTTPS using your local API key. Your code never passes through intermediate servers."
+        },
+        {
+          q: "Can I use local LLMs like Ollama without an internet connection?",
+          a: "Yes. HermOS natively connects to local inference runtimes including Ollama, vLLM, and LM Studio. When paired with local models (e.g. Qwen 2.5 Coder, DeepSeek R1, Llama 3.3), HermOS functions 100% offline and air-gapped with zero internet connectivity required."
+        },
+        {
+          q: "How are API keys secured on my workstation?",
+          a: "API keys are encrypted locally with AES-256-GCM. The encryption key is generated per install on your machine and never leaves your device. They are decrypted in memory only when issuing direct requests to model APIs."
+        },
+        {
+          q: "How do autonomous subagents work in HermOS?",
+          a: "HermOS can spawn background worker subagents that operate concurrently across different task domains. Subagents run in isolated workspace worktrees, allowing them to research codebases, run unit tests, and inspect browser DOM nodes without blocking your active editor."
+        },
+        {
+          q: "Where can I report bugs or suggest features?",
+          a: 'HermOS is developed in the open. Bug reports and feature requests go to <a href="https://github.com/WFekik/HermOS-IDE/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>, and architectural discussions happen in <a href="https://github.com/WFekik/HermOS-IDE/discussions" target="_blank" rel="noopener noreferrer">GitHub Discussions</a>.'
+        }
+      ];
+
+      // ----------------------------------------------------------------------
+      // SAFE DOM RENDERING ENGINES
+      // ----------------------------------------------------------------------
+      function renderResearchPillars() {
+        var container = document.getElementById("research-pillars-container");
+        if (!container) return;
+
+        RESEARCH_PILLARS.forEach(function (item) {
+          var card = document.createElement("article");
+          card.className = "research-card spotlight-card reveal-on-scroll";
+
+          var iconWrap = document.createElement("div");
+          iconWrap.className = "research-card-icon";
+          iconWrap.setAttribute("aria-hidden", "true");
+          iconWrap.innerHTML = item.icon;
+          card.appendChild(iconWrap);
+
+          var header = document.createElement("div");
+          header.className = "research-card-header";
+
+          var tag = document.createElement("span");
+          tag.className = "research-tag";
+          tag.textContent = item.tag;
+          header.appendChild(tag);
+
+          var h3 = document.createElement("h3");
+          h3.textContent = item.title;
+          header.appendChild(h3);
+
+          card.appendChild(header);
+
+          var p = document.createElement("p");
+          p.textContent = item.desc;
+          card.appendChild(p);
+
+          var specList = document.createElement("div");
+          specList.className = "research-spec-list";
+          item.specs.forEach(function (spec) {
+            var badge = document.createElement("span");
+            badge.className = "research-spec-badge";
+            badge.textContent = spec;
+            specList.appendChild(badge);
+          });
+          card.appendChild(specList);
+
+          container.appendChild(card);
+        });
+      }
+
+      function renderComparisonTable() {
+        var tbody = document.getElementById("comparison-tbody");
+        if (!tbody) return;
+
+        COMPARISON_DATA.forEach(function (row) {
+          var tr = document.createElement("tr");
+
+          var tdFeature = document.createElement("td");
+          var strong = document.createElement("strong");
+          strong.textContent = row.feature;
+          tdFeature.appendChild(strong);
+          tr.appendChild(tdFeature);
+
+          var tdHermos = document.createElement("td");
+          tdHermos.className = "col-hermos";
+          var hermosBadge = document.createElement("span");
+          hermosBadge.className = "table-badge-yes";
+          hermosBadge.textContent = row.hermos;
+          tdHermos.appendChild(hermosBadge);
+          tr.appendChild(tdHermos);
+
+          var tdCursor = document.createElement("td");
+          var cursorBadge = document.createElement("span");
+          cursorBadge.className = row.cursor.indexOf("✕") !== -1 ? "table-badge-no" : "table-badge-neutral";
+          cursorBadge.textContent = row.cursor;
+          tdCursor.appendChild(cursorBadge);
+          tr.appendChild(tdCursor);
+
+          var tdWindsurf = document.createElement("td");
+          var windsurfBadge = document.createElement("span");
+          windsurfBadge.className = row.windsurf.indexOf("✕") !== -1 ? "table-badge-no" : "table-badge-neutral";
+          windsurfBadge.textContent = row.windsurf;
+          tdWindsurf.appendChild(windsurfBadge);
+          tr.appendChild(tdWindsurf);
+
+          var tdCopilot = document.createElement("td");
+          var copilotBadge = document.createElement("span");
+          copilotBadge.className = row.copilot.indexOf("✕") !== -1 ? "table-badge-no" : "table-badge-neutral";
+          copilotBadge.textContent = row.copilot;
+          tdCopilot.appendChild(copilotBadge);
+          tr.appendChild(tdCopilot);
+
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderFaqs() {
+        var container = document.getElementById("faq-container");
+        if (!container) return;
+
+        FAQ_DATA.forEach(function (faq, index) {
+          var details = document.createElement("details");
+          details.className = "faq-block";
+          if (index === 0) details.setAttribute("open", "");
+
+          var summary = document.createElement("summary");
+          var qSpan = document.createElement("span");
+          qSpan.textContent = faq.q;
+          var toggleIcon = document.createElement("span");
+          toggleIcon.className = "faq-toggle-icon";
+          toggleIcon.textContent = "+";
+          summary.appendChild(qSpan);
+          summary.appendChild(toggleIcon);
+          details.appendChild(summary);
+
+          var drawer = document.createElement("div");
+          drawer.className = "faq-drawer";
+          drawer.innerHTML = faq.a;
+          details.appendChild(drawer);
+
+          container.appendChild(details);
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // PLATFORM / OS DETECTION & CRO LOGIC
+      // ----------------------------------------------------------------------
+      function detectUserOS() {
+        var ua = window.navigator.userAgent || "";
+        var platform = window.navigator.platform || "";
+        if (/Win/i.test(ua) || /Win/i.test(platform)) return "win";
+        if (/Mac/i.test(ua) || /Mac/i.test(platform)) return "mac";
+        if (/Linux/i.test(ua) || /Linux/i.test(platform)) return "linux";
+        return "win";
+      }
+
+      var detectedPlatform = detectUserOS();
+
+      function highlightDetectedPlatform() {
+        var card = document.getElementById("card-" + detectedPlatform);
+        var badge = document.getElementById("badge-" + detectedPlatform);
+        if (card) card.classList.add("detected-os");
+        if (badge) badge.style.display = "inline-block";
+
+        var heroBtn = document.getElementById("hero-primary-download-btn");
+        var heroLabel = document.getElementById("hero-download-label");
+        var stickyBtn = document.getElementById("sticky-download-btn");
+        var stickyLabel = document.getElementById("sticky-download-label");
+
+        var url = DOWNLOAD_URLS[detectedPlatform] || CONFIG.releases;
+        var fullLabel = "Download for Windows (x64)";
+        var pillLabel = "Download .exe";
+
+        if (detectedPlatform === "mac") {
+          fullLabel = "Download for macOS (Universal)";
+          pillLabel = "Download .dmg";
+        } else if (detectedPlatform === "linux") {
+          fullLabel = "Download for Linux (.deb)";
+          pillLabel = "Download .deb";
+        }
+
+        if (heroBtn && heroLabel) {
+          heroBtn.href = url;
+          heroLabel.textContent = fullLabel;
+        }
+
+        if (stickyBtn && stickyLabel) {
+          stickyBtn.href = url;
+          stickyLabel.textContent = pillLabel;
+        }
+      }
+
+      function updateDownloadLinks() {
+        var els = document.querySelectorAll("a[data-dl]");
+        for (var i = 0; i < els.length; i++) {
+          var platform = els[i].getAttribute("data-dl");
+          els[i].href = DOWNLOAD_URLS[platform] || CONFIG.releases;
+        }
+        highlightDetectedPlatform();
+      }
+
+      function updateBrandVersion() {
+        var badge = document.getElementById("brand-version");
+        var stickyVersion = document.getElementById("sticky-pill-version");
+        if (badge && /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(CONFIG.version)) {
+          badge.textContent = "v" + CONFIG.version;
+        }
+        if (stickyVersion && /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(CONFIG.version)) {
+          stickyVersion.textContent = "v" + CONFIG.version;
+        }
+      }
+
+      // Safe GitHub Release sync
+      fetch("https://api.github.com/repos/WFekik/HermOS-IDE/releases/latest")
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (!data || !Array.isArray(data.assets) || !data.assets.length) return;
+          var rawTag = String(data.tag_name || "").trim().replace(/^v/, "");
+          if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/.test(rawTag)) return;
+          CONFIG.version = rawTag;
+
+          try {
+            var ldJson = document.querySelector('script[type="application/ld+json"]');
+            if (ldJson) {
+              var parsed = JSON.parse(ldJson.textContent);
+              if (parsed && parsed["@graph"]) {
+                var app = parsed["@graph"].find(function (item) { return item["@type"] === "SoftwareApplication"; });
+                if (app) app.softwareVersion = rawTag;
+                ldJson.textContent = JSON.stringify(parsed);
+              }
+            }
+          } catch (e) {}
+
+          var isAllowedUrl = function (url) {
+            return typeof url === "string" && url.indexOf("https://github.com/WFekik/HermOS-IDE/releases/") === 0;
+          };
+
+          for (var j = 0; j < data.assets.length; j++) {
+            var asset = data.assets[j];
+            var name = asset.name || "";
+            var url = asset.browser_download_url;
+            if (!isAllowedUrl(url)) continue;
+
+            if (name.endsWith("-setup.exe") || (name.endsWith(".exe") && !name.endsWith(".msi"))) {
+              DOWNLOAD_URLS.win = url;
+            } else if (name.endsWith(".msi")) {
+              DOWNLOAD_URLS["win-msi"] = url;
+            } else if (name.endsWith(".dmg")) {
+              DOWNLOAD_URLS.mac = url;
+            } else if (name.endsWith(".deb")) {
+              DOWNLOAD_URLS.linux = url;
+            }
+          }
+          updateDownloadLinks();
+          updateBrandVersion();
+        })
+        .catch(function () {});
+
+      // ----------------------------------------------------------------------
+      // STICKY FLOATING DOWNLOAD PILL SCROLL CONTROLLER
+      // ----------------------------------------------------------------------
+      var stickyPill = document.getElementById("sticky-download-pill");
+      var heroSection = document.getElementById("hero-section");
+
+      if (stickyPill && heroSection && "IntersectionObserver" in window) {
+        var heroObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (!entry.isIntersecting) {
+              stickyPill.classList.add("visible");
+              stickyPill.setAttribute("aria-hidden", "false");
+            } else {
+              stickyPill.classList.remove("visible");
+              stickyPill.setAttribute("aria-hidden", "true");
+            }
+          });
+        }, { threshold: 0.1 });
+        heroObserver.observe(heroSection);
+      }
+
+      // ----------------------------------------------------------------------
+      // HERO VIEWPORT TAB SWITCHER
+      // ----------------------------------------------------------------------
+      var heroTabs = document.querySelectorAll(".viewport-nav-bar .view-tab");
+      var heroImg = document.getElementById("hero-main-img");
+      var heroTitle = document.getElementById("hero-title-text");
+
+      heroTabs.forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          heroTabs.forEach(function (t) {
+            t.classList.remove("active");
+            t.setAttribute("aria-pressed", "false");
+          });
+          tab.classList.add("active");
+          tab.setAttribute("aria-pressed", "true");
+
+          var targetImg = tab.getAttribute("data-img");
+          var targetTitle = tab.getAttribute("data-title");
+
+          if (heroImg && targetImg) {
+            heroImg.style.opacity = "0.3";
+            heroImg.style.transform = "scale(0.995)";
+            setTimeout(function () {
+              heroImg.src = targetImg;
+              heroImg.style.opacity = "1";
+              heroImg.style.transform = "scale(1)";
+            }, 90);
+          }
+
+          if (heroTitle && targetTitle) {
+            var span = heroTitle.querySelector("span");
+            if (span) span.textContent = targetTitle;
+          }
+        });
+      });
+
+      // ----------------------------------------------------------------------
+      // MODEL PROVIDER SWITCHER
+      // ----------------------------------------------------------------------
       var engineBtns = document.querySelectorAll(".engine-item-btn");
       var archTitle = document.getElementById("arch-title");
       var archSub = document.getElementById("arch-sub");
@@ -2380,7 +3156,7 @@
           btn.setAttribute("aria-pressed", "true");
 
           var pKey = btn.getAttribute("data-provider");
-          var data = providerData[pKey];
+          var data = PROVIDER_DATA[pKey];
           if (!data) return;
 
           if (archTitle) archTitle.textContent = data.title;
@@ -2471,7 +3247,7 @@
       });
 
       // ----------------------------------------------------------------------
-      // TERMINAL CLIPBOARD
+      // TERMINAL CLIPBOARD COPY
       // ----------------------------------------------------------------------
       var copyBtn = document.getElementById("terminal-copy-btn");
       var copyLabel = document.getElementById("copy-text-label");
@@ -2485,7 +3261,7 @@
             setTimeout(function () {
               copyBtn.classList.remove("copied");
               if (copyLabel) copyLabel.textContent = "Copy";
-            }, 2000);
+            }, 2200);
           }).catch(function () {});
         });
       }
@@ -2507,6 +3283,58 @@
             primaryNav.classList.remove("open");
             navToggle.setAttribute("aria-expanded", "false");
           });
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // INITIALIZATION
+      // ----------------------------------------------------------------------
+      renderResearchPillars();
+      renderComparisonTable();
+      renderFaqs();
+      updateDownloadLinks();
+      updateBrandVersion();
+
+      // ----------------------------------------------------------------------
+      // INTERACTIVE SPOTLIGHT CARD COORDINATOR
+      // ----------------------------------------------------------------------
+      if (window.matchMedia && window.matchMedia("(hover: hover)").matches) {
+        document.addEventListener("mousemove", function (e) {
+          var cards = document.querySelectorAll(".spotlight-card");
+          for (var i = 0; i < cards.length; i++) {
+            var rect = cards[i].getBoundingClientRect();
+            if (
+              e.clientX >= rect.left - 40 &&
+              e.clientX <= rect.right + 40 &&
+              e.clientY >= rect.top - 40 &&
+              e.clientY <= rect.bottom + 40
+            ) {
+              cards[i].style.setProperty("--mouse-x", (e.clientX - rect.left) + "px");
+              cards[i].style.setProperty("--mouse-y", (e.clientY - rect.top) + "px");
+            }
+          }
+        }, { passive: true });
+      }
+
+      // ----------------------------------------------------------------------
+      // SMOOTH SCROLL REVEAL (PHYSICS INTERSECTION OBSERVER)
+      // ----------------------------------------------------------------------
+      if ("IntersectionObserver" in window) {
+        var revealObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-revealed");
+              revealObserver.unobserve(entry.target);
+            }
+          });
+        }, { threshold: 0.08, rootMargin: "0px 0px -30px 0px" });
+
+        document.querySelectorAll(".reveal-on-scroll").forEach(function (el) {
+          revealObserver.observe(el);
+        });
+      } else {
+        document.querySelectorAll(".reveal-on-scroll").forEach(function (el) {
+          el.classList.add("is-revealed");
         });
       }
 
