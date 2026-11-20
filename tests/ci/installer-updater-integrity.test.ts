@@ -29,7 +29,7 @@ const nextConfigTs = fs.readFileSync(
 const tauriLibRs = fs.readFileSync(
   path.join(rootDir, "src-tauri", "src", "lib.rs"),
   "utf-8",
-);
+).replace(/\r\n/g, "\n");
 
 describe("installer and updater caching integrity", () => {
   describe("NSIS installer hooks (installer-hooks.nsh)", () => {
