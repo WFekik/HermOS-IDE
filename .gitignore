@@ -91,6 +91,9 @@ examples/
 mini-services/
 # local installers
 public/installers/
+*.msix
+*.msi
+*.exe
 DEPLOYMENT.md
 Caddyfile
 # build cache
