@@ -2,7 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://hermos.is-a.dev/</loc>
-    <lastmod>2026-11-15</lastmod>
+    <lastmod>2026-11-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
     <image:image>
@@ -14,17 +14,5 @@
       <image:loc>https://hermos.is-a.dev/og.png</image:loc>
       <image:title>HermOS IDE Interface</image:title>
     </image:image>
-  </url>
-  <url>
-    <loc>https://hermos.is-a.dev/llms.txt</loc>
-    <lastmod>2026-11-15</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://hermos.is-a.dev/llms-full.txt</loc>
-    <lastmod>2026-11-15</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
   </url>
 </urlset>
