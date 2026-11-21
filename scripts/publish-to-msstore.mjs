@@ -191,7 +191,23 @@ async function main() {
   const token = await getAccessToken({ tenantId, clientId, clientSecret });
   console.log("[msstore] Authenticated with Partner Center.");
 
-  const app = await devCenterApi(token, "GET", `/applications/${encodeURIComponent(productId)}`);
+  let app;
+  try {
+    app = await devCenterApi(token, "GET", `/applications/${encodeURIComponent(productId)}`);
+  } catch (e) {
+    if (/Unauthorized/i.test(String(e.message))) {
+      // Token issued by Entra but the API refuses: the classic one-time setup
+      // gap — the app registration is not linked to this Partner Center
+      // account, or lacks the Manager role / API consent there.
+      throw new Error(
+        `${e.message}\n` +
+          `[msstore] The Entra app (client ${clientId}) is not linked to this Partner Center account. ` +
+          `One-time setup: (1) Partner Center → Account settings → User management → add the app by its client ID with the Manager role; ` +
+          `(2) Azure Portal → App registrations → ${clientId} → API permissions → add "Microsoft Store Submission API" application permission → grant admin consent.`,
+      );
+    }
+    throw e;
+  }
   const appId = pick(app, "id");
   const pendingId = pick(app, "pendingApplicationSubmission")?.id ?? null;
   const lastPublishedId = pick(app, "lastPublishedApplicationSubmission")?.id ?? null;
