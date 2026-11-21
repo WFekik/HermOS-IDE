@@ -377,6 +377,9 @@ async function uploadTextAsset(releaseId, existingByName, name, content, content
 function mapAssetToPlatforms(baseName) {
   const lower = baseName.toLowerCase();
   // Windows
+  if (lower.endsWith(".msix")) {
+    return ["windows-x86_64-msix", "windows-x86_64"];
+  }
   if (lower.endsWith(".exe") || lower.includes("x64-setup") || lower.includes("-setup.exe")) {
     return ["windows-x86_64", "windows-x86_64-nsis"];
   }

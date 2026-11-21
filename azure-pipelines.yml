@@ -88,8 +88,6 @@ jobs:
     pool:
       vmImage: "windows-latest"
     steps:
-      - script: choco install nsis -y
-        displayName: "Install NSIS"
       - script: |
           curl -sSf https://win.rustup.rs/x86_64 -o rustup-init.exe
           .\rustup-init.exe -y --default-toolchain stable --profile minimal
@@ -130,12 +128,14 @@ jobs:
         displayName: "npm ci"
       - script: node scripts/provision-node-sidecar.mjs
         displayName: "Provision Node sidecar"
-      - script: npx tauri build --bundles nsis,msi -- --locked
-        displayName: "Build Tauri (Windows)"
+      - script: npx tauri build --no-bundle -- --locked
+        displayName: "Build Tauri Binary (Windows)"
         env:
           TAURI_SIGNING_PRIVATE_KEY: $(TAURI_SIGNING_PRIVATE_KEY)
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           TAURI_ENV_PLATFORM: "win32"
+      - script: node scripts/pack-msix.mjs
+        displayName: "Package MSIX for Microsoft Store"
       # TODO: re-enable once the official open-source Authenticode certificate
       # lands. SignPath currently self-signs (untrusted root), which mutates
       # installer bytes AFTER Tauri creates the minisign .sig files and breaks

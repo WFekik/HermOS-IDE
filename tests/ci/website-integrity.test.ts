@@ -71,6 +71,13 @@ describe('Website Quality, Google SEO Branding & Agentic Research Integrity', ()
     expect(html).toContain('terminal-copy-btn');
   });
 
+  it('routes Windows exclusively to Microsoft Store and removes NSIS/MSI downloads', () => {
+    expect(html).toContain('https://apps.microsoft.com/detail/9NJXKNSS00WQ');
+    expect(html).toContain('Get from Microsoft Store');
+    expect(html).not.toMatch(/Download \.exe/i);
+    expect(html).not.toMatch(/Download \.msi/i);
+  });
+
   it('decouples repetitive text into clean data structures', () => {
     expect(html).toMatch(/RESEARCH_PILLARS/);
     expect(html).toMatch(/COMPARISON_DATA/);

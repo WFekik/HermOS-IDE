@@ -2014,9 +2014,9 @@
         <span class="sticky-pill-version" id="sticky-pill-version">v1.1.4</span>
       </div>
       <div class="sticky-pill-actions">
-        <a class="btn btn-sm btn-primary sticky-pill-btn" id="sticky-download-btn" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
-          <span id="sticky-download-label">Download .exe</span>
+        <a class="btn btn-sm btn-primary sticky-pill-btn" id="sticky-download-btn" href="https://apps.microsoft.com/detail/9NJXKNSS00WQ" target="_blank" rel="noopener noreferrer">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M2 3h9v9H2V3zm11 0h9v9h-9V3zM2 13h9v9H2v-9zm11 0h9v9h-9v-9z"/></svg>
+          <span id="sticky-download-label">Microsoft Store</span>
         </a>
         <a class="sticky-pill-other" href="#download" title="View all installer packages">All OS</a>
       </div>
@@ -2078,9 +2078,9 @@
         </p>
 
         <div class="hero-cta-group">
-          <a class="btn btn-lg btn-primary" id="hero-primary-download-btn" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
-            <span id="hero-download-label">Download for Windows (x64)</span>
+          <a class="btn btn-lg btn-primary" id="hero-primary-download-btn" href="https://apps.microsoft.com/detail/9NJXKNSS00WQ" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M2 3h9v9H2V3zm11 0h9v9h-9V3zM2 13h9v9H2v-9zm11 0h9v9h-9v-9z"/></svg>
+            <span id="hero-download-label">Get from Microsoft Store</span>
           </a>
           <a class="btn btn-lg btn-secondary" href="https://github.com/WFekik/HermOS-IDE" target="_blank" rel="noopener noreferrer">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
@@ -2501,14 +2501,11 @@
               </div>
               <div class="os-card-info">
                 <h3>Windows</h3>
-                <p>Windows 10 / 11 · 64-bit .exe &amp; .msi</p>
+                <p>Windows 10 / 11 · Official Microsoft Store</p>
               </div>
               <div class="os-card-actions">
-                <a class="btn btn-sm btn-primary btn-has-secondary" data-dl="win" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64-setup.exe" target="_blank" rel="noopener noreferrer">
-                  Download .exe
-                </a>
-                <a class="btn btn-sm btn-secondary btn-secondary-dl" data-dl="win-msi" href="https://github.com/WFekik/HermOS-IDE/releases/latest/download/HermOS.IDE_1.1.4_x64_en-US.msi" target="_blank" rel="noopener noreferrer">
-                  .msi
+                <a class="btn btn-sm btn-primary" data-dl="win" href="https://apps.microsoft.com/detail/9NJXKNSS00WQ" target="_blank" rel="noopener noreferrer">
+                  Get from Microsoft Store
                 </a>
               </div>
             </div>
@@ -2645,12 +2642,12 @@
         base: "https://hermos.is-a.dev",
         repo: "https://github.com/WFekik/HermOS-IDE",
         version: "1.1.4",
-        releases: "https://github.com/WFekik/HermOS-IDE/releases/latest"
+        releases: "https://github.com/WFekik/HermOS-IDE/releases/latest",
+        msStore: "https://apps.microsoft.com/detail/9NJXKNSS00WQ"
       };
 
       var DOWNLOAD_URLS = {
-        win: CONFIG.repo + "/releases/latest/download/HermOS.IDE_" + CONFIG.version + "_x64-setup.exe",
-        "win-msi": CONFIG.repo + "/releases/latest/download/HermOS.IDE_" + CONFIG.version + "_x64_en-US.msi",
+        win: CONFIG.msStore,
         mac: CONFIG.repo + "/releases/latest/download/HermOS.IDE_" + CONFIG.version + "_universal.dmg",
         linux: CONFIG.repo + "/releases/latest/download/HermOS.IDE_" + CONFIG.version + "_amd64.deb"
       };
@@ -2993,9 +2990,9 @@
         var stickyBtn = document.getElementById("sticky-download-btn");
         var stickyLabel = document.getElementById("sticky-download-label");
 
-        var url = DOWNLOAD_URLS[detectedPlatform] || CONFIG.releases;
-        var fullLabel = "Download for Windows (x64)";
-        var pillLabel = "Download .exe";
+        var url = DOWNLOAD_URLS[detectedPlatform] || CONFIG.msStore;
+        var fullLabel = "Get from Microsoft Store";
+        var pillLabel = "Microsoft Store";
 
         if (detectedPlatform === "mac") {
           fullLabel = "Download for macOS (Universal)";
@@ -3067,11 +3064,7 @@
             var url = asset.browser_download_url;
             if (!isAllowedUrl(url)) continue;
 
-            if (name.endsWith("-setup.exe") || (name.endsWith(".exe") && !name.endsWith(".msi"))) {
-              DOWNLOAD_URLS.win = url;
-            } else if (name.endsWith(".msi")) {
-              DOWNLOAD_URLS["win-msi"] = url;
-            } else if (name.endsWith(".dmg")) {
+            if (name.endsWith(".dmg")) {
               DOWNLOAD_URLS.mac = url;
             } else if (name.endsWith(".deb")) {
               DOWNLOAD_URLS.linux = url;
