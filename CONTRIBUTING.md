@@ -55,10 +55,15 @@ npm run smoke:prod   # verify /api/health, /, /robots.txt
 Requires Rust stable.
 
 ```bash
+# macOS & Linux bundle packaging
 npx tauri build   # → src-tauri/target/release/bundle/
+
+# Windows Microsoft Store (MSIX) packaging
+npx tauri build --no-bundle -- --locked
+node scripts/pack-msix.mjs  # → src-tauri/target/release/bundle/msix/
 ```
 
-`npm run build:desktop` runs `provision-node-sidecar → prisma generate → nextjs-build` before Tauri bundles the standalone server into `resources`.
+`npm run build:desktop` runs `provision-node-sidecar → prisma generate → nextjs-build` before Tauri bundles the standalone server into `resources`. Windows releases are distributed exclusively through the Microsoft Store as MSIX packages.
 
 ### Updater Signing
 
