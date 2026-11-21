@@ -42,8 +42,7 @@ HermOS IDE is a developer-grade desktop integrated development environment engin
    - MCP server discovery & plugin marketplace.
 
 ## Installation & Distribution
-Download installers from the GitHub Releases page: https://github.com/WFekik/HermOS-IDE/releases/latest
-- **Windows**: look for the `.exe` setup or `.msi` installer under Assets
-- **macOS**: look for the universal `.dmg` under Assets (Intel & Apple Silicon)
-- **Linux**: look for the `.deb` or `.AppImage` under Assets
+- **Windows**: Install from the [Microsoft Store](https://apps.microsoft.com/detail/9NJXKNSS00WQ) (automatic silent updates, verified by Microsoft)
+- **macOS**: Look for the universal `.dmg` under [GitHub Releases](https://github.com/WFekik/HermOS-IDE/releases/latest) (Intel & Apple Silicon)
+- **Linux**: Look for the `.deb` or `.AppImage` under [GitHub Releases](https://github.com/WFekik/HermOS-IDE/releases/latest)
 - **Source**: `git clone https://github.com/WFekik/HermOS-IDE.git && cd HermOS-IDE && npm install && npm run tauri dev`

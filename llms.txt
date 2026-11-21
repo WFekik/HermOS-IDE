@@ -7,7 +7,7 @@
 - **Architecture**: Tauri 2.0 (Rust) + Next.js 16 + React 19 + TypeScript + Tailwind CSS v4 + Prisma SQLite
 - **Privacy**: 100% Local-First, Zero Remote Telemetry, API keys encrypted with AES-256-GCM and stored locally on your machine
 - **Protocols**: Model Context Protocol (MCP) support for external tools, OpenAI API standard, Anthropic API, Ollama/vLLM local endpoints
-- **Platforms**: Windows (.exe & .msi), macOS (.dmg universal for Intel & Apple Silicon), Linux (.deb amd64 & .AppImage)
+- **Platforms**: Windows (Microsoft Store), macOS (.dmg universal for Intel & Apple Silicon), Linux (.deb amd64 & .AppImage)
 
 ## Core Capabilities
 - **Autonomous Multi-Worker Subagents**: Dispatches background subagents that fork isolated workspace trees to research codebases, write unit tests, and verify builds concurrently.
