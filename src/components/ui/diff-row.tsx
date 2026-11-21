@@ -58,14 +58,14 @@ export function DiffRow({ line, language = "text" }: { line: SharedDiffLine; lan
   const dark = resolvedTheme === "dark";
   if (line.type === "hunk") {
     return (
-      <div className="bg-muted/60 px-3 py-0.5 text-muted-foreground">
+      <div className="bg-muted/60 px-3 py-0.5 text-muted-foreground min-w-full w-max sticky left-0">
         {line.text}
       </div>
     );
   }
   if (line.type === "meta") {
     return (
-      <div className="px-3 py-0.5 text-muted-foreground/70 select-none">
+      <div className="px-3 py-0.5 text-muted-foreground/70 select-none min-w-full w-max">
         {line.text}
       </div>
     );
@@ -78,7 +78,7 @@ export function DiffRow({ line, language = "text" }: { line: SharedDiffLine; lan
       className={cn(
         // Editor-style rows: full-width red/green tint WITH syntax-colored
         // code on top, plus a 2px gutter edge and tinted line numbers.
-        "flex items-stretch border-s-2 border-s-transparent transition-colors",
+        "flex items-stretch border-s-2 border-s-transparent transition-colors min-w-full w-max",
         isAdd && "border-s-emerald-500/80 bg-emerald-500/15 hover:bg-emerald-500/20",
         isDel && "border-s-red-500/80 bg-red-500/15 hover:bg-red-500/20",
         !isAdd && !isDel && "hover:bg-accent/30",
@@ -86,7 +86,7 @@ export function DiffRow({ line, language = "text" }: { line: SharedDiffLine; lan
     >
       <span
         className={cn(
-          "w-10 shrink-0 select-none border-e border-border/50 px-2 text-end tabular-nums",
+          "w-10 shrink-0 select-none border-e border-border/50 px-2 text-end tabular-nums sticky left-0 z-[1] bg-card/95 backdrop-blur-xs",
           isDel
             ? "text-red-600/80 dark:text-red-400/80"
             : isAdd
@@ -98,7 +98,7 @@ export function DiffRow({ line, language = "text" }: { line: SharedDiffLine; lan
       </span>
       <span
         className={cn(
-          "w-5 shrink-0 select-none text-center",
+          "w-5 shrink-0 select-none text-center sticky left-10 z-[1] bg-card/95 backdrop-blur-xs",
           isAdd && "text-emerald-700 dark:text-emerald-400",
           isDel && "text-red-700 dark:text-red-400",
           line.type === "context" && "text-muted-foreground/60",
@@ -106,7 +106,7 @@ export function DiffRow({ line, language = "text" }: { line: SharedDiffLine; lan
       >
         {marker}
       </span>
-      <span className="flex-1 min-w-0 whitespace-pre-wrap break-words ps-2 pe-3 text-foreground/80">
+      <span className="flex-1 whitespace-pre ps-2 pe-3 text-foreground/80">
         <DiffCode text={line.text} language={language} dark={dark} />
       </span>
     </div>

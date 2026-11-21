@@ -4,6 +4,7 @@ import { POST } from "./route";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
+import { cleanHeuristicTitle } from "@/lib/conversation-title";
 
 vi.mock("@/lib/session", () => ({
   requireUser: vi.fn(),
@@ -160,6 +161,69 @@ describe("POST /api/conversations/[id]/generate-title", () => {
     const json = await res.json();
 
     expect(json.title).toBe("Optimize Postgres Queries");
+  });
+
+  it("rejects reasoning echoes of the naming instructions and falls back to the heuristic title", async () => {
+    vi.spyOn(db.conversation, "findUnique").mockResolvedValue(mockConversation as any);
+    const firstUserMessage = "Let's build a new authentication system with passkeys.";
+    vi.spyOn(db.message, "findMany").mockResolvedValue([
+      { role: "user", content: firstUserMessage },
+    ] as any);
+    vi.spyOn(db.message, "findFirst").mockResolvedValue(null);
+    vi.spyOn(db.providerKey, "findUnique").mockResolvedValue(null);
+
+    vi.mocked(fetchWithSsrf).mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        choices: [{
+          message: {
+            content: "",
+            reasoning_content:
+              "The user wants a short, high-level topic title (3 to 5 words) based on the conversation excerpt. I should capture the primary task.",
+          },
+        }],
+      }),
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/conversations/conv-abc/generate-title", {
+      method: "POST",
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "conv-abc" }) });
+    const json = await res.json();
+
+    expect(json.title).toBe(cleanHeuristicTitle(firstUserMessage));
+    expect(json.title.toLowerCase()).not.toContain("topic title");
+  });
+
+  it("repairs a stored instruction-echo title on the next naming pass", async () => {
+    vi.spyOn(db.conversation, "findUnique").mockResolvedValue({
+      ...mockConversation,
+      title: "a short, high-level topic title (3 to 5 words) based on the",
+    } as any);
+    vi.spyOn(db.message, "findMany").mockResolvedValue([
+      { role: "user", content: "How do I optimize database queries in postgres?" },
+    ] as any);
+    vi.spyOn(db.message, "findFirst").mockResolvedValue(null);
+    vi.spyOn(db.providerKey, "findUnique").mockResolvedValue(null);
+
+    vi.mocked(fetchWithSsrf).mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "Postgres Query Optimization" } }],
+      }),
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/conversations/conv-abc/generate-title", {
+      method: "POST",
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "conv-abc" }) });
+    const json = await res.json();
+
+    expect(json.title).toBe("Postgres Query Optimization");
+    expect(updateSpy).toHaveBeenCalledWith({
+      where: { id: "conv-abc" },
+      data: expect.objectContaining({ title: "Postgres Query Optimization" }),
+    });
   });
 
   it("uses Anthropic /messages format when provider is anthropic", async () => {

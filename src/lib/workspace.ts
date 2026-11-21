@@ -868,7 +868,7 @@ export async function readFileWs(
   rel: string,
   maxBytes = 10_000_000,
   rootDir?: string,
-): Promise<{ path: string; content: string; size: number; isBinary?: boolean }> {
+): Promise<{ path: string; content: string; size: number; isBinary?: boolean; isImage?: boolean; mimeType?: string }> {
   const abs = safePath(userId, wsName, rel, rootDir);
   if (!abs) throw new Error("Invalid path.");
   // Preserve ENOENT semantics for callers that distinguish "absent" (create)
@@ -888,6 +888,29 @@ export async function readFileWs(
     );
   }
   const buf = await fs.readFile(/* turbopackIgnore: true */ abs);
+  const ext = path.extname(rel).toLowerCase();
+  const imageMimes: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+  };
+  if (ext in imageMimes) {
+    // Never inline the bytes here: results flow into persisted tool-call JSON
+    // and API responses, and the UI re-fetches via /api/workspace/file?raw=true.
+    return {
+      path: rel,
+      content: `[Image: ${path.basename(rel)} (${imageMimes[ext]}, ${stat.size} bytes)]`,
+      size: stat.size,
+      isBinary: true,
+      isImage: true,
+      mimeType: imageMimes[ext],
+    };
+  }
   const sample = buf.subarray(0, 8192);
   if (sample.includes(0)) {
     return {

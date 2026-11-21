@@ -36,7 +36,8 @@ export function generateAppxManifest({
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap desktop6">
 
   <Identity
     Name="${identity.name}"
@@ -48,10 +49,15 @@ export function generateAppxManifest({
     <DisplayName>${identity.displayName}</DisplayName>
     <PublisherDisplayName>${identity.publisherDisplayName}</PublisherDisplayName>
     <Logo>Assets\\StoreLogo.png</Logo>
+    <!-- Unvirtualized AppData: the packaged app must read/write the same
+         %APPDATA% data directory as legacy NSIS installs so existing users
+         migrate without losing their workspace data. Requires the
+         unvirtualizedResources restricted capability (Partner Center review). -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -65,7 +71,7 @@ export function generateAppxManifest({
       <uap:VisualElements
         DisplayName="${identity.displayName}"
         Description="HermOS IDE - Next-generation agentic AI software engineering IDE"
-        BackgroundColor="transparent"
+        BackgroundColor="#050806"
         Square150x150Logo="Assets\\Square150x150Logo.png"
         Square44x44Logo="Assets\\Square44x44Logo.png">
         <uap:DefaultTile Wide310x150Logo="Assets\\Wide310x150Logo.png" Square310x310Logo="Assets\\Square310x310Logo.png">
@@ -81,6 +87,7 @@ export function generateAppxManifest({
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>`;
 }
@@ -131,36 +138,54 @@ export async function stageVisualAssets(targetAssetsDir, iconsDir = path.join(RO
         background: { r: 5, g: 10, b: 5, alpha: 1 },
       },
     }).composite([{ input: icon120, top: 15, left: 95 }]).png().toFile(wideDest);
+
+    // Generate unplated and targetsize taskbar assets so Windows does not add an accent-colored backplate
+    const targetSizes = [16, 20, 24, 30, 32, 36, 40, 44, 48, 64, 72, 80, 96, 256];
+    for (const size of targetSizes) {
+      const resized = await sharp(iconSrc).resize(size, size).toBuffer();
+      await fs.promises.writeFile(path.join(targetAssetsDir, `Square44x44Logo.targetsize-${size}.png`), resized);
+      await fs.promises.writeFile(path.join(targetAssetsDir, `Square44x44Logo.targetsize-${size}_altform-unplated.png`), resized);
+      await fs.promises.writeFile(path.join(targetAssetsDir, `Square44x44Logo.altform-unplated_targetsize-${size}.png`), resized);
+    }
   }
 }
 
-export function prepareStagingDirectory(stagingDir) {
+export function defaultStagingSources() {
+  const releaseDir = path.join(ROOT_DIR, 'src-tauri', 'target', 'release');
+  return {
+    appExe: path.join(releaseDir, 'app.exe'),
+    nodeCandidates: [
+      path.join(ROOT_DIR, 'src-tauri', 'node-bin', 'node.exe'),
+      path.join(ROOT_DIR, 'src-tauri', 'binaries', 'node-x86_64-pc-windows-msvc.exe'),
+      path.join(releaseDir, 'node.exe'),
+    ],
+    standalone: path.join(ROOT_DIR, '.next-build', 'standalone'),
+  };
+}
+
+export function prepareStagingDirectory(stagingDir, sources = defaultStagingSources()) {
   fs.mkdirSync(stagingDir, { recursive: true });
 
-  const releaseDir = path.join(ROOT_DIR, 'src-tauri', 'target', 'release');
-  const appExe = path.join(releaseDir, 'app.exe');
-  if (fs.existsSync(appExe)) {
-    fs.copyFileSync(appExe, path.join(stagingDir, 'app.exe'));
+  if (!fs.existsSync(sources.appExe)) {
+    throw new Error(`app.exe not found at ${sources.appExe} — run \`npx tauri build --no-bundle\` first.`);
   }
+  fs.copyFileSync(sources.appExe, path.join(stagingDir, 'app.exe'));
 
-  const nodeCandidates = [
-    path.join(ROOT_DIR, 'src-tauri', 'node-bin', 'node.exe'),
-    path.join(ROOT_DIR, 'src-tauri', 'binaries', 'node-x86_64-pc-windows-msvc.exe'),
-    path.join(releaseDir, 'node.exe'),
-  ];
-  for (const candidate of nodeCandidates) {
-    if (fs.existsSync(candidate)) {
-      fs.copyFileSync(candidate, path.join(stagingDir, 'node.exe'));
-      break;
-    }
+  const nodeSource = sources.nodeCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!nodeSource) {
+    throw new Error(
+      `node.exe not found (looked in: ${sources.nodeCandidates.join(', ')}) — run scripts/provision-node-sidecar.mjs first.`,
+    );
   }
+  fs.copyFileSync(nodeSource, path.join(stagingDir, 'node.exe'));
 
-  const standaloneSrc = path.join(ROOT_DIR, '.next-build', 'standalone');
-  if (fs.existsSync(standaloneSrc)) {
-    const destUp = path.join(stagingDir, '_up_', '.next-build', 'standalone');
-    fs.mkdirSync(path.dirname(destUp), { recursive: true });
-    fs.cpSync(standaloneSrc, destUp, { recursive: true });
+  // An MSIX without the standalone bundle is a silent empty app — fail loudly.
+  if (!fs.existsSync(sources.standalone)) {
+    throw new Error(`Standalone bundle not found at ${sources.standalone} — run \`npm run build:desktop\` first.`);
   }
+  const destUp = path.join(stagingDir, '_up_', '.next-build', 'standalone');
+  fs.mkdirSync(path.dirname(destUp), { recursive: true });
+  fs.cpSync(sources.standalone, destUp, { recursive: true });
 
   return stagingDir;
 }
@@ -202,10 +227,14 @@ async function main() {
   console.log(`[msix] Staging directory: ${stagingDir}`);
   console.log(`[msix] Output target: ${outFile}`);
 
-  if (!fs.existsSync(stagingDir)) {
-    console.log(`[msix] Auto-assembling staging directory...`);
-    prepareStagingDirectory(stagingDir);
+  if (fs.existsSync(stagingDir)) {
+    // Always re-stage: a leftover staging dir from a previous run would pack
+    // stale binaries into the new package.
+    console.log(`[msix] Removing stale staging directory...`);
+    fs.rmSync(stagingDir, { recursive: true, force: true });
   }
+  console.log(`[msix] Assembling staging directory...`);
+  prepareStagingDirectory(stagingDir);
 
   await packMsix({ version, stagingDir, outputPath: outFile });
   console.log(`[msix] Successfully packed ${outFile}`);

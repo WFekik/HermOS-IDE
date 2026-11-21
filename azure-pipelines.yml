@@ -11,7 +11,6 @@
 #   MSSTORE_CLIENT_ID          - Azure AD App Registration Client ID
 #   MSSTORE_CLIENT_SECRET      - Azure AD App Registration Client Secret
 #   MSSTORE_PRODUCT_ID         - Microsoft Store Product ID (e.g. 9NXXXXXXXXXX)
-#   MSSTORE_SELLER_ID          - Partner Center Seller ID (optional)
 #
 # Triggers on pushed tags like v1.0.0. You can also run it manually from the UI.
 
@@ -147,9 +146,7 @@ jobs:
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
         env:
           RELEASE_TAG: $(Build.SourceBranchName)
-          GITHUB_TOKEN: $(GITHUB_TOKEN)
           MSSTORE_TENANT_ID: $(MSSTORE_TENANT_ID)
-          MSSTORE_SELLER_ID: $(MSSTORE_SELLER_ID)
           MSSTORE_CLIENT_ID: $(MSSTORE_CLIENT_ID)
           MSSTORE_CLIENT_SECRET: $(MSSTORE_CLIENT_SECRET)
           MSSTORE_PRODUCT_ID: $(MSSTORE_PRODUCT_ID)

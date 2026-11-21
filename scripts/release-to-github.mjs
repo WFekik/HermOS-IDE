@@ -55,6 +55,22 @@ async function ghJson(method, urlPath, body) {
 }
 
 function getReleaseBody(tag) {
+  if (tag === "v1.1.5" || tag === "1.1.5") {
+    return `### HermOS IDE ${tag}
+
+Local-first desktop IDE with autonomous subagent execution, MCP support, and office document generation.
+
+#### Highlights
+- **Microsoft Store Distribution**: Windows is now distributed exclusively through the Microsoft Store — silently updated, signed by Microsoft, no SmartScreen warnings. Existing installer users are guided to the Store listing directly from the in-app update button, keeping their workspace data across the move.
+- **Automated Store Publishing**: Release tags now submit the MSIX package to Partner Center automatically via the Store submission API (draft recreation, package upload, commit, and validation polling).
+- **Conversation Auto-Naming Fix**: Models echoing the naming instructions (or their reasoning) no longer leak prompt text like "a short, high-level topic title…" into the sidebar; affected conversations self-repair on the next naming pass.
+- **Chat Image Rendering**: Workspace images read by the agent (screenshots, diagrams, icons) render inline in the chat as bounded thumbnails with full-size view, served through the confined workspace file API.
+- **Diff View Horizontal Scrolling**: Long diff lines scroll horizontally instead of wrapping, with a sticky line-number gutter that stays pinned during scroll.
+- **Data Continuity Under Package Identity**: The MSIX manifest opts out of AppData virtualization so the Store build reads and writes the same data directory as previous installs.
+
+#### Downloads & Verification
+Windows: install from the [Microsoft Store](https://apps.microsoft.com/detail/9NJXKNSS00WQ) — updates are delivered by the Store. macOS and Linux installers continue to be published here, with auto-update integrity covered by minisign signatures.`;
+  }
   if (tag === "v1.1.4" || tag === "1.1.4") {
     return `### HermOS IDE ${tag}
 
@@ -376,16 +392,8 @@ async function uploadTextAsset(releaseId, existingByName, name, content, content
  */
 function mapAssetToPlatforms(baseName) {
   const lower = baseName.toLowerCase();
-  // Windows
-  if (lower.endsWith(".msix")) {
-    return ["windows-x86_64-msix", "windows-x86_64"];
-  }
-  if (lower.endsWith(".exe") || lower.includes("x64-setup") || lower.includes("-setup.exe")) {
-    return ["windows-x86_64", "windows-x86_64-nsis"];
-  }
-  if (lower.endsWith(".msi") || lower.includes("x64_en-us")) {
-    return ["windows-x86_64-msi"];
-  }
+  // Windows ships exclusively through the Microsoft Store — no updater
+  // artifacts are published for it, so latest.json carries no windows-* keys.
   // macOS — detect arch explicitly
   const isDarwin =
     lower.includes("darwin") ||
@@ -483,11 +491,6 @@ async function updateLatestJson(releaseId) {
     } catch (e) {
       console.warn(`Could not read signature for ${asset.name}:`, e.message);
     }
-  }
-
-  // Backfill windows-x86_64 from MSI when no NSIS exe was published.
-  if (!latest.platforms["windows-x86_64"] && latest.platforms["windows-x86_64-msi"]) {
-    latest.platforms["windows-x86_64"] = latest.platforms["windows-x86_64-msi"];
   }
 
   if (Object.keys(latest.platforms).length === 0) {

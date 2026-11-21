@@ -60,6 +60,23 @@ export function isTauriDesktop(): boolean {
 
 const RELEASE_REPO = "https://github.com/WFekik/HermOS-IDE";
 
+/** Windows is distributed exclusively through the Microsoft Store; updates are
+ * delivered by the Store client, not the Tauri updater (no Windows updater
+ * artifacts are published anymore). Also the migration target for legacy
+ * NSIS/MSI installs. */
+export const MSSTORE_URL = "https://apps.microsoft.com/detail/9NJXKNSS00WQ";
+
+/** True when running as a desktop app on a Store-distributed platform
+ * (Windows). Such builds never use the Tauri updater: availability is
+ * surfaced from the GitHub release check and the action points at the Store. */
+export function isStoreDistributed(): boolean {
+  return (
+    isTauriDesktop() &&
+    typeof navigator !== "undefined" &&
+    /windows/i.test(navigator.userAgent)
+  );
+}
+
 /** Manual-install fallback URL for a given version (used when auto-install can't finish). */
 export function releaseTagUrl(version: string): string {
   const v = String(version || "").trim().replace(/^v/, "");
@@ -365,6 +382,17 @@ export async function checkForUpdates(
     }
     return null;
   };
+
+  if (isStoreDistributed()) {
+    // Windows: no Tauri updater artifacts exist anymore — compare against
+    // the GitHub release and point at the Store listing when newer. This is
+    // also the migration path for legacy NSIS/MSI installs.
+    const remote = await queryRemoteFallback();
+    if (remote?.status === "available") {
+      return { ...remote, releaseUrl: MSSTORE_URL };
+    }
+    return remote ?? { status: "up-to-date", currentVersion };
+  }
 
   if (isTauriDesktop()) {
     // CHECK PHASE (own try/catch): check/import/timeout failures degrade to

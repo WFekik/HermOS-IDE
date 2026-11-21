@@ -6,6 +6,7 @@ const isProd = process.env.NODE_ENV === "production";
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  images: { unoptimized: true },
   // Smaller responses on loopback (explicit; also the Next default).
   compress: true,
   typescript: { ignoreBuildErrors: false },

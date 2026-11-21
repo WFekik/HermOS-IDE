@@ -397,13 +397,16 @@ function SegmentedMessageRenderer({
       ) : (
         groupedItems.map((item, idx) => renderGroupedItem(item, idx))
       )}
-      {message.attachments && message.attachments.length > 0 && (
-        <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
-          {message.attachments.map((att) => (
-            <AttachmentBlock key={att.id} att={att} isUser={message.role === "user"} />
-          ))}
-        </div>
-      )}
+      {(() => {
+        const atts = getEffectiveAttachments(message);
+        return atts.length > 0 ? (
+          <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
+            {atts.map((att, i) => (
+              <AttachmentBlock key={att.id || `fallback-${i}`} att={att} isUser={message.role === "user"} />
+            ))}
+          </div>
+        ) : null;
+      })()}
       {isThinking && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground overflow-hidden">
           <Brain className="size-3.5 text-brand animate-pulse shrink-0" />
@@ -543,13 +546,16 @@ function FlatMessageRenderer({ message }: { message: UIMessage }) {
       )}
       <MarkdownContent content={sanitized} streaming={!!message.streaming} />
       {message.streaming && sanitized !== "" && <StreamingCursor />}
-      {message.attachments && message.attachments.length > 0 && (
-        <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
-          {message.attachments.map((att) => (
-            <AttachmentBlock key={att.id} att={att} isUser={message.role === "user"} />
-          ))}
-        </div>
-      )}
+      {(() => {
+        const atts = getEffectiveAttachments(message);
+        return atts.length > 0 ? (
+          <div className={cn("flex flex-wrap gap-2 mt-2", message.role === "user" ? "justify-end" : "justify-start")}>
+            {atts.map((att, i) => (
+              <AttachmentBlock key={att.id || `fallback-${i}`} att={att} isUser={message.role === "user"} />
+            ))}
+          </div>
+        ) : null;
+      })()}
       {message.error && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {message.error}
@@ -611,6 +617,13 @@ export function isSafeMarkdownImageHref(src: unknown): string | null {
   ) {
     return raw;
   }
+  // Windows absolute path / file URI to an image
+  if (/^([a-zA-Z]:[\\/]|file:\/\/\/)/i.test(raw)) {
+    const clean = raw.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, "");
+    if (/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)(\?[^\s]*)?(#[^\s]*)?$/i.test(clean)) {
+      return raw;
+    }
+  }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return null;
   if (/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)(\?[^\s]*)?(#[^\s]*)?$/i.test(raw)) {
     return raw;
@@ -622,25 +635,27 @@ const markdownImageRenderer = ({ src, alt }: { src?: unknown; alt?: unknown }) =
   // Bounded thumbnail that never blows out the chat column, but links to
   // the full image so diagrams stay readable (reuses the browser tab
   // instead of a second lightbox implementation).
-  const safeHref = isSafeMarkdownImageHref(src);
+  const rawSrc = typeof src === "string" ? src.trim() : "";
+  const safeHref = isSafeMarkdownImageHref(rawSrc);
+  let resolvedSrc: string | null = null;
+  if (safeHref) {
+    const isRemoteOrInternal = /^(https?:|data:|blob:|\/)/i.test(safeHref);
+    resolvedSrc = isRemoteOrInternal
+      ? safeHref
+      : `/api/workspace/file?raw=true&path=${encodeURIComponent(safeHref.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, ""))}`;
+  }
+  if (!resolvedSrc) return null;
   const imgEl = (
     <img
-      src={src as string}
+      src={resolvedSrc}
       alt={(alt as string) || "Image"}
-      className="max-h-64 w-auto max-w-full object-contain hover:scale-[1.02] transition-transform"
+      className="max-h-64 w-auto max-w-full object-contain hover:scale-[1.02] transition-transform rounded"
       loading="lazy"
     />
   );
-  if (!safeHref) {
-    return (
-      <span className="inline-block my-1 max-w-sm overflow-hidden rounded-md border border-border/70 shadow-xs">
-        {imgEl}
-      </span>
-    );
-  }
   return (
     <a
-      href={safeHref}
+      href={resolvedSrc}
       target="_blank"
       rel="noopener noreferrer"
       title={typeof alt === "string" && alt ? `${alt} — open full size` : "Open full size"}
@@ -1162,11 +1177,16 @@ export function preprocessContent(content: string): string {
     content.includes("|–") ||
     content.includes("+–") ||
     /^[|\s│]*[├└+│|\\][─—–\-]{1,2}/m.test(content);
+  const needsDataUrl = content.includes("data:image/");
 
-  if (!needsLinks && !needsTables && !needsTrees) {
+  if (!needsLinks && !needsTables && !needsTrees && !needsDataUrl) {
     return content;
   }
   const endsWithNewline = content.endsWith("\n");
+
+  if (needsDataUrl) {
+    content = content.replace(/(^|[^(\]])(data:image\/(?:png|jpeg|jpg|webp|gif|bmp);base64,[A-Za-z0-9+/=]{40,})/g, "$1![Image]($2)");
+  }
 
   // Normalize Windows backslashes in Markdown link targets
   if (needsLinks) {
@@ -1663,12 +1683,51 @@ function QuestionCallBlock({ tc }: { tc: LiveToolCall }) {
   );
 }
 
+export function getEffectiveAttachments(message: UIMessage): AttachmentDTO[] {
+  if (message.attachments && message.attachments.length > 0) return message.attachments;
+  if (!message.content) return [];
+  const atts: AttachmentDTO[] = [];
+  const regex = /\[(?:Image|Attachment):\s*(?:image\/[a-z0-9+.-]+|\s*)"?([^"\]\n]+?)"?\s*\(([^)\n]+)\)[^\]]*\]/gi;
+  let match;
+  while ((match = regex.exec(message.content)) !== null) {
+    const p1 = match[1].trim();
+    const p2 = match[2].trim();
+    let path = "";
+    let type = "image/png";
+    let name = p1;
+    if (p2.includes("image/")) {
+      const mime = p2.match(/image\/[a-z0-9+.-]+/i);
+      type = mime ? mime[0] : "image/png";
+    } else if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(p2)) {
+      path = p2;
+      name = p2.split(/[\\/]/).pop() || p1;
+    }
+    if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(p1)) {
+      path = path || p1;
+      name = p1.split(/[\\/]/).pop() || p1;
+    }
+    // Recovered chips have no upload id — without a resolvable path they
+    // would render a dead `/api/attachments/` source, so skip them.
+    if (!path) continue;
+    atts.push({
+      id: "",
+      name,
+      type,
+      size: 0,
+      path,
+    });
+  }
+  return atts;
+}
+
 function AttachmentBlock({ att, isUser }: { att: AttachmentDTO; isUser?: boolean }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
   const closeRef = React.useRef<HTMLButtonElement>(null);
-  const isImage = att.type.startsWith("image/");
-  const src = `/api/attachments/${att.id}`;
+  const isImage = att.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(att.name || att.path || "");
+  const src = att.path && !att.id
+    ? `/api/workspace/file?raw=true&path=${encodeURIComponent(att.path.replace(/^file:\/\/\//i, "").replace(/^file:\/\//i, ""))}`
+    : `/api/attachments/${att.id}`;
   const ext = att.name.split(".").pop()?.toLowerCase() ?? "";
   // Lightbox a11y: Escape closes, initial focus lands on Close, focus
   // returns to the thumbnail on teardown.

@@ -19,6 +19,29 @@ export function displayConversationTitle(
 }
 
 /**
+ * Phrases that only occur in the title-generation instructions (or a model's
+ * reasoning about them) — never in a real generated title. Guards against the
+ * model echoing the prompt, or its reasoning leaking via the thinking
+ * fallback, being stored as the conversation title.
+ */
+const TITLE_INSTRUCTION_PATTERNS = [
+  "topic title",
+  "3 to 5",
+  "conversation excerpt",
+  "generate a short",
+  "output only",
+  "concise title",
+  "user wants",
+  "primary task",
+] as const;
+
+export function isInstructionEchoTitle(text: string | null | undefined): boolean {
+  const lower = (text ?? "").toLowerCase();
+  if (!lower) return false;
+  return TITLE_INSTRUCTION_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+/**
  * Deterministic heuristic title extracted from the first user message.
  * Provides instant fallback titles when LLM title generation is skipped or fails.
  */

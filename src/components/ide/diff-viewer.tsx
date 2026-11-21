@@ -145,7 +145,7 @@ export function DiffViewer({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15, ease: "easeOut" }}
-              className="max-h-[60vh] overflow-y-auto overflow-x-hidden"
+              className="max-h-[60vh] overflow-y-auto overflow-x-auto"
             >
               <div className="font-mono text-[11px] leading-relaxed">
                 {lines.map((line, i) => (

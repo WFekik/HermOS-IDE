@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUpdateStore, shouldShowUpdateButton } from "@/stores/update-store";
-import { checkForUpdates, isTauriDesktop, releaseTagUrl, InstallBlockedError } from "@/lib/updater";
+import { checkForUpdates, isTauriDesktop, isStoreDistributed, releaseTagUrl, MSSTORE_URL, InstallBlockedError } from "@/lib/updater";
 import { useTranslation } from "@/hooks/use-translation";
 
 function formatMb(bytes: number): string {
@@ -89,7 +89,7 @@ export function UpdateButton() {
   }, []);
 
   const manualUrl = React.useMemo(
-    () => releaseUrl ?? releaseTagUrl(latestVersion),
+    () => releaseUrl ?? (isStoreDistributed() ? MSSTORE_URL : releaseTagUrl(latestVersion)),
     [releaseUrl, latestVersion],
   );
 
@@ -100,8 +100,9 @@ export function UpdateButton() {
   const inflightRef = React.useRef(false);
   const handleUpdateNow = React.useCallback(async () => {
     if (inflightRef.current || status === "downloading" || status === "installing") return;
-    // Web/dev builds have no in-app installer — the release page is the flow.
-    if (!isTauriDesktop()) {
+    // Web/dev builds and Store-distributed platforms have no in-app installer
+    // — the release/Store page is the flow.
+    if (!isTauriDesktop() || isStoreDistributed()) {
       openExternal(manualUrl);
       return;
     }

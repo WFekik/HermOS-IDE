@@ -3,6 +3,7 @@ import {
   UNTITLED_CONVERSATION_TITLE,
   displayConversationTitle,
   cleanHeuristicTitle,
+  isInstructionEchoTitle,
 } from "./conversation-title";
 
 describe("conversation-title", () => {
@@ -64,6 +65,26 @@ describe("conversation-title", () => {
       expect(cleanHeuristicTitle("")).toBe("Chat");
       expect(cleanHeuristicTitle("   \n\t  ")).toBe("Chat");
       expect(cleanHeuristicTitle("```\n```")).toBe("Chat");
+    });
+  });
+
+  describe("isInstructionEchoTitle", () => {
+    it("flags echoed naming instructions and reasoning about them", () => {
+      expect(
+        isInstructionEchoTitle("a short, high-level topic title (3 to 5 words) based on the"),
+      ).toBe(true);
+      expect(
+        isInstructionEchoTitle("The user wants a short, high-level topic title based on the conversation excerpt"),
+      ).toBe(true);
+      expect(isInstructionEchoTitle("Generate a short title for this conversation")).toBe(true);
+      expect(isInstructionEchoTitle("Output only the title")).toBe(true);
+    });
+
+    it("accepts real generated titles", () => {
+      expect(isInstructionEchoTitle("Docker Deployment Fix")).toBe(false);
+      expect(isInstructionEchoTitle("Fix Do Not Disturb Bug")).toBe(false);
+      expect(isInstructionEchoTitle("")).toBe(false);
+      expect(isInstructionEchoTitle(null)).toBe(false);
     });
   });
 });

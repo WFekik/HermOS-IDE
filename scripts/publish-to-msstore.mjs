@@ -1,5 +1,12 @@
-// Updates the Microsoft Store submission for HermOS IDE unmanaged Win32 (NSIS) releases.
-// Designed to run in CI (Azure Pipelines) right after scripts/release-to-github.mjs.
+// Publishes the packaged HermOS IDE MSIX to the Microsoft Store via the
+// Store submission API (managed flow). Mirrors the steps performed by the
+// Microsoft Store Developer CLI's `publish` command:
+//   token → resolve app → recreate draft → replace packages → PUT submission
+//   → upload zip bundle to the SAS URL → commit.
+// Docs: https://learn.microsoft.com/windows/uwp/monetize/manage-app-submissions
+//
+// The app's FIRST publication must be completed manually in Partner Center;
+// afterwards this script can run unattended on every release tag.
 //
 // Required Environment Variables (set as secret pipeline variables in Azure DevOps):
 //   MSSTORE_TENANT_ID      - Microsoft Entra ID Tenant ID
@@ -7,16 +14,21 @@
 //   MSSTORE_CLIENT_SECRET  - Azure AD App Registration Client Secret
 //   MSSTORE_PRODUCT_ID     - Microsoft Store Product ID (e.g. 9NXXXXXXXXXX)
 // Optional:
-//   MSSTORE_SELLER_ID      - Partner Center Seller ID (optional if linked to tenant)
 //   RELEASE_TAG            - e.g. v1.1.4 (Azure provides Build.SourceBranchName)
-//   GITHUB_TOKEN           - PAT with repo scope (to query release asset URLs)
-//   HERMOS_REPO            - owner/repo override (default: WFekik/HermOS-IDE)
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import AdmZip from "adm-zip";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, "..");
+
+const DEVCENTER_BASE = "https://manage.devcenter.microsoft.com/v1.0/my";
 const TAG_REGEX = /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+const SUBMISSION_POLL_INTERVAL_MS = 30_000;
+const SUBMISSION_POLL_TIMEOUT_MS = 15 * 60_000;
 
 export function validateConfig(env = process.env) {
   const tag = env.RELEASE_TAG;
@@ -47,139 +59,208 @@ export function validateConfig(env = process.env) {
   return {
     valid: true,
     skip: false,
-    config: {
-      tenantId,
-      clientId,
-      clientSecret,
-      productId,
-      sellerId: env.MSSTORE_SELLER_ID || "",
-      tag,
-      repo: env.HERMOS_REPO || env.GITHUB_REPOSITORY || "WFekik/HermOS-IDE",
-      token: env.GITHUB_TOKEN || "",
-    },
+    config: { tenantId, clientId, clientSecret, productId, tag },
   };
 }
 
-export function buildPackagePayload({
-  downloadUrl,
-  languages = ["en", "fr", "de", "es", "zh", "ja", "ar", "ru", "pt"],
-  architectures = ["X64"],
-  isSilentInstall = true,
-}) {
-  if (!downloadUrl) throw new Error("downloadUrl is required for Store package payload");
-  return {
-    packages: [
-      {
-        packageUrl: downloadUrl,
-        languages,
-        architectures,
-        isSilentInstall,
-      },
-    ],
-  };
+export function resolveMsixPath(version) {
+  const clean = String(version || "").trim().replace(/^v/i, "");
+  return path.join(
+    ROOT_DIR,
+    "src-tauri",
+    "target",
+    "release",
+    "bundle",
+    "msix",
+    `HermOS.IDE_${clean}_x64.msix`,
+  );
 }
 
-export function resolveInstallerName(fileList = []) {
-  for (const file of fileList) {
-    const base = path.basename(file);
-    const lower = base.toLowerCase();
-    if (
-      (lower.endsWith(".exe") || lower.includes("x64-setup") || lower.includes("-setup.exe")) &&
-      !lower.endsWith(".sig")
-    ) {
-      return base;
+// The Dev Center API speaks camelCase; tolerate PascalCase echoes defensively.
+function pick(obj, key) {
+  if (!obj || typeof obj !== "object") return undefined;
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(obj)) {
+    if (k.toLowerCase() === lower) return obj[k];
+  }
+  return undefined;
+}
+
+/**
+ * Retire every existing .msix entry (same-extension packages must be marked
+ * PendingDelete or the upload is rejected as a duplicate) and add the new
+ * package as PendingUpload. Mutates and returns the submission's package list.
+ */
+export function replacePackages(submission, fileName) {
+  const packages = pick(submission, "applicationPackages");
+  if (!Array.isArray(packages)) {
+    throw new Error("Submission JSON has no applicationPackages array");
+  }
+  for (const pkg of packages) {
+    if (String(pick(pkg, "fileName") || "").toLowerCase().endsWith(".msix")) {
+      pkg.fileStatus = "PendingDelete";
     }
   }
-  return null;
+  packages.push({ fileName, fileStatus: "PendingUpload" });
+  return packages;
 }
 
-export function buildInstallerUrl(repo, tag, fileName) {
-  if (!repo || !tag || !fileName) {
-    throw new Error("repo, tag, and fileName are required to construct installer URL");
+export function buildZipBundle(msixPath, outPath) {
+  const zip = new AdmZip();
+  zip.addLocalFile(msixPath);
+  zip.writeZip(outPath);
+  return outPath;
+}
+
+async function getAccessToken({ tenantId, clientId, clientSecret }) {
+  const res = await fetch(
+    `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: "https://manage.devcenter.microsoft.com/.default",
+      }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) {
+    throw new Error(`Failed to obtain Entra ID access token: ${res.status} ${JSON.stringify(data)?.slice(0, 500)}`);
   }
-  // GitHub normalizes spaces to dots in uploaded asset names
-  const normalizedName = fileName.replace(/ /g, ".");
-  return `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(normalizedName)}`;
+  return data.access_token;
 }
 
-function findLocalNsisInstaller() {
-  const nsisDir = path.resolve("src-tauri/target/release/bundle/nsis");
-  if (!fs.existsSync(nsisDir)) return null;
-  const entries = fs.readdirSync(nsisDir);
-  return resolveInstallerName(entries);
+async function devCenterApi(token, method, urlPath, body) {
+  const res = await fetch(`${DEVCENTER_BASE}${urlPath}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(120_000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`${method} ${urlPath} failed: ${res.status} ${text.slice(0, 2000)}`);
+  }
+  return text ? JSON.parse(text) : null;
 }
 
-function getCliCommand() {
-  const check = spawnSync("msstore", ["--version"], { stdio: "ignore", shell: true });
-  if (check.status === 0) return { cmd: "msstore", argsPrefix: [] };
-  return { cmd: "npx", argsPrefix: ["--yes", "@microsoft/msstore-cli"] };
+async function uploadBundle(fileUploadUrl, bundlePath) {
+  const body = fs.readFileSync(bundlePath);
+  const res = await fetch(fileUploadUrl.replace(/\+/g, "%2B"), {
+    method: "PUT",
+    headers: {
+      "x-ms-blob-type": "BlockBlob",
+      "Content-Type": "application/zip",
+      "Content-Length": String(body.length),
+    },
+    body,
+  });
+  if (!res.ok) {
+    throw new Error(`Package upload failed: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 2000));
+  }
 }
 
 async function main() {
+  if (process.argv[1] !== fileURLToPath(import.meta.url)) return;
+
   const result = validateConfig(process.env);
   if (!result.valid) {
     console.log(`[msstore] ${result.reason}. Skipping Microsoft Store submission.`);
     return;
   }
+  const { tenantId, clientId, clientSecret, productId, tag } = result.config;
 
-  const { tenantId, clientId, clientSecret, productId, sellerId, tag, repo } = result.config;
-  console.log(`[msstore] Initializing Microsoft Store submission for product ${productId} (${tag})...`);
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf-8"));
+  const msixPath = resolveMsixPath(pkg.version);
+  if (!fs.existsSync(msixPath)) {
+    throw new Error(`MSIX not found at ${msixPath} — run scripts/pack-msix.mjs first.`);
+  }
+  const msixName = path.basename(msixPath);
+  const bundlePath = `${msixPath}.zip`;
 
-  let installerName = findLocalNsisInstaller();
-  if (!installerName) {
-    const cleanVersion = tag.replace(/^v/i, "");
-    installerName = `HermOS.IDE_${cleanVersion}_x64-setup.exe`;
-    console.log(`[msstore] Local bundle not found; inferring canonical installer name: ${installerName}`);
+  console.log(`[msstore] Publishing ${msixName} to the Microsoft Store (${tag})...`);
+
+  const token = await getAccessToken({ tenantId, clientId, clientSecret });
+  console.log("[msstore] Authenticated with Partner Center.");
+
+  const app = await devCenterApi(token, "GET", `/applications/${encodeURIComponent(productId)}`);
+  const appId = pick(app, "id");
+  const pendingId = pick(app, "pendingApplicationSubmission")?.id ?? null;
+  const lastPublishedId = pick(app, "lastPublishedApplicationSubmission")?.id ?? null;
+  if (!appId) throw new Error(`Store product ${productId} not found on this account.`);
+
+  let submission;
+  if (pendingId && !lastPublishedId) {
+    // First publication still sitting as a draft in Partner Center — reuse it.
+    submission = await devCenterApi(token, "GET", `/applications/${appId}/submissions/${pendingId}`);
+    if (pick(submission, "status") === "CommitFailed") {
+      await devCenterApi(token, "DELETE", `/applications/${appId}/submissions/${pendingId}`);
+      submission = await devCenterApi(token, "POST", `/applications/${appId}/submissions?isMinimalResponse=true`);
+    }
   } else {
-    console.log(`[msstore] Located local installer binary: ${installerName}`);
+    // Publishing recreates the draft from the last published submission,
+    // discarding staged-but-uncommitted changes (same as the CLI).
+    if (pendingId) {
+      await devCenterApi(token, "DELETE", `/applications/${appId}/submissions/${pendingId}`);
+    }
+    submission = await devCenterApi(token, "POST", `/applications/${appId}/submissions?isMinimalResponse=true`);
+  }
+  const submissionId = pick(submission, "id");
+  if (!submissionId) throw new Error("Could not create or reuse a draft submission.");
+
+  submission = await devCenterApi(token, "GET", `/applications/${appId}/submissions/${submissionId}`);
+  const fileUploadUrl = pick(submission, "fileUploadUrl");
+  if (!fileUploadUrl) {
+    throw new Error(
+      "Draft has no fileUploadUrl (submission was created in Partner Center UI) — delete the draft and retry.",
+    );
   }
 
-  const downloadUrl = buildInstallerUrl(repo, tag, installerName);
-  console.log(`[msstore] Target download URL: ${downloadUrl}`);
+  replacePackages(submission, msixName);
+  await devCenterApi(token, "PUT", `/applications/${appId}/submissions/${submissionId}`, submission);
+  console.log(`[msstore] Draft ${submissionId} updated with package ${msixName}.`);
 
-  const payload = buildPackagePayload({ downloadUrl });
-  const payloadString = JSON.stringify(payload);
+  buildZipBundle(msixPath, bundlePath);
+  console.log(`[msstore] Uploading package bundle (${(fs.statSync(bundlePath).size / 1024 / 1024).toFixed(1)} MB)...`);
+  await uploadBundle(fileUploadUrl, bundlePath);
+  fs.rmSync(bundlePath, { force: true });
 
-  const { cmd, argsPrefix } = getCliCommand();
-  console.log(`[msstore] Using CLI tool: ${cmd} ${argsPrefix.join(" ")}`);
+  const commit = await devCenterApi(token, "POST", `/applications/${appId}/submissions/${submissionId}/commit`);
+  console.log(`[msstore] Submission committed — status: ${pick(commit, "status") ?? "unknown"}.`);
 
-  console.log("[msstore] Configuring Microsoft Store authentication credentials...");
-  const reconfigureArgs = [
-    ...argsPrefix,
-    "reconfigure",
-    "--tenantId",
-    tenantId,
-    "--clientId",
-    clientId,
-    "--clientSecret",
-    clientSecret,
-  ];
-  if (sellerId) {
-    reconfigureArgs.push("--sellerId", sellerId);
+  // Catch immediate validation failures; certification itself takes hours and
+  // is tracked in Partner Center, so do not block CI on full completion.
+  const deadline = Date.now() + SUBMISSION_POLL_TIMEOUT_MS;
+  let status = pick(commit, "status");
+  while (status === "CommitStarted" && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, SUBMISSION_POLL_INTERVAL_MS));
+    const statusResponse = await devCenterApi(
+      token,
+      "GET",
+      `/applications/${appId}/submissions/${submissionId}/status`,
+    );
+    status = pick(statusResponse, "status");
+    console.log(`[msstore] Submission status: ${status}`);
   }
 
-  // Never inherit or print credentials to console
-  const authExec = spawnSync(cmd, reconfigureArgs, { stdio: ["ignore", "pipe", "pipe"], shell: true });
-  if (authExec.status !== 0) {
-    const stderr = authExec.stderr ? authExec.stderr.toString().trim() : "Unknown authentication error";
-    throw new Error(`Failed to configure msstore CLI credentials: ${stderr}`);
+  if (status === "CommitFailed") {
+    throw new Error(`Submission ${submissionId} failed validation — see statusDetails in Partner Center.`);
   }
-  console.log("[msstore] Successfully authenticated with Partner Center.");
 
-  console.log(`[msstore] Updating draft submission for ${productId}...`);
-  const updateArgs = [...argsPrefix, "submission", "update", productId, payloadString];
-  execFileSync(cmd, updateArgs, { stdio: "inherit", shell: true });
-
-  console.log(`[msstore] Publishing submission for ${productId}...`);
-  const publishArgs = [...argsPrefix, "submission", "publish", productId];
-  execFileSync(cmd, publishArgs, { stdio: "inherit", shell: true });
-
-  console.log(`[msstore] Successfully submitted ${tag} to Microsoft Store!`);
+  console.log(
+    `[msstore] Submitted ${tag} to the Microsoft Store (submission ${submissionId}). Certification progress: https://partner.microsoft.com/dashboard/products/${productId}/submissions/${submissionId}`,
+  );
 }
 
-if (process.argv[1] && process.argv[1].endsWith("publish-to-msstore.mjs")) {
-  main().catch((err) => {
-    console.error(`[msstore] Submission failed: ${err.message}`);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error(`[msstore] Submission failed: ${err.message}`);
+  process.exit(1);
+});

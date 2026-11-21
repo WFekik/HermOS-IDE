@@ -954,6 +954,278 @@ fn check_install_locks(app: tauri::AppHandle) -> Result<Vec<String>, String> {
   }
 }
 
+/// Bounded wait for a legacy install dir to disappear. NSIS uninstalls run
+/// detached — the spawned uninstaller exits immediately and the real removal
+/// continues from a %TEMP% copy — so callers must poll instead of waiting on
+/// the child process.
+#[cfg(target_os = "windows")]
+const LEGACY_UNINSTALL_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Directories where legacy NSIS / MSI builds of HermOS IDE were installed.
+#[cfg(target_os = "windows")]
+fn legacy_install_dirs() -> Vec<PathBuf> {
+  let mut dirs = Vec::new();
+  if let Ok(local) = std::env::var("LOCALAPPDATA") {
+    dirs.push(PathBuf::from(&local).join("Programs").join("HermOS IDE"));
+    dirs.push(PathBuf::from(&local).join("Programs").join("hermos-ide"));
+  }
+  if let Ok(prog_files) = std::env::var("ProgramFiles") {
+    dirs.push(PathBuf::from(&prog_files).join("HermOS IDE"));
+  }
+  dirs
+}
+
+/// True when `child` is inside `parent`. Both sides go through canonical_lower
+/// so 8.3 aliases and casing agree; the trailing separator prevents
+/// `HermOS IDE2` from matching under `HermOS IDE`.
+#[cfg(target_os = "windows")]
+fn path_is_under_legacy(child: &Path, parent: &Path) -> bool {
+  let mut prefix = canonical_lower(parent);
+  if !prefix.ends_with('\\') {
+    prefix.push('\\');
+  }
+  canonical_lower(child).starts_with(&prefix)
+}
+
+/// Extract the MSI product GUID from an UninstallString like
+/// `MsiExec.exe /I{GUID}` / `MsiExec.exe /X{GUID}`.
+#[cfg(target_os = "windows")]
+fn extract_msi_guid(uninstall_string: &str) -> Option<String> {
+  let start = uninstall_string.find('{')?;
+  let end = start + uninstall_string[start..].find('}')?;
+  let guid = &uninstall_string[start + 1..end];
+  let valid = guid.len() == 36 && guid.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+  if valid {
+    Some(guid.to_ascii_lowercase())
+  } else {
+    None
+  }
+}
+
+/// Executable paths of all running processes (CIM enumeration, ~0.5-1s —
+/// this sweep runs on a background thread, never on the boot path).
+#[cfg(target_os = "windows")]
+fn running_process_paths() -> Vec<String> {
+  let mut cmd = Command::new("powershell");
+  cmd.args([
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "Get-CimInstance Win32_Process | ForEach-Object { $_.ExecutablePath }",
+  ]);
+  cmd.creation_flags(CREATE_NO_WINDOW);
+  let out = match cmd.output() {
+    Ok(o) => o,
+    Err(_) => return Vec::new(),
+  };
+  String::from_utf8_lossy(&out.stdout)
+    .lines()
+    .map(|l| l.trim().to_string())
+    .filter(|l| !l.is_empty())
+    .collect()
+}
+
+/// True while ANY process runs from a legacy install dir — uninstalling under
+/// it would hit in-use files and leave debris. Scoped by canonical path
+/// prefix (under_ours discipline), never by image name alone.
+#[cfg(target_os = "windows")]
+fn legacy_app_running(legacy_dirs: &[PathBuf]) -> bool {
+  running_process_paths().iter().any(|p| {
+    let path = PathBuf::from(p);
+    legacy_dirs.iter().any(|dir| path_is_under_legacy(&path, dir))
+  })
+}
+
+/// Poll until `dir` disappears. Bounded — a stuck uninstaller must not hang
+/// the sweep thread.
+#[cfg(target_os = "windows")]
+fn wait_for_dir_removal(dir: &Path, timeout: std::time::Duration) -> bool {
+  let deadline = std::time::Instant::now() + timeout;
+  loop {
+    if !dir.exists() {
+      return true;
+    }
+    if std::time::Instant::now() >= deadline {
+      return !dir.exists();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+  }
+}
+
+#[cfg(target_os = "windows")]
+fn run_silent_uninstaller(path: &Path) {
+  log::info!("Running silent legacy uninstall: {:?}", path);
+  let mut cmd = Command::new(path);
+  cmd.arg("/S");
+  cmd.creation_flags(CREATE_NO_WINDOW);
+  let _ = cmd.status();
+}
+
+#[cfg(target_os = "windows")]
+fn run_silent_msi_uninstall(guid: &str) {
+  log::info!("Running silent MSI uninstall for product {{{}}}", guid);
+  let mut cmd = Command::new("msiexec.exe");
+  cmd.args(["/x", &format!("{{{}}}", guid), "/qn", "/norestart"]);
+  cmd.creation_flags(CREATE_NO_WINDOW);
+  let _ = cmd.status();
+}
+
+/// Uninstall strings registered under HKCU for HermOS products. Per-machine
+/// (HKLM) entries are deliberately NOT touched: silently removing them needs
+/// elevation, and a hidden UAC prompt on first Store boot is worse than a
+/// leftover that gets reported and skipped.
+#[cfg(target_os = "windows")]
+fn registered_hkcu_uninstall_strings() -> Vec<String> {
+  let script = r#"
+    Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+      Where-Object { ($_.DisplayName -like '*HermOS IDE*' -or $_.PSChildName -like '*hermos.ide*') -and $_.UninstallString } |
+      ForEach-Object { $_.UninstallString }
+  "#;
+  let mut cmd = Command::new("powershell");
+  cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+  cmd.creation_flags(CREATE_NO_WINDOW);
+  let out = match cmd.output() {
+    Ok(o) => o,
+    Err(_) => return Vec::new(),
+  };
+  String::from_utf8_lossy(&out.stdout)
+    .lines()
+    .map(|l| l.trim().to_string())
+    .filter(|l| !l.is_empty())
+    .collect()
+}
+
+/// Sweep and silently uninstall legacy NSIS / MSI installations of HermOS IDE
+/// when running as a modern Microsoft Store / packaged app.
+///
+/// Ensures old standalone binaries are cleanly uninstalled and obsolete shortcuts
+/// removed, leaving only the Microsoft Store app. User data in %APPDATA%/com.hermos.ide
+/// (SQLite DB, workspaces, chat history) is strictly preserved.
+#[cfg(target_os = "windows")]
+fn sweep_legacy_installations(app: &tauri::AppHandle) {
+  let app_data_dir = match app.path().app_data_dir() {
+    Ok(d) => d,
+    Err(_) => return,
+  };
+  let marker = app_data_dir.join(".legacy_uninstalled");
+  if marker.exists() {
+    return;
+  }
+
+  let legacy_dirs = legacy_install_dirs();
+
+  // Safety check: NEVER run a legacy uninstall while executing from a legacy
+  // installation directory (defense in depth — only Store builds ship the
+  // sweep today, but the guard must not depend on that).
+  if let Ok(current_exe) = std::env::current_exe() {
+    if legacy_dirs
+      .iter()
+      .any(|dir| path_is_under_legacy(&current_exe, dir))
+    {
+      log::info!("Running from a legacy install directory; skipping legacy sweep.");
+      return;
+    }
+  }
+
+  // A running legacy instance holds its install dir locked; uninstalling
+  // under it would fail mid-file and leave debris. Skip (no marker) so the
+  // next boot retries once the old instance is closed.
+  if legacy_app_running(&legacy_dirs) {
+    log::info!("A legacy HermOS IDE instance is still running; skipping legacy sweep this boot.");
+    return;
+  }
+
+  // 1. NSIS uninstallers living inside the known install dirs. Each is
+  //    followed by a bounded wait for the directory to vanish — the registry
+  //    sweep below must not race an in-flight uninstall (double uninstall,
+  //    purge-vs-uninstaller file races).
+  for dir in &legacy_dirs {
+    let entries = match std::fs::read_dir(dir) {
+      Ok(entries) => entries,
+      Err(_) => continue,
+    };
+    let uninstallers: Vec<PathBuf> = entries
+      .flatten()
+      .map(|e| e.path())
+      .filter(|p| {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase());
+        match name {
+          Some(n) => n.starts_with("uninstall ") && n.ends_with(".exe"),
+          None => false,
+        }
+      })
+      .collect();
+    for uninstaller in uninstallers {
+      run_silent_uninstaller(&uninstaller);
+      wait_for_dir_removal(dir, LEGACY_UNINSTALL_WAIT);
+    }
+  }
+
+  // 2. Registry-registered per-user uninstallers (MSI or NSIS at custom
+  //    paths). Uninstallers are executed from Rust — never inside the
+  //    PowerShell script — so quoting and wait semantics stay in one place.
+  for uninstall_string in registered_hkcu_uninstall_strings() {
+    if let Some(guid) = extract_msi_guid(&uninstall_string) {
+      run_silent_msi_uninstall(&guid);
+    } else {
+      let cleaned = uninstall_string.trim_matches('"').trim();
+      let path = PathBuf::from(cleaned);
+      if path.is_file() {
+        run_silent_uninstaller(&path);
+      }
+    }
+  }
+  for dir in &legacy_dirs {
+    if dir.exists() {
+      wait_for_dir_removal(dir, LEGACY_UNINSTALL_WAIT);
+    }
+  }
+
+  // 3. Fallback purge for directories the uninstallers left behind.
+  for dir in &legacy_dirs {
+    if dir.exists() {
+      log::info!("Purging leftover legacy install dir: {:?}", dir);
+      let _ = std::fs::remove_dir_all(dir);
+    }
+  }
+
+  // 4. Stale legacy shortcuts from Desktop and Start Menu.
+  if let Ok(profile) = std::env::var("USERPROFILE") {
+    let desktop_lnk = PathBuf::from(&profile).join("Desktop").join("HermOS IDE.lnk");
+    if desktop_lnk.exists() {
+      let _ = std::fs::remove_file(&desktop_lnk);
+    }
+  }
+  if let Ok(app_data) = std::env::var("APPDATA") {
+    let sm_lnk = PathBuf::from(&app_data)
+      .join("Microsoft")
+      .join("Windows")
+      .join("Start Menu")
+      .join("Programs")
+      .join("HermOS IDE.lnk");
+    if sm_lnk.exists() {
+      let _ = std::fs::remove_file(&sm_lnk);
+    }
+  }
+
+  // The marker is the "never retry" record — only write it when the cleanup
+  // actually finished, so a failed uninstall (locked files, missing
+  // elevation) is retried on the next boot instead of being lost forever.
+  let remaining: Vec<&PathBuf> = legacy_dirs.iter().filter(|d| d.exists()).collect();
+  if remaining.is_empty() {
+    let _ = std::fs::write(&marker, "cleaned");
+    log::info!("Legacy installation cleanup finished.");
+  } else {
+    log::warn!(
+      "Legacy cleanup incomplete; leftovers {:?} — retrying on next boot.",
+      remaining
+    );
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sweep_legacy_installations(_app: &tauri::AppHandle) {}
+
 /// Cached-port helpers: reuse the last working loopback port so warm boots
 /// skip the port scan entirely (~instant). The cache is advisory — if the
 /// port is busy we fall through to the normal scan.
@@ -1522,6 +1794,11 @@ pub fn run() {
         boot_backend_and_navigate(boot_handle);
       });
 
+      let sweep_handle = app_handle.clone();
+      std::thread::spawn(move || {
+        sweep_legacy_installations(&sweep_handle);
+      });
+
       Ok(())
     })
     .build(tauri::generate_context!())
@@ -1597,5 +1874,68 @@ mod startup_path_tests {
     for dir in registered_install_dirs() {
       assert!(!dir.as_os_str().is_empty());
     }
+  }
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn legacy_dir_prefix_match_is_exact_and_case_insensitive() {
+    let dir = std::env::temp_dir().join("hermos-sweep-test").join("HermOS IDE");
+    std::fs::create_dir_all(&dir).expect("create legacy dir");
+    let sibling = std::env::temp_dir().join("hermos-sweep-test").join("HermOS IDE2");
+    std::fs::create_dir_all(&sibling).expect("create sibling dir");
+
+    // Children must exist: canonical_lower resolves aliases only for existing
+    // paths (nonexistent paths fall back to the literal — the documented
+    // safe-side contract). Every production caller checks live exe paths.
+    let inside = dir.join("app.exe");
+    std::fs::write(&inside, b"exe").expect("create exe");
+    let sibling_exe = sibling.join("app.exe");
+    std::fs::write(&sibling_exe, b"exe").expect("create exe");
+
+    assert!(path_is_under_legacy(&inside, &dir));
+    // Sibling whose name extends the legacy dir name must NOT match — the
+    // trailing-separator contract the uninstall guard depends on.
+    assert!(!path_is_under_legacy(&sibling_exe, &dir));
+    // Case-insensitive match through canonical_lower.
+    let upper = std::env::temp_dir().join("hermos-sweep-test").join("HERMOS IDE").join("app.exe");
+    assert!(path_is_under_legacy(&upper, &dir));
+
+    std::fs::remove_dir_all(dir.parent().expect("parent")).expect("cleanup");
+  }
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn extract_msi_guid_parses_only_valid_guids() {
+    let guid = "12345678-1234-1234-1234-123456789ABC";
+    assert_eq!(
+      extract_msi_guid(&format!(r#"MsiExec.exe /I{{{guid}}}"#)),
+      Some(guid.to_ascii_lowercase())
+    );
+    assert_eq!(
+      extract_msi_guid(&format!(r#"MsiExec.exe /X{{{guid}}}"#)),
+      Some(guid.to_ascii_lowercase())
+    );
+    // Wrong shape: too short, wrong charset, missing braces.
+    assert_eq!(extract_msi_guid("MsiExec.exe /I{123}"), None);
+    assert_eq!(extract_msi_guid(r#""C:\Apps\Uninstall.exe""#), None);
+    assert_eq!(extract_msi_guid(""), None);
+  }
+
+  #[test]
+  #[cfg(target_os = "windows")]
+  fn wait_for_dir_removal_is_bounded_and_immediate_for_missing_dirs() {
+    let dir = std::env::temp_dir().join("hermos-sweep-gone");
+    std::fs::create_dir_all(&dir).expect("create dir");
+
+    // Existing dir + tiny budget -> false, and the call returns (bounded).
+    let started = std::time::Instant::now();
+    assert!(!wait_for_dir_removal(&dir, std::time::Duration::from_millis(50)));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+    std::fs::remove_dir_all(&dir).expect("remove dir");
+    // Missing dir -> immediate true, no sleeping.
+    let started = std::time::Instant::now();
+    assert!(wait_for_dir_removal(&dir, std::time::Duration::from_secs(10)));
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
   }
 }

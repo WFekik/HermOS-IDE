@@ -50,7 +50,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     let idleHandle: number | undefined;
 
     import("@/lib/updater")
-      .then(({ checkForUpdates, consumeStaleUpdate, clearPendingUpdate, releaseTagUrl }) => {
+      .then(({ checkForUpdates, consumeStaleUpdate, clearPendingUpdate, releaseTagUrl, isStoreDistributed, MSSTORE_URL }) => {
         // Verify-on-launch: if a previous update was staged but we are still
         // on the old version, the installer did not apply — say so loudly
         // with retry + manual fallback instead of failing silently again.
@@ -74,6 +74,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
                     label: (t as (k: string, l: string) => string)("update_retry_update", lang),
                     onClick: () => {
                       clearPendingUpdate();
+                      // Store-distributed platforms have no in-app installer;
+                      // the Store listing is the update source.
+                      if (isStoreDistributed()) {
+                        void openExternalUrl(MSSTORE_URL);
+                        return;
+                      }
                       // Desktop auto-install toasts internally and can throw;
                       // never leave an unhandled rejection from a click handler.
                       checkForUpdates(true).catch(() => {});
@@ -83,7 +89,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                     label: (t as (k: string, l: string) => string)("update_install_manually", lang),
                     onClick: () => {
                       clearPendingUpdate();
-                      void openExternalUrl(releaseTagUrl(stale.to));
+                      void openExternalUrl(isStoreDistributed() ? MSSTORE_URL : releaseTagUrl(stale.to));
                     },
                   },
                 });

@@ -103,7 +103,7 @@ export function GitDiffView({ diff, className }: GitDiffViewProps) {
         </button>
       </div>
       <ScrollArea className="flex-1 min-h-0 w-full overflow-auto">
-        <div className="divide-y divide-border min-w-full">
+        <div className="divide-y divide-border min-w-full w-max">
           {files.map((f, i) => (
             <FileDiff key={`${f.displayPath}-${i}`} file={f} forceOpen={expandAll} />
           ))}
@@ -145,8 +145,8 @@ function FileDiff({ file, forceOpen }: { file: ParsedFile; forceOpen?: boolean }
           : FilePen;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="w-full">
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-full w-max">
+      <CollapsibleTrigger className="w-full sticky left-0 z-10 block">
         <div className="flex items-center gap-2 bg-muted/40 px-3 py-1.5 hover:bg-muted/60 transition-colors cursor-pointer select-none">
           {open ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -177,8 +177,8 @@ function FileDiff({ file, forceOpen }: { file: ParsedFile; forceOpen?: boolean }
           </span>
         </div>
       </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="font-mono text-[11px] leading-relaxed">
+      <CollapsibleContent className="min-w-full w-max">
+        <div className="font-mono text-[11px] leading-relaxed min-w-full w-max">
           {lines.map((line, i) => (
             <DiffRow key={i} line={line} language={language} />
           ))}

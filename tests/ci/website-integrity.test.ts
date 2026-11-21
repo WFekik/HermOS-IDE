@@ -5,6 +5,9 @@ import { execSync } from 'node:child_process';
 
 const websiteDir = path.resolve(__dirname, '../../hermos-website');
 const indexPath = path.join(websiteDir, 'index.html');
+const appVersion: string = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+).version;
 
 describe('Website Quality, Google SEO Branding & Agentic Research Integrity', () => {
   const html = fs.readFileSync(indexPath, 'utf8');
@@ -14,7 +17,7 @@ describe('Website Quality, Google SEO Branding & Agentic Research Integrity', ()
       cwd: path.resolve(__dirname, '../..'),
       encoding: 'utf8',
     });
-    expect(output).toContain('lockstep at version v1.1.4');
+    expect(output).toContain(`lockstep at version v${appVersion}`);
   });
 
   it('includes all Google Search Favicon & Logo tags in <head>', () => {
@@ -41,7 +44,7 @@ describe('Website Quality, Google SEO Branding & Agentic Research Integrity', ()
     expect(app, 'SoftwareApplication schema must exist').toBeDefined();
     expect(app.image).toBe('https://hermos.is-a.dev/logo.png');
     expect(app.logo).toBe('https://hermos.is-a.dev/logo.png');
-    expect(app.softwareVersion).toBe('1.1.4');
+    expect(app.softwareVersion).toBe(appVersion);
 
     const website = parsed['@graph'].find((item: any) => item['@type'] === 'WebSite');
     expect(website, 'WebSite schema must exist').toBeDefined();

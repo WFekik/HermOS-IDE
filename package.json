@@ -1,6 +1,6 @@
 {
   "name": "hermos-ide",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 -H 127.0.0.1",
@@ -65,7 +65,7 @@
     "framer-motion": "^12.43.0",
     "js-tiktoken": "^1.0.21",
     "lucide-react": "^0.577.0",
-    "next": "^16.4.2",
+    "next": "^16.4.6",
     "pdfkit": "^0.20.2",
     "pptxgenjs": "^4.0.1",
     "prisma": "^6.19.3",
@@ -84,7 +84,11 @@
   },
   "overrides": {
     "image-size": "^2.0.4",
-    "deepmerge-ts": "^8.0.2"
+    "deepmerge-ts": "^8.0.2",
+    "hono": "^4.13.19",
+    "@hono/node-server": "^2.1.11",
+    "body-parser": "^2.4.0",
+    "fast-uri": "^3.1.9"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -95,6 +99,7 @@
     "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "adm-zip": "^0.6.1",
     "eslint": "^9",
     "eslint-config-next": "^16.4.0",
     "fast-check": "^4.10.2",

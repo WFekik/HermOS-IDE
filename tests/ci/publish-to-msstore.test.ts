@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import AdmZip from "adm-zip";
 import {
   validateConfig,
-  buildPackagePayload,
-  resolveInstallerName,
-  buildInstallerUrl,
+  resolveMsixPath,
+  replacePackages,
+  buildZipBundle,
 } from "../../scripts/publish-to-msstore.mjs";
 
 describe("Microsoft Store submission helper (publish-to-msstore.mjs)", () => {
@@ -41,7 +45,6 @@ describe("Microsoft Store submission helper (publish-to-msstore.mjs)", () => {
         MSSTORE_CLIENT_ID: "client-456",
         MSSTORE_CLIENT_SECRET: "secret-789",
         MSSTORE_PRODUCT_ID: "9NXXXXXXXXXX",
-        MSSTORE_SELLER_ID: "seller-111",
       };
       const res = validateConfig(full);
       expect(res.valid).toBe(true);
@@ -49,58 +52,64 @@ describe("Microsoft Store submission helper (publish-to-msstore.mjs)", () => {
       expect(res.config.tag).toBe("v1.2.0");
       expect(res.config.productId).toBe("9NXXXXXXXXXX");
       expect(res.config.tenantId).toBe("tenant-123");
-      expect(res.config.sellerId).toBe("seller-111");
     });
   });
 
-  describe("buildPackagePayload", () => {
-    it("formats the unmanaged Win32 EXE package payload correctly", () => {
-      const url = "https://github.com/WFekik/HermOS-IDE/releases/download/v1.2.0/HermOS.IDE_1.2.0_x64-setup.exe";
-      const payload = buildPackagePayload({ downloadUrl: url });
+  describe("resolveMsixPath", () => {
+    it("targets the pack-msix output for the given version", () => {
+      expect(resolveMsixPath("1.2.0").endsWith("HermOS.IDE_1.2.0_x64.msix")).toBe(true);
+    });
 
-      expect(payload).toEqual({
-        packages: [
-          {
-            packageUrl: url,
-            languages: ["en", "fr", "de", "es", "zh", "ja", "ar", "ru", "pt"],
-            architectures: ["X64"],
-            isSilentInstall: true,
-          },
+    it("strips a v prefix", () => {
+      expect(resolveMsixPath("v1.2.0").endsWith("HermOS.IDE_1.2.0_x64.msix")).toBe(true);
+    });
+  });
+
+  describe("replacePackages", () => {
+    it("retires existing .msix packages and appends the new one as PendingUpload", () => {
+      const submission = {
+        applicationPackages: [
+          { fileName: "HermOS.IDE_1.1.4_x64.msix", fileStatus: "Processed", id: "1" },
+          { fileName: "icon.png", fileStatus: "Uploaded", id: "2" },
         ],
-      });
-    });
-
-    it("throws when downloadUrl is missing", () => {
-      expect(() => buildPackagePayload({})).toThrow("downloadUrl is required");
-    });
-  });
-
-  describe("resolveInstallerName", () => {
-    it("identifies the NSIS setup executable and filters out signatures and other files", () => {
-      const files = [
-        "latest.json",
-        "HermOS IDE_1.2.0_x64-setup.exe.sig",
-        "HermOS IDE_1.2.0_x64_en-US.msi",
-        "HermOS IDE_1.2.0_x64-setup.exe",
-      ];
-      expect(resolveInstallerName(files)).toBe("HermOS IDE_1.2.0_x64-setup.exe");
-    });
-
-    it("returns null when no matching installer exists", () => {
-      expect(resolveInstallerName(["readme.txt", "latest.json"])).toBeNull();
-    });
-  });
-
-  describe("buildInstallerUrl", () => {
-    it("generates an immutable, normalized GitHub release asset download URL", () => {
-      const url = buildInstallerUrl("WFekik/HermOS-IDE", "v1.2.0", "HermOS IDE_1.2.0_x64-setup.exe");
-      expect(url).toBe(
-        "https://github.com/WFekik/HermOS-IDE/releases/download/v1.2.0/HermOS.IDE_1.2.0_x64-setup.exe",
+      };
+      const packages = replacePackages(submission, "HermOS.IDE_1.2.0_x64.msix");
+      expect(packages.find((p) => p.fileName === "HermOS.IDE_1.1.4_x64.msix")?.fileStatus).toBe(
+        "PendingDelete",
       );
+      expect(packages.find((p) => p.fileName === "icon.png")?.fileStatus).toBe("Uploaded");
+      expect(packages.filter((p) => p.fileName === "HermOS.IDE_1.2.0_x64.msix")).toEqual([
+        { fileName: "HermOS.IDE_1.2.0_x64.msix", fileStatus: "PendingUpload" },
+      ]);
     });
 
-    it("throws when parameters are missing", () => {
-      expect(() => buildInstallerUrl("", "v1.0.0", "app.exe")).toThrow();
+    it("tolerates PascalCase submission payloads", () => {
+      const submission = { ApplicationPackages: [{ FileName: "old.msix", FileStatus: "Uploaded" }] };
+      const packages = replacePackages(submission, "new.msix");
+      const oldPkg = packages.find((p) => (p.fileName ?? p.FileName) === "old.msix");
+      expect(oldPkg?.fileStatus).toBe("PendingDelete");
+      expect(packages.find((p) => p.fileName === "new.msix")?.fileStatus).toBe("PendingUpload");
+    });
+
+    it("throws when the submission has no package list", () => {
+      expect(() => replacePackages({}, "new.msix")).toThrow("applicationPackages");
+    });
+  });
+
+  describe("buildZipBundle", () => {
+    it("zips the msix so the archive root holds the package file", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hermos-msstore-"));
+      try {
+        const msixPath = path.join(dir, "HermOS.IDE_1.2.0_x64.msix");
+        fs.writeFileSync(msixPath, "fake-msix-bytes");
+        const bundlePath = path.join(dir, "bundle.zip");
+        buildZipBundle(msixPath, bundlePath);
+        const zip = new AdmZip(bundlePath);
+        expect(zip.getEntries().map((e) => e.entryName)).toEqual(["HermOS.IDE_1.2.0_x64.msix"]);
+        expect(zip.readAsText("HermOS.IDE_1.2.0_x64.msix")).toBe("fake-msix-bytes");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

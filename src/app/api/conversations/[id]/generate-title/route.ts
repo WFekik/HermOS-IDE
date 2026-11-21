@@ -20,7 +20,7 @@ import {
 } from "@/lib/ai/provider-payloads";
 import { parseNonStreamingResponse } from "@/lib/ai/tool-call-parser";
 import { fetchWithSsrf } from "@/lib/ai/ssrf-fetch";
-import { cleanHeuristicTitle } from "@/lib/conversation-title";
+import { cleanHeuristicTitle, isInstructionEchoTitle } from "@/lib/conversation-title";
 import {
   withErrorHandler,
   notFound,
@@ -34,6 +34,10 @@ function cleanTitle(raw: string): string {
   let cleaned = (raw || "").trim();
   cleaned = cleaned.replace(/<think[\s\S]*?<\/think>/gi, "").trim();
   cleaned = cleaned.replace(/<think[\s\S]*$/gi, "").trim();
+  // Echo detection must run BEFORE prefix stripping: reasoning like "The user
+  // wants a short, high-level topic title..." would otherwise be stripped of
+  // its prefix and laundered into a "title".
+  if (isInstructionEchoTitle(cleaned)) return "";
   cleaned = cleaned.replace(/^#+\s*/, "");
   cleaned = cleaned.replace(/^\*+\s*|\s*\*+$/g, "");
   cleaned = cleaned.replace(/^[-*•]\s+/, "");
@@ -41,12 +45,7 @@ function cleanTitle(raw: string): string {
   cleaned = cleaned.replace(/^["'`]+|["'`]+$/g, "").trim();
   cleaned = cleaned.replace(/[.?!]+$/, "").trim();
 
-  if (
-    !cleaned ||
-    cleaned.toLowerCase().includes("concise title") ||
-    cleaned.toLowerCase().includes("user wants") ||
-    cleaned.toLowerCase() === "new conversation"
-  ) {
+  if (!cleaned || isInstructionEchoTitle(cleaned) || cleaned.toLowerCase() === "new conversation") {
     return "";
   }
   return cleaned.length > 60 ? cleaned.slice(0, 60).replace(/\s+\S*$/, "") : cleaned;
@@ -204,7 +203,15 @@ export const POST = withErrorHandler(
     const body = await parseJson<{ force?: boolean }>(req).catch(() => null);
     const force = body?.force === true;
 
-    if (!force && conv.title && conv.title.trim().toLowerCase() !== "new conversation" && conv.title.trim() !== "") {
+    // An instruction-echo title (prompt/reasoning text stored as the name)
+    // is treated as untitled so the next naming pass repairs it.
+    const existingTitle = (conv.title || "").trim();
+    if (
+      !force &&
+      existingTitle &&
+      !isInstructionEchoTitle(existingTitle) &&
+      existingTitle.toLowerCase() !== "new conversation"
+    ) {
       return ok({ title: conv.title });
     }
 

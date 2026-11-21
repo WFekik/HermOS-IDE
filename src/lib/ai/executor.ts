@@ -5310,6 +5310,37 @@ const thinkInstruction = thinkPlan.kind === "params"
                 provider: req.provider,
                 estimated: lastPromptTokensEstimated,
               });
+
+              // Realtime auto-compact: the pre-call check at the top of the
+              // loop only runs when ANOTHER model call is about to happen. A
+              // run whose final (or late) response crossed the threshold would
+              // otherwise sit above the line until the next user message.
+              // Re-check the moment measured usage lands so compaction happens
+              // right here — mid-run or immediately after the answer.
+              if (
+                iterMeasured.promptTokens !== undefined &&
+                !signal?.aborted &&
+                !autoCompactTriggered &&
+                effectiveInputBudget > 0
+              ) {
+                const postResponseTokens = Math.max(preTruncationTokens, lastPromptTokens);
+                if (postResponseTokens >= COMPACTION_TRIGGER_RATIO * effectiveInputBudget) {
+                  console.log(
+                    `[context] auto-compact triggered post-response: context=${postResponseTokens} (${Math.round((postResponseTokens / effectiveInputBudget) * 100)}% of effective budget=${Math.round(effectiveInputBudget)})`,
+                  );
+                  const compacted = await compactContextNow(effectiveInputBudget, systemTokens);
+                  if (compacted) {
+                    autoCompactTriggered = true;
+                    // Mirror the pre-call branch: rebuild the working history
+                    // from the compacted cache so the next iteration (and its
+                    // pre-call check) starts from the summarized state.
+                    history = mapHistory(applyCompactionWindow(cachedRows));
+                    prunedHistory = pruneOldToolOutputs(history, ctxConfig, tokenOf).messages;
+                    preTruncationTokens =
+                      prunedHistory.reduce((sum, m) => sum + tokenOf(m), 0) + systemTokens;
+                  }
+                }
+              }
             }
 
             // Extract <think> content into iterThinking BEFORE stripping it.

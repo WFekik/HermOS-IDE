@@ -43,6 +43,16 @@ describe('MSIX Packaging & Store Manifest Integrity', () => {
     expect(manifest).toContain('Square310x310Logo="Assets\\Square310x310Logo.png"');
   });
 
+  it('opts out of AppData virtualization so Store installs share the NSIS data directory', () => {
+    const manifest = generateAppxManifest({ version: '1.1.4' });
+
+    expect(manifest).toContain('xmlns:desktop6=');
+    expect(manifest).toContain('<desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>');
+    expect(manifest).toContain('<rescap:Capability Name="unvirtualizedResources" />');
+    // desktop6:FileSystemWriteVirtualization requires Windows 10 2004+.
+    expect(manifest).toContain('MinVersion="10.0.19041.0"');
+  });
+
   it('locates MakeAppx.exe or falls back to system PATH', () => {
     const makeAppx = findMakeAppx();
     expect(typeof makeAppx).toBe('string');
@@ -67,14 +77,50 @@ describe('MSIX Packaging & Store Manifest Integrity', () => {
     }
   });
 
-  it('prepares staging directory structure gracefully', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermos-msix-stage-'));
+  function makeFakeSources(base: string) {
+    const binariesDir = path.join(base, 'binaries');
+    const standaloneDir = path.join(base, 'standalone');
+    fs.mkdirSync(binariesDir, { recursive: true });
+    fs.mkdirSync(standaloneDir, { recursive: true });
+    fs.writeFileSync(path.join(base, 'app.exe'), 'exe');
+    fs.writeFileSync(path.join(binariesDir, 'node-x86_64-pc-windows-msvc.exe'), 'node');
+    fs.writeFileSync(path.join(standaloneDir, 'server.js'), 'x');
+    return {
+      appExe: path.join(base, 'app.exe'),
+      nodeCandidates: [path.join(binariesDir, 'node-x86_64-pc-windows-msvc.exe')],
+      standalone: standaloneDir,
+    };
+  }
+
+  it('stages app.exe, node.exe, and the _up_ standalone bundle', () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermos-msix-src-'));
+    const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermos-msix-stage-'));
     try {
-      const staged = prepareStagingDirectory(tmpDir);
-      expect(staged).toBe(tmpDir);
-      expect(fs.existsSync(tmpDir)).toBe(true);
+      const staged = prepareStagingDirectory(stagingDir, makeFakeSources(baseDir));
+      expect(staged).toBe(stagingDir);
+      expect(fs.existsSync(path.join(stagingDir, 'app.exe'))).toBe(true);
+      expect(fs.existsSync(path.join(stagingDir, 'node.exe'))).toBe(true);
+      expect(fs.existsSync(path.join(stagingDir, '_up_', '.next-build', 'standalone', 'server.js'))).toBe(true);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(baseDir, { recursive: true, force: true });
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails loudly when app.exe, the node sidecar, or the standalone bundle is missing', () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermos-msix-src-'));
+    const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermos-msix-stage-'));
+    try {
+      const sources = makeFakeSources(baseDir);
+      expect(() => prepareStagingDirectory(stagingDir, { ...sources, appExe: path.join(baseDir, 'missing.exe') }))
+        .toThrow(/app\.exe not found/);
+      expect(() => prepareStagingDirectory(stagingDir, { ...sources, nodeCandidates: [path.join(baseDir, 'missing-node.exe')] }))
+        .toThrow(/node\.exe not found/);
+      expect(() => prepareStagingDirectory(stagingDir, { ...sources, standalone: path.join(baseDir, 'missing-standalone') }))
+        .toThrow(/Standalone bundle not found/);
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+      fs.rmSync(stagingDir, { recursive: true, force: true });
     }
   });
 });

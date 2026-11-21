@@ -226,6 +226,16 @@ function handleOpenFile(filePath: string, line?: number) {
 
 /* ----------------------------- File path row ----------------------------- */
 
+/** Detect the image format of a base64 payload via its magic prefix. */
+function sniffBase64ImageMime(val: string): string | null {
+  if (val.startsWith("iVBORw0KGgo")) return "image/png";
+  if (val.startsWith("/9j/")) return "image/jpeg";
+  if (val.startsWith("R0lGOD")) return "image/gif";
+  if (val.startsWith("UklGR")) return "image/webp";
+  if (val.startsWith("Qk")) return "image/bmp";
+  return null;
+}
+
 function FilePathRow({ path, isDir }: { path: string; isDir?: boolean }) {
   const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
@@ -750,7 +760,36 @@ export function StructuredObjectView({
           } else if (typeof val === "number") {
             renderedVal = <span className="text-blue-500 dark:text-blue-400">{val}</span>;
           } else if (typeof val === "string") {
-            renderedVal = <span className="text-foreground whitespace-pre-wrap break-words">{val}</span>;
+            if (val.startsWith("data:image/")) {
+              renderedVal = (
+                <div className="my-1.5 inline-block">
+                  <img
+                    src={val}
+                    alt={key}
+                    className="max-h-56 max-w-full rounded border border-border/70 object-contain shadow-xs"
+                    loading="lazy"
+                  />
+                </div>
+              );
+            } else if (key.toLowerCase() === "base64" && val.length > 50) {
+              const mime = sniffBase64ImageMime(val);
+              if (mime) {
+                renderedVal = (
+                  <div className="my-1.5 inline-block">
+                    <img
+                      src={`data:${mime};base64,${val}`}
+                      alt={key}
+                      className="max-h-56 max-w-full rounded border border-border/70 object-contain shadow-xs"
+                      loading="lazy"
+                    />
+                  </div>
+                );
+              } else {
+                renderedVal = <span className="text-foreground whitespace-pre-wrap break-words">{val}</span>;
+              }
+            } else {
+              renderedVal = <span className="text-foreground whitespace-pre-wrap break-words">{val}</span>;
+            }
           } else if (val === null || val === undefined) {
             renderedVal = <span className="text-muted-foreground italic">null</span>;
           } else {
@@ -1180,13 +1219,68 @@ export function ToolResultBody({ tc }: { tc: LiveToolCall }) {
     }
   }
 
-  // read_file / view_file: render content as code
+  // browser_screenshot or tool results with dataUrl
+  if (
+    tc.name === "browser_screenshot" ||
+    tc.name === "take_screenshot" ||
+    (typeof tc.result === "object" && tc.result !== null && "dataUrl" in (tc.result as Record<string, unknown>))
+  ) {
+    const r = tc.result as { dataUrl?: string; path?: string };
+    const src = r?.dataUrl || (r?.path ? `/api/workspace/file?raw=true&path=${encodeURIComponent(r.path)}` : "");
+    if (src) {
+      return (
+        <div className="space-y-1.5 p-2 rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+            <span>{r.path || "Screenshot"}</span>
+            <a href={src} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+              Open full size
+            </a>
+          </div>
+          <div className="flex items-center justify-center p-2 bg-muted/20 rounded overflow-hidden">
+            <img src={src} alt="Screenshot" className="max-h-72 max-w-full rounded object-contain shadow-xs" loading="lazy" />
+          </div>
+        </div>
+      );
+    }
+  }
+
+  // read_file / view_file: render content as code or image
   if (
     (tc.name === "read_file" || tc.name === "view_file") &&
     typeof tc.result === "object" &&
     tc.result !== null
   ) {
-    const r = tc.result as { content?: string; text?: string; startLine?: number; endLine?: number; lines?: number; totalLines?: number };
+    const r = tc.result as {
+      content?: string;
+      text?: string;
+      startLine?: number;
+      endLine?: number;
+      lines?: number;
+      totalLines?: number;
+      isImage?: boolean;
+      path?: string;
+    };
+    const filePath = typeof r.path === "string" ? r.path : (typeof tc.parsedArgs?.path === "string" ? tc.parsedArgs.path : "");
+    const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+    const isImageFile = ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp", "ico"].includes(ext);
+
+    if (r.isImage || isImageFile) {
+      const imgSrc = `/api/workspace/file?raw=true&path=${encodeURIComponent(filePath)}`;
+      return (
+        <div className="space-y-1.5 p-2 rounded bg-black/5 dark:bg-black/30 border border-black/5 dark:border-white/5">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+            <span>{filePath}</span>
+            <a href={imgSrc} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+              Open full size
+            </a>
+          </div>
+          <div className="flex items-center justify-center p-2 bg-muted/20 rounded overflow-hidden">
+            <img src={imgSrc} alt={filePath} className="max-h-72 max-w-full rounded object-contain shadow-xs" loading="lazy" />
+          </div>
+        </div>
+      );
+    }
+
     const content =
       (typeof r.content === "string" && r.content) ||
       (typeof r.text === "string" && r.text) ||

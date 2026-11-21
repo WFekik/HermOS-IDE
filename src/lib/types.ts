@@ -80,6 +80,8 @@ export interface AttachmentDTO {
   type: string;
   /** Size in bytes. */
   size: number;
+  /** Optional file path on disk when referenced directly (e.g. fallback local files). */
+  path?: string;
   /**
    * True when the message received from the server actually carried the
    * attachment (vs. a transient client-only chip that hasn't been uploaded
