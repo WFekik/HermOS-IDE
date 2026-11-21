@@ -136,10 +136,6 @@ jobs:
           TAURI_ENV_PLATFORM: "win32"
       - script: node scripts/pack-msix.mjs
         displayName: "Package MSIX for Microsoft Store"
-      # TODO: re-enable once the official open-source Authenticode certificate
-      # lands. SignPath currently self-signs (untrusted root), which mutates
-      # installer bytes AFTER Tauri creates the minisign .sig files and breaks
-      # every auto-update at signature verification. Disabled until then.
       - script: node scripts/release-to-github.mjs
         displayName: "Upload release assets"
         condition: succeeded()
