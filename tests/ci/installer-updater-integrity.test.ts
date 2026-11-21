@@ -75,4 +75,33 @@ describe("installer and updater caching integrity", () => {
       expect(tauriLibRs).toContain('env!("CARGO_PKG_VERSION")');
     });
   });
+
+  describe("Store-only Windows release publishing", () => {
+    const releaseScript = fs.readFileSync(
+      path.join(rootDir, "scripts", "release-to-github.mjs"),
+      "utf-8",
+    );
+    const pipelineYml = fs.readFileSync(
+      path.join(rootDir, "azure-pipelines.yml"),
+      "utf-8",
+    );
+
+    it("windows job skips the updater manifest (no .sig artifacts, must not race macOS/Linux)", () => {
+      expect(releaseScript).toContain("HERMOS_SKIP_UPDATER_MANIFEST");
+      // The skip guard must be the only path to updateLatestJson.
+      expect(releaseScript).toMatch(
+        /HERMOS_SKIP_UPDATER_MANIFEST === "1"[\s\S]*?skipping latest\.json[\s\S]*?\} else \{\s*await updateLatestJson/,
+      );
+
+      const windowsJob = pipelineYml.slice(
+        pipelineYml.indexOf("- job: windows"),
+        pipelineYml.indexOf("- job: macos"),
+      );
+      expect(windowsJob).toContain("HERMOS_SKIP_UPDATER_MANIFEST: \"1\"");
+      // macOS and Linux own latest.json (their .sig uploads are guaranteed
+      // present before their manifest step) and must NOT inherit the skip.
+      const macosJob = pipelineYml.slice(pipelineYml.indexOf("- job: macos"));
+      expect(macosJob).not.toContain("HERMOS_SKIP_UPDATER_MANIFEST");
+    });
+  });
 });

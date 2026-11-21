@@ -520,6 +520,16 @@ async function updateLatestJson(releaseId) {
   }
 }
 
-await updateLatestJson(release.id);
+// Windows ships exclusively through the Microsoft Store (no .sig artifacts
+// anymore), so it must not touch latest.json — and must not race the
+// macOS/Linux jobs either: with zero signed assets present, the manifest
+// guard below would fail the whole upload step depending on job ordering.
+if (process.env.HERMOS_SKIP_UPDATER_MANIFEST === "1") {
+  console.log(
+    "[updater] HERMOS_SKIP_UPDATER_MANIFEST=1 — skipping latest.json (this job publishes no updater artifacts).",
+  );
+} else {
+  await updateLatestJson(release.id);
+}
 
 console.log(`\nRelease ready: https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}`);

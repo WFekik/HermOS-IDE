@@ -141,6 +141,10 @@ jobs:
         env:
           GITHUB_TOKEN: $(GITHUB_TOKEN)
           RELEASE_TAG: $(Build.SourceBranchName)
+          # Windows publishes no updater artifacts (Store-only) — latest.json
+          # is owned by the macOS/Linux jobs; updating it here would also race
+          # their .sig uploads and fail depending on job ordering.
+          HERMOS_SKIP_UPDATER_MANIFEST: "1"
       - script: node scripts/publish-to-msstore.mjs
         displayName: "Publish to Microsoft Store"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
