@@ -43,14 +43,13 @@ describe('MSIX Packaging & Store Manifest Integrity', () => {
     expect(manifest).toContain('Square310x310Logo="Assets\\Square310x310Logo.png"');
   });
 
-  it('opts out of AppData virtualization so Store installs share the NSIS data directory', () => {
+  it('declares runFullTrust and complies with Store Policy 10.6.3 (no denied unvirtualizedResources)', () => {
     const manifest = generateAppxManifest({ version: '1.1.4' });
 
-    expect(manifest).toContain('xmlns:desktop6=');
-    expect(manifest).toContain('<desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>');
-    expect(manifest).toContain('<rescap:Capability Name="unvirtualizedResources" />');
-    // desktop6:FileSystemWriteVirtualization requires Windows 10 2004+.
-    expect(manifest).toContain('MinVersion="10.0.19041.0"');
+    expect(manifest).toContain('<rescap:Capability Name="runFullTrust" />');
+    expect(manifest).not.toContain('unvirtualizedResources');
+    expect(manifest).not.toContain('<desktop6:FileSystemWriteVirtualization>');
+    expect(manifest).toContain('MinVersion="10.0.17763.0"');
   });
 
   it('locates MakeAppx.exe or falls back to system PATH', () => {

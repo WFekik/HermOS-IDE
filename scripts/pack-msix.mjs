@@ -36,8 +36,7 @@ export function generateAppxManifest({
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
-  IgnorableNamespaces="uap rescap desktop6">
+  IgnorableNamespaces="uap rescap">
 
   <Identity
     Name="${identity.name}"
@@ -49,15 +48,10 @@ export function generateAppxManifest({
     <DisplayName>${identity.displayName}</DisplayName>
     <PublisherDisplayName>${identity.publisherDisplayName}</PublisherDisplayName>
     <Logo>Assets\\StoreLogo.png</Logo>
-    <!-- Unvirtualized AppData: the packaged app must read/write the same
-         %APPDATA% data directory as legacy NSIS installs so existing users
-         migrate without losing their workspace data. Requires the
-         unvirtualizedResources restricted capability (Partner Center review). -->
-    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -87,7 +81,6 @@ export function generateAppxManifest({
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>`;
 }
